@@ -59,6 +59,18 @@ def orbitkv_pool_size(request) -> str:
 def pytest_addoption(parser):
     """Add custom command line options for E2E tests."""
     parser.addoption(
+        "--vllm-multi-connector",
+        action="store_true",
+        default=False,
+        help="Qualify OrbitKV as the second child of vLLM MultiConnector",
+    )
+    parser.addoption(
+        "--vllm-cudagraph-mode",
+        choices=["NONE", "PIECEWISE", "FULL", "FULL_AND_PIECEWISE"],
+        default=None,
+        help="Use one explicit CUDA graph mode for both vLLM correctness controls",
+    )
+    parser.addoption(
         "--vllm-cache-tier",
         choices=("dram", "ssd"),
         default="dram",

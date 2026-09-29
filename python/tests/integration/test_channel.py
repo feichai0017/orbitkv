@@ -214,3 +214,109 @@ def test_query_bytes_remain_owned_after_delivery_and_release_on_disconnect(
     finally:
         client.close()
         other.close()
+
+
+@pytest.mark.parametrize("graph", [False, True], ids=["eager", "cuda-graph"])
+@pytest.mark.parametrize("channel_server", [{"tier": "dram", "pool_size": "512mb"}], indirect=True)
+def test_layer_events_publish_new_data_before_final_restore_drain(channel_server, graph):
+    """The first consumer overlaps later H2D, including repeated graph replay."""
+    import uuid
+
+    import torch
+
+    from orbitkv import BlockHashes, CacheManagerClient, OrbitKVError, QueryLoading, QueryReady
+    from tests.support.cache_manager import ClientContext
+
+    identity = f"layer-events-{uuid.uuid4().hex}"
+    client = CacheManagerClient(channel_server.bootstrap_socket)
+    ctx = ClientContext(
+        client,
+        identity,
+        identity,
+        num_blocks=2,
+        num_layers=4,
+        block_size=4096,
+        num_heads=16,
+        head_size=128,
+    )
+    ctx.register_kv_caches()
+    events = [torch.cuda.Event(external=True, enable_timing=True) for _ in ctx._layer_names]
+    for event in events:
+        event.record()
+    consumer = torch.cuda.Stream()
+    snapshots = [torch.empty_like(tensor[:, 1, :1]) for tensor in ctx.gpu_kv_caches]
+    early = torch.cuda.Event(enable_timing=True, external=True)
+
+    def consume():
+        for index, (tensor, event, snapshot) in enumerate(
+            zip(ctx.gpu_kv_caches, events, snapshots, strict=True)
+        ):
+            consumer.wait_event(event)
+            snapshot.copy_(tensor[:, 1, :1])
+            if index == 0:
+                early.record(consumer)
+
+    replay = None
+    if graph:
+        consumer.wait_stream(torch.cuda.current_stream())
+        replay = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(replay, stream=consumer):
+            consume()
+    try:
+        for generation in range(2):
+            for layer, tensor in enumerate(ctx.gpu_kv_caches):
+                tensor[:, 0].fill_(generation * 10 + layer + 1)
+                tensor[:, 1].fill_(-1)
+            torch.cuda.synchronize()
+            key = bytes([generation + 1]) * 32
+            ok, message = client.save(
+                identity, 0, 0, 0, [(name, [0], [key]) for name in ctx._layer_names]
+            )
+            assert ok, message
+            deadline = time.monotonic() + 10
+            while True:
+                query = client.query_prefetch(identity, BlockHashes([key]), f"load-{generation}")
+                if not isinstance(query, QueryLoading):
+                    break
+                assert time.monotonic() < deadline
+                time.sleep(0.001)
+            assert isinstance(query, QueryReady) and query.num_hit_blocks == 1
+            kwargs = {
+                "instance_id": identity,
+                "tp_rank": 0,
+                "device_id": 0,
+                "layer_groups": [ctx._layer_names],
+                "loads": [(query.lease, [[1]])],
+                "ready_stream": consumer.cuda_stream,
+            }
+            # Rejected bindings must leave the lease reusable for the valid call.
+            for bindings in (
+                [("missing", events[0])],
+                [(name, events[0]) for name in ctx._layer_names],
+            ):
+                with pytest.raises(OrbitKVError, match="unique live events"):
+                    client.start_restore(**kwargs, layer_events=bindings)
+            handle = client.start_restore(
+                **kwargs, layer_events=list(zip(ctx._layer_names, events, strict=True))
+            )
+            client.wait_restore_enqueued(handle, timeout=10)
+            with torch.cuda.stream(consumer):
+                if replay is None:
+                    consume()
+                else:
+                    replay.replay()
+            consumer.synchronize()
+            # CUDA timestamps prove overlap, rather than inferring it from API order.
+            overlap_ms = early.elapsed_time(events[-1])
+            assert overlap_ms > 0, (
+                f"first layer consumer did not overlap final H2D: {overlap_ms} ms"
+            )
+            assert client.wait_restore(handle, timeout=10).success
+            for layer, (tensor, snapshot) in enumerate(
+                zip(ctx.gpu_kv_caches, snapshots, strict=True)
+            ):
+                assert torch.equal(tensor[:, 0], tensor[:, 1])
+                assert (snapshot == generation * 10 + layer + 1).all()
+    finally:
+        ctx.unregister_context()
+        client.close()

@@ -17,16 +17,18 @@ fn raw_plan_round_trip_and_framing() {
         }],
     };
     let bytes = plan.encode_parts().unwrap().pop_front().unwrap();
-    assert_eq!(RawRestorePlan::decode(&bytes).unwrap(), plan);
+    let decoded = RawRestorePart::decode(&bytes).unwrap();
+    assert_eq!(decoded.copies, plan.copies);
+    assert_eq!(decoded.completed_layers, vec!["decoder.0.key"]);
     for end in 0..bytes.len() {
-        assert!(RawRestorePlan::decode(&bytes[..end]).is_err());
+        assert!(RawRestorePart::decode(&bytes[..end]).is_err());
     }
     let mut extra = bytes.clone();
     extra.push(0);
-    assert!(RawRestorePlan::decode(&extra).is_err());
+    assert!(RawRestorePart::decode(&extra).is_err());
     let mut invalid_count = bytes;
     invalid_count[4..8].copy_from_slice(&u32::MAX.to_le_bytes());
-    assert!(RawRestorePlan::decode(&invalid_count).is_err());
+    assert!(RawRestorePart::decode(&invalid_count).is_err());
 }
 
 #[test]
@@ -51,9 +53,19 @@ fn raw_plan_encoding_partitions_without_losing_copies_and_bounds_total_metadata(
     assert!(parts.iter().all(|bytes| bytes.len() <= MAX_PLAN_BYTES));
     let copies: Vec<_> = parts
         .iter()
-        .flat_map(|bytes| RawRestorePlan::decode(bytes).unwrap().copies)
+        .flat_map(|bytes| RawRestorePart::decode(bytes).unwrap().copies)
         .collect();
     assert_eq!(copies, plan.copies);
+    assert!(
+        RawRestorePart::decode(&parts[0])
+            .unwrap()
+            .completed_layers
+            .is_empty()
+    );
+    assert_eq!(
+        RawRestorePart::decode(&parts[1]).unwrap().completed_layers,
+        vec!["layer"]
+    );
     for name in [String::new(), "x".repeat(u16::MAX as usize + 1)] {
         assert!(
             RawRestorePlan {
@@ -71,10 +83,10 @@ fn raw_plan_encoding_partitions_without_losing_copies_and_bounds_total_metadata(
         ..copy
     };
     let huge = RawRestorePlan {
-        copies: vec![long_copy; MAX_RESTORE_PLAN_BYTES / (58 + u16::MAX as usize) + 1],
+        copies: vec![long_copy; MAX_RESTORE_PLAN_BYTES / (59 + u16::MAX as usize) + 1],
     };
     assert!(huge.encode_parts().unwrap_err().contains("metadata limit"));
-    assert!(RawRestorePlan::decode(&vec![0; MAX_PLAN_BYTES + 1]).is_err());
+    assert!(RawRestorePart::decode(&vec![0; MAX_PLAN_BYTES + 1]).is_err());
 }
 
 #[test]
@@ -178,7 +190,10 @@ fn strided_restore_keeps_each_allocation_boundary_inside_a_shared_arena() {
         TransferMode::Direct,
     )
     .unwrap();
-    executor.execute(&plan, None).unwrap();
+    let part = RawRestorePart::decode(&plan.encode_parts().unwrap()[0]).unwrap();
+    executor
+        .execute(&part, &mut Default::default(), true, || {}, None)
+        .unwrap();
     let mut actual = [0u8; 256];
     // SAFETY: execute has drained the stream, and the output buffer is 256 bytes.
     unsafe { sys::cuMemcpyDtoH_v2(actual.as_mut_ptr().cast(), device, actual.len()).result() }
@@ -194,7 +209,12 @@ fn strided_restore_keeps_each_allocation_boundary_inside_a_shared_arena() {
             2 => invalid.copies[0].source.allocation_id = 0,
             _ => invalid.copies[1].destination_offset = 0,
         }
-        assert!(executor.execute(&invalid, None).is_err());
+        let invalid = RawRestorePart::decode(&invalid.encode_parts().unwrap()[0]).unwrap();
+        assert!(
+            executor
+                .execute(&invalid, &mut Default::default(), true, || {}, None)
+                .is_err()
+        );
     }
     drop(executor);
     // SAFETY: every accepted copy has completed and no executor retains the destination.

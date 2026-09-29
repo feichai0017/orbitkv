@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from typing import Any
 
 import torch
+from vllm.config import CUDAGraphMode
 from vllm.distributed.kv_transfer.kv_connector.v1.base import (
     KVConnectorBase_V1,
     KVConnectorRole,
@@ -48,6 +49,11 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
         is_mla = detect_mla(vllm_config)
         cache_groups = tuple(getattr(kv_cache_config, "kv_cache_groups", ()) or ())
         if cache_groups and CacheGroupLayout.from_config(kv_cache_config).has_recurrent_state:
+            if not vllm_config.use_v2_model_runner:
+                raise RuntimeError(
+                    "OrbitKV recurrent Restore requires vLLM's V2 model runner so "
+                    "state is restored before checkpoint migration."
+                )
             from vllm.v1.core.sched.output import SchedulerOutput
 
             if "kv_connector_block_state" not in getattr(
@@ -248,6 +254,9 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
                     self._ctx.effective_world_size,
                 )
         else:
+            from orbitkv.vllm.runtime import install_restore_boundary
+
+            install_restore_boundary()
             self._worker = WorkerConnector(
                 self._ctx,
                 vllm_config=vllm_config,
@@ -291,7 +300,15 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
         metadata = self._get_connector_metadata()
         if metadata is None:
             return
-        self._worker.start_load_kv(metadata, forward_context, **kwargs)
+        self._worker.start_load_kv(metadata)
+        # V2 full-graph replay calls the connector without attention metadata.
+        # Its captured graph has no Python layer callbacks, so link the whole
+        # Restore on the replay stream. Decode steps without Restore do no work.
+        if (
+            forward_context.attn_metadata is None
+            or forward_context.cudagraph_runtime_mode == CUDAGraphMode.FULL
+        ):
+            self._worker.wait_for_all_layers()
 
     def wait_for_layer_load(self, layer_name: str) -> None:
         if not self._worker:
@@ -406,10 +423,6 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
     # ==============================
     # Defaults and shutdown
     # ==============================
-    def get_block_ids_with_load_errors(self) -> set[int]:
-        if not self._worker:
-            return set()
-        return self._worker.get_block_ids_with_load_errors()
 
     def get_kv_connector_stats(self) -> OrbitKVConnectorStats | None:
         stats: OrbitKVConnectorStats | None = None

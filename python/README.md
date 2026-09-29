@@ -56,7 +56,7 @@ for the Manager's source-retirement ACK. Repeated registration of the same
 binding is rejected; unregister and close drain accepted operations first.
 
 Build the native client and Manager together: this cutover uses bootstrap 7,
-channel ABI 11, cache schema 8, lifecycle 4 and Restore grant schema 5, with no
+channel ABI 11, cache schema 9, lifecycle 4 and Restore grant schema 5, with no
 old-wire decoder. Fragmented raw Restore plans are partitioned into at most
 1 MiB parts under one final drain fence, with 32 MiB operation and 64 MiB
 session metadata limits. Idle destination streams need no additional GPU event;

@@ -165,8 +165,11 @@ qualification remain open. See the
 - [x] Partition large raw Restore plans under one operation/source/destination
   fence; bound per-part, operation and session metadata. Pass actual H20 bytes,
   second-part enqueue failure and Manager exit between parts.
-- [ ] Qualify layer/group restore-compute overlap, including eager and graph
-  replay dependencies, without weakening the final drain fence.
+- [x] Qualify raw layer/group restore-compute overlap on H20, including eager,
+  external-event graph replay, vLLM full graphs and recurrent migration, and both
+  engines' dense/hybrid DRAM/SSD serving gates. Preserve the final drain fence;
+  Manager codec/SSD execution and multipart early publication remain separate
+  execution work. See [the layer gate](docs/engine-local-restore.md#layer-readiness-qualification-2026-09-29).
 - [x] Run the [three-pair DRAM/raw comparison](docs/implementation-plan.md#dmakernel-comparison-final-evidence)
   on both engines. Fixed kernel exceeds throughput and TTFT p50 regression
   budgets in both cells; keep the default direct backend for these layouts.

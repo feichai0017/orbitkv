@@ -1,5 +1,6 @@
 //! Tensor and stream ownership for the engine-local Restore worker.
 
+use std::collections::HashMap;
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -9,7 +10,7 @@ use std::time::{Duration, Instant};
 use orbitkv_channel::{
     CacheClient, GrantState, RestoreHandle, RestoreResponse, RestoreState, RestoreTiming,
 };
-use orbitkv_core::transfer::local::{LocalRestoreExecutor, RawRestorePlan};
+use orbitkv_core::transfer::local::{LocalRestoreExecutor, RawRestorePart};
 use pyo3::prelude::*;
 
 const MAX_PENDING: usize = 1024;
@@ -99,7 +100,7 @@ impl LocalCompletions {
 }
 
 enum RestoreResult {
-    Pending,
+    Pending { enqueued: bool },
     Ready(RestoreResponse, Option<(RestoreHandle, Instant)>),
     Consumed,
 }
@@ -107,8 +108,8 @@ enum RestoreResult {
 impl RestoreResult {
     fn take(&mut self) -> Result<Option<RestoreResponse>, &'static str> {
         match std::mem::replace(self, Self::Consumed) {
-            Self::Pending => {
-                *self = Self::Pending;
+            pending @ Self::Pending { .. } => {
+                *self = pending;
                 Ok(None)
             }
             Self::Ready(response, observed) => {
@@ -134,6 +135,38 @@ pub(crate) struct LocalRestore {
 }
 
 impl LocalRestore {
+    fn mark_enqueued(&self) {
+        let mut result = self
+            .result
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if let RestoreResult::Pending { enqueued } = &mut *result {
+            *enqueued = true;
+        }
+        self.completed.notify_all();
+    }
+
+    pub(crate) fn wait_enqueued(&self, timeout: Duration) -> Result<bool, String> {
+        let result = self
+            .result
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let (result, _) = self
+            .completed
+            .wait_timeout_while(result, timeout, |result| {
+                matches!(result, RestoreResult::Pending { enqueued: false })
+            })
+            .unwrap_or_else(|poison| poison.into_inner());
+        match &*result {
+            RestoreResult::Ready(response, _) if response.state != RestoreState::Succeeded => {
+                Err(response.message.clone())
+            }
+            RestoreResult::Consumed => Err("Restore result was already consumed".into()),
+            RestoreResult::Pending { enqueued } => Ok(*enqueued),
+            RestoreResult::Ready(_, _) => Ok(true),
+        }
+    }
+
     pub(crate) fn poll(&self) -> Result<Option<RestoreResponse>, &'static str> {
         self.result
             .lock()
@@ -149,7 +182,7 @@ impl LocalRestore {
         let (mut result, _) = self
             .completed
             .wait_timeout_while(result, timeout, |result| {
-                matches!(result, RestoreResult::Pending)
+                matches!(result, RestoreResult::Pending { .. })
             })
             .unwrap_or_else(|poison| poison.into_inner());
         result.take()
@@ -160,6 +193,8 @@ struct Job {
     handle: RestoreHandle,
     result: Arc<LocalRestore>,
     timing: Option<(Instant, RestoreTiming)>,
+    layer_events: HashMap<String, u64>,
+    _layer_event_owners: Vec<Py<PyAny>>,
 }
 
 /// Actual tensor exporters and CUDA mappings remain owned by the worker until
@@ -304,7 +339,11 @@ impl LocalRestoreWorker {
     }
 
     /// Reserve native ownership before asking the Manager to prepare a grant.
-    pub(crate) fn reserve(&self, ready_stream: u64) -> Result<(), String> {
+    pub(crate) fn reserve(
+        &self,
+        ready_stream: u64,
+        layer_events: &HashMap<String, u64>,
+    ) -> Result<(), String> {
         self.pending
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 (count < MAX_PENDING).then_some(count + 1)
@@ -316,7 +355,10 @@ impl LocalRestoreWorker {
             .unwrap_or_else(|poison| poison.into_inner())
             .as_mut()
             .ok_or_else(|| "local Restore worker is stopped".to_string())
-            .and_then(|executor| executor.wait_for_destination(ready_stream));
+            .and_then(|executor| {
+                executor.validate_layer_events(layer_events)?;
+                executor.wait_for_destination(ready_stream)
+            });
         if ready.is_err() {
             self.cancel_reservation();
         }
@@ -370,12 +412,14 @@ impl LocalRestoreWorker {
         &self,
         handle: RestoreHandle,
         mut timing: Option<(Instant, RestoreTiming)>,
+        layer_events: HashMap<String, u64>,
+        layer_event_owners: Vec<Py<PyAny>>,
     ) -> Arc<LocalRestore> {
         if let Some((start, timing)) = &mut timing {
             timing.dispatched_ns = start.elapsed().as_nanos() as u64;
         }
         let result = Arc::new(LocalRestore {
-            result: Mutex::new(RestoreResult::Pending),
+            result: Mutex::new(RestoreResult::Pending { enqueued: false }),
             completed: Condvar::new(),
         });
         if self
@@ -384,6 +428,8 @@ impl LocalRestoreWorker {
                 handle,
                 result: Arc::clone(&result),
                 timing,
+                layer_events,
+                _layer_event_owners: layer_event_owners,
             })
             .is_err()
         {
@@ -423,13 +469,23 @@ fn advance(
                 timing.claimed_ns = start.elapsed().as_nanos() as u64;
             }
             let mut submitted_at = None;
-            let result = RawRestorePlan::decode(&bytes).and_then(|plan| {
+            let final_part = matches!(
+                client.restore_completions().state(handle.operation_id),
+                Ok(GrantState::Active)
+            );
+            let result = RawRestorePart::decode(&bytes).and_then(|plan| {
                 executor
                     .lock()
                     .unwrap_or_else(|poison| poison.into_inner())
                     .as_mut()
                     .ok_or_else(|| "local Restore worker stopped before its operation".to_string())?
-                    .execute(&plan, job.timing.as_ref().map(|_| &mut submitted_at))
+                    .execute(
+                        &plan,
+                        &mut job.layer_events,
+                        final_part,
+                        || job.result.mark_enqueued(),
+                        job.timing.as_ref().map(|_| &mut submitted_at),
+                    )
             });
             let timing = job.timing.as_mut().map(|(start, timing)| {
                 if timing.submitted_ns == 0 {
@@ -455,7 +511,34 @@ fn advance(
             }
         }
         Ok(None) => match client.poll_restore(handle) {
-            Ok(response) if response.state != RestoreState::Pending => Some((response, None)),
+            Ok(response) if response.state != RestoreState::Pending => {
+                if response.state == RestoreState::Succeeded {
+                    // Managed SSD/codec execution supplies only a whole-operation fence.
+                    // Publish fresh events after that fence without moving its I/O ownership.
+                    let empty = RawRestorePart {
+                        copies: Vec::new(),
+                        completed_layers: Vec::new(),
+                    };
+                    let result = executor
+                        .lock()
+                        .unwrap_or_else(|poison| poison.into_inner())
+                        .as_mut()
+                        .ok_or_else(|| "local Restore worker stopped".to_string())
+                        .and_then(|executor| {
+                            executor.execute(
+                                &empty,
+                                &mut job.layer_events,
+                                true,
+                                || job.result.mark_enqueued(),
+                                None,
+                            )
+                        });
+                    if let Err(error) = result {
+                        return Some((failed(error), None));
+                    }
+                }
+                Some((response, None))
+            }
             Ok(_) => None,
             Err(error) => Some((failed(error.to_string()), None)),
         },

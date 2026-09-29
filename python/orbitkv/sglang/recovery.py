@@ -164,11 +164,10 @@ class RecoveryLinkerWrapper(UnifiedCacheLinkerWrapper):
             # load_back already published these slots into the tree. Finish
             # their DMA before cancellation can make them reusable by a match.
             index = linker.start_layer_wise_loading()
+            linker.layer_done_counter.set_consumer(index)
             linker._load_queue.join()
             linker._check_load_failure()
             self.drain_loads(self.num_completed_loads())
-            linker.layer_done_counter._futures.pop(index, None)
-            linker.layer_done_counter.request_ids.pop(index, None)
         linker.cancel_queued_load(rid)
 
     def _update_load(

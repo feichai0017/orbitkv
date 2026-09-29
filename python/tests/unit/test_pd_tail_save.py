@@ -229,7 +229,7 @@ class TestTailLoad:
         req = _make_request("r1", prompt_len=50, full_hashes=3)
         sc = _make_load_connector(req, hit_blocks=4)
 
-        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (49, True)
+        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (49, False)
         sc._ctx.client.query_prefetch.assert_called_once_with(
             "test",
             BlockHashes([*req.block_hashes, b"tail:2"]),
@@ -240,7 +240,7 @@ class TestTailLoad:
     def test_tail_hit_allocates_and_loads_the_partial_page(self):
         req = _make_request("r1", prompt_len=50, full_hashes=3)
         sc = _make_load_connector(req, hit_blocks=4)
-        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (49, True)
+        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (49, False)
         blocks = SimpleNamespace(
             get_block_ids=lambda: ([10, 11, 12, 13],),
             blocks=[[SimpleNamespace(block_hash=None) for _ in range(4)]],
@@ -257,12 +257,12 @@ class TestTailLoad:
         req = _make_request("r1", prompt_len=50, full_hashes=3)
         sc = _make_load_connector(req, hit_blocks=3)
 
-        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=16) == (33, True)
+        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=16) == (33, False)
         blocks = SimpleNamespace(
             get_block_ids=lambda: ([10, 11, 12, 13],),
             blocks=[
                 [SimpleNamespace(block_hash=b"local")]
-                + [SimpleNamespace(block_hash=None) for _ in range(3)]
+                + [SimpleNamespace(block_hash=b"scheduled") for _ in range(3)]
             ],
         )
 
@@ -275,7 +275,7 @@ class TestTailLoad:
     def test_request_drift_is_reported_separately_from_lease_count(self):
         req = _make_request("r1", prompt_len=50, full_hashes=3)
         sc = _make_load_connector(req, hit_blocks=4)
-        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (49, True)
+        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (49, False)
         req.block_hashes[0] = _hash(99)
         blocks = SimpleNamespace(
             get_block_ids=lambda: ([10, 11, 12, 13],),
@@ -288,7 +288,7 @@ class TestTailLoad:
     def test_lease_count_must_match_allocated_load_blocks(self):
         req = _make_request("r1", prompt_len=50, full_hashes=3)
         sc = _make_load_connector(req, hit_blocks=4)
-        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (49, True)
+        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (49, False)
         blocks = SimpleNamespace(
             get_block_ids=lambda: ([10, 11, 12],),
             blocks=[[SimpleNamespace(block_hash=None) for _ in range(3)]],
@@ -301,13 +301,13 @@ class TestTailLoad:
         req = _make_request("r1", prompt_len=50, full_hashes=3)
         sc = _make_load_connector(req, hit_blocks=3)
 
-        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (48, True)
+        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (48, False)
 
     def test_one_token_tail_is_not_queried(self):
         req = _make_request("r1", prompt_len=49, full_hashes=3)
         sc = _make_load_connector(req, hit_blocks=3)
 
-        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (48, True)
+        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (48, False)
         queried_hashes = sc._ctx.client.query_prefetch.call_args.args[1]
         assert queried_hashes == BlockHashes(req.block_hashes)
 
@@ -315,10 +315,10 @@ class TestTailLoad:
         req = _make_request("r1", prompt_len=10, full_hashes=0)
         sc = _make_load_connector(req, hit_blocks=1)
 
-        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (9, True)
+        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (9, False)
 
     def test_block_aligned_full_hit_recomputes_last_token(self):
         req = _make_request("r1", prompt_len=48, full_hashes=3)
         sc = _make_load_connector(req, hit_blocks=3)
 
-        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (47, True)
+        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (47, False)

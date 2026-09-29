@@ -28,14 +28,21 @@ The diagram separates four payload routes:
 
 | Route | Submission owner | Control and completion |
 | --- | --- | --- |
-| Raw local DRAM → HBM | Engine's Rust executor | Manager source grant; shared memfd arenas; engine GPU drain; asynchronous source retirement |
+| Raw local DRAM → HBM | Engine's Rust executor | Manager source grant; shared memfd arenas; per-layer CUDA events; final GPU drain and asynchronous source retirement |
 | Publish, SSD or encoded Restore | Manager GPU/storage worker | CUDA IPC tensor registration; retained source/destination and staging owners through completion |
 | Historical peer KV → local cache → HBM | Requester Manager, then its existing local Restore route | Catalog candidates and source gRPC authorization; TENT READ; acknowledged source release |
 | Current prefill KV → decode HBM | Engine P/D adapters | TENT WRITE; vLLM split-connector protocol or SGLang native bootstrap/rooms |
 
 UDS transfers descriptors during session setup; iceoryx2 carries local cache
 commands. Shared completion records and eventfd wakeups report local restore
-progress. etcd maintains membership, epochs and fixed catalog placement in the
+progress. The native executor records a layer event only after that layer's final
+required ranges; consumers can overlap later raw copies while source ownership
+remains retained through final drain. vLLM admits the restore into the consuming
+forward and requires piecewise graphs. SGLang installs persistent external event
+waits before its first graph capture. Packed buffers, vLLM recurrent operators
+and multi-part plans retain coarser dependencies; see the
+[layer readiness contract](engine-local-restore.md#layer-readiness-and-framework-consumption).
+etcd maintains membership, epochs and fixed catalog placement in the
 background, outside the cache lookup path. Peer metadata still uses gRPC.
 
 

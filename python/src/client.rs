@@ -759,7 +759,7 @@ impl PyCacheManagerClient {
         clippy::too_many_arguments,
         reason = "Restore identifies registered destinations, leases, and the framework readiness stream"
     )]
-    #[pyo3(signature = (instance_id, tp_rank, device_id, layer_groups, loads, *, ready_stream))]
+    #[pyo3(signature = (instance_id, tp_rank, device_id, layer_groups, loads, *, ready_stream, layer_events=None))]
     fn start_restore(
         &self,
         py: Python<'_>,
@@ -769,7 +769,17 @@ impl PyCacheManagerClient {
         layer_groups: Vec<Vec<String>>,
         loads: Vec<PyLeaseLoad>,
         ready_stream: u64,
+        layer_events: Option<Vec<(String, Py<PyAny>)>>,
     ) -> PyResult<PyRestoreHandle> {
+        let mut events = HashMap::new();
+        let mut event_owners = Vec::new();
+        for (layer, event) in layer_events.unwrap_or_default() {
+            let handle = event.bind(py).getattr("cuda_event")?.extract::<u64>()?;
+            if events.insert(layer, handle).is_some() {
+                return Err(PyValueError::new_err("duplicate Restore event layer"));
+            }
+            event_owners.push(event);
+        }
         let started = (*crate::local_restore::RESTORE_TIMING).then(std::time::Instant::now);
         let loads = loads
             .into_iter()
@@ -789,7 +799,7 @@ impl PyCacheManagerClient {
                     PyValueError::new_err("GPU tensors must be registered before Restore")
                 })?;
             worker
-                .reserve(ready_stream)
+                .reserve(ready_stream, &events)
                 .map_err(OrbitKVError::new_err)?;
             let timing = started.map(|start| {
                 (
@@ -809,7 +819,7 @@ impl PyCacheManagerClient {
             }) {
                 Ok(handle) => Ok(PyRestoreHandle {
                     handle,
-                    result: worker.submit(handle, timing),
+                    result: worker.submit(handle, timing, events, event_owners),
                     owner: Arc::downgrade(&self.inner),
                 }),
                 Err(error) => {
@@ -818,6 +828,32 @@ impl PyCacheManagerClient {
                 }
             }
         })
+    }
+
+    /// Wait for this operation's layer-event records to be submitted, not for DMA completion.
+    #[pyo3(signature = (handle, *, timeout))]
+    fn wait_restore_enqueued(
+        &self,
+        py: Python<'_>,
+        handle: &PyRestoreHandle,
+        timeout: f64,
+    ) -> PyResult<()> {
+        if !Weak::ptr_eq(&Arc::downgrade(&self.inner), &handle.owner) {
+            return Err(PyValueError::new_err(
+                "Restore handle belongs to another client",
+            ));
+        }
+        let timeout = seconds(timeout)?;
+        if py
+            .detach(|| handle.result.wait_enqueued(timeout))
+            .map_err(OrbitKVError::new_err)?
+        {
+            Ok(())
+        } else {
+            Err(PyTimeoutError::new_err(
+                "OrbitKV Restore event publication timed out",
+            ))
+        }
     }
 
     fn poll_restore(&self, py: Python<'_>, handle: &PyRestoreHandle) -> PyResult<RestoreStatus> {

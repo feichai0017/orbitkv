@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use cudarc::driver::{CudaContext, sys};
-use orbitkv_core::transfer::local::{LocalRestoreExecutor, LocalTensor, RawRestorePlan};
+use orbitkv_core::transfer::local::{LocalRestoreExecutor, LocalTensor, RawRestorePart};
 use orbitkv_core::{
     EngineConfig, LayerSave, OrbitKVEngine, QueryLeaseId, QueryResult, RestoreExecution,
     TransferMode,
@@ -248,8 +248,14 @@ impl BenchFixture {
             RestoreExecution::Local(mut grant) => {
                 let result = loop {
                     let (bytes, more) = grant.encoded_plan();
-                    let plan = RawRestorePlan::decode(bytes).expect("decode Restore plan");
-                    let result = self.local_restore.lock().unwrap().execute(&plan, None);
+                    let plan = RawRestorePart::decode(bytes).expect("decode Restore plan");
+                    let result = self.local_restore.lock().unwrap().execute(
+                        &plan,
+                        &mut Default::default(),
+                        true,
+                        || {},
+                        None,
+                    );
                     if result.is_err() || !more {
                         break result;
                     }

@@ -1,6 +1,6 @@
 //! Engine-owned raw Restore copies from independently imported payload arenas.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::ptr::NonNull;
 use std::sync::Arc;
@@ -39,22 +39,35 @@ pub struct RawRestorePlan {
     pub copies: Vec<RawCopy>,
 }
 
+/// One bounded wire part and the layers whose final ranges it contains.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RawRestorePart {
+    pub copies: Vec<RawCopy>,
+    pub completed_layers: Vec<String>,
+}
+
 impl RawRestorePlan {
     pub fn encode_parts(&self) -> Result<VecDeque<Vec<u8>>, String> {
+        let last_copy: HashMap<_, _> = self
+            .copies
+            .iter()
+            .enumerate()
+            .map(|(index, copy)| (copy.layer.as_str(), index))
+            .collect();
         let mut parts = VecDeque::new();
-        let mut bytes = Vec::from([1, 0, 0, 0, 0, 0, 0, 0]);
+        let mut bytes = Vec::from([2, 0, 0, 0, 0, 0, 0, 0]);
         let mut count = 0_u32;
         let mut total = 8usize;
-        for copy in &self.copies {
+        for (index, copy) in self.copies.iter().enumerate() {
             let name_len = u16::try_from(copy.layer.len())
                 .ok()
                 .filter(|len| *len != 0)
                 .ok_or("invalid Restore layer name length")?;
-            let size = 58 + usize::from(name_len);
+            let size = 59 + usize::from(name_len);
             if bytes.len() + size > MAX_PLAN_BYTES {
                 bytes[4..8].copy_from_slice(&count.to_le_bytes());
                 parts.push_back(bytes);
-                bytes = Vec::from([1, 0, 0, 0, 0, 0, 0, 0]);
+                bytes = Vec::from([2, 0, 0, 0, 0, 0, 0, 0]);
                 count = 0;
                 total += 8;
             }
@@ -77,25 +90,30 @@ impl RawRestorePlan {
             }
             bytes.extend_from_slice(&name_len.to_le_bytes());
             bytes.extend_from_slice(copy.layer.as_bytes());
+            bytes.push(u8::from(last_copy[copy.layer.as_str()] == index));
         }
         bytes[4..8].copy_from_slice(&count.to_le_bytes());
         parts.push_back(bytes);
         Ok(parts)
     }
+}
 
+impl RawRestorePart {
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
-        if bytes.len() < 8 || bytes.len() > MAX_PLAN_BYTES || bytes[..4] != 1_u32.to_le_bytes() {
+        if bytes.len() < 8 || bytes.len() > MAX_PLAN_BYTES || bytes[..4] != 2_u32.to_le_bytes() {
             return Err("invalid raw Restore plan header".into());
         }
         let count =
             u32::from_le_bytes(bytes[4..8].try_into().map_err(|_| "invalid plan count")?) as usize;
-        if count > (bytes.len() - 8) / 58 {
+        if count > (bytes.len() - 8) / 59 {
             return Err("invalid raw Restore copy count".into());
         }
         let mut copies = Vec::with_capacity(count);
+        let mut completed_layers = Vec::new();
+        let mut completed = HashSet::new();
         let mut remaining = &bytes[8..];
         for _ in 0..count {
-            if remaining.len() < 58 {
+            if remaining.len() < 59 {
                 return Err("truncated raw Restore copy".into());
             }
             let mut words = [0_u64; 7];
@@ -107,13 +125,24 @@ impl RawRestorePlan {
                 );
             }
             let name_len = u16::from_le_bytes([remaining[56], remaining[57]]) as usize;
-            if name_len == 0 || remaining.len() < 58 + name_len {
+            if name_len == 0 || remaining.len() < 59 + name_len {
                 return Err("invalid raw Restore layer name".into());
             }
             let layer = std::str::from_utf8(&remaining[58..58 + name_len])
                 .map_err(|_| "Restore layer name is not UTF-8")?
                 .to_owned();
-            remaining = &remaining[58 + name_len..];
+            if completed.contains(&layer) {
+                return Err("Restore copy follows layer completion".into());
+            }
+            match remaining[58 + name_len] {
+                0 => {}
+                1 => {
+                    completed.insert(layer.clone());
+                    completed_layers.push(layer.clone());
+                }
+                _ => return Err("invalid Restore layer completion marker".into()),
+            }
+            remaining = &remaining[59 + name_len..];
             copies.push(RawCopy {
                 source: SourceRange {
                     arena_id: words[0],
@@ -130,7 +159,10 @@ impl RawRestorePlan {
         if !remaining.is_empty() {
             return Err("trailing raw Restore plan bytes".into());
         }
-        Ok(Self { copies })
+        Ok(Self {
+            copies,
+            completed_layers,
+        })
     }
 }
 
@@ -370,6 +402,18 @@ impl LocalRestoreExecutor {
         })
     }
 
+    pub fn validate_layer_events(&self, events: &HashMap<String, u64>) -> Result<(), String> {
+        let mut handles = HashSet::new();
+        for (layer, event) in events {
+            if !self.tensors.contains_key(layer) || *event == 0 || !handles.insert(*event) {
+                return Err(
+                    "Restore events require unique live events for registered layers".into(),
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// Capture the caller's actual previous-user stream and fence it before
     /// requesting a plan (which may select a Manager-owned codec/SSD route).
     pub fn wait_for_destination(&mut self, ready_stream: u64) -> Result<(), String> {
@@ -401,7 +445,10 @@ impl LocalRestoreExecutor {
     /// Drained afterwards. Sources cannot be recycled during preparation or DMA.
     pub fn execute(
         &mut self,
-        plan: &RawRestorePlan,
+        plan: &RawRestorePart,
+        layer_events: &mut HashMap<String, u64>,
+        final_part: bool,
+        enqueued: impl FnOnce(),
         submitted_at: Option<&mut Option<std::time::Instant>>,
     ) -> Result<(), String> {
         #[cfg(feature = "test-hooks")]
@@ -465,35 +512,73 @@ impl LocalRestoreExecutor {
                 host_registration: arena.pointer.as_ptr() as usize,
             });
         }
-        copies.sort_unstable_by_key(|copy| copy.device);
-        for pair in copies.windows(2) {
+        // Validate the whole part without changing its semantic layer order.
+        let mut targets: Vec<_> = copies.iter().map(|copy| (copy.device, copy.size)).collect();
+        targets.sort_unstable();
+        for pair in targets.windows(2) {
             if pair[0]
-                .device
-                .checked_add(pair[0].size as u64)
-                .is_none_or(|end| end > pair[1].device)
+                .0
+                .checked_add(pair[0].1 as u64)
+                .is_none_or(|end| end > pair[1].0)
             {
                 return Err("overlapping Restore destination ranges".into());
             }
         }
-        #[cfg(feature = "test-hooks")]
-        let submitted = if !copies.is_empty()
-            && (crate::test_faults::active("local_restore_dma")
-                || crate::test_faults::active("local_restore_error"))
-        {
-            let first = self.backend.h2d(&copies[..1], &self.stream);
-            crate::test_faults::pause_blocking("local_restore_dma");
-            if crate::test_faults::active("local_restore_error") {
-                first.and(Err(
-                    "injected failure after first local Restore enqueue".into()
-                ))
+        let mut batches: Vec<(&str, Vec<CopyDesc>)> = Vec::new();
+        let mut indices = HashMap::new();
+        for (raw, copy) in plan.copies.iter().zip(copies) {
+            let layer = if layer_events.contains_key(&raw.layer) {
+                raw.layer.as_str()
             } else {
-                first.and_then(|()| self.backend.h2d(&copies[1..], &self.stream))
+                ""
+            };
+            let index = *indices.entry(layer).or_insert_with(|| {
+                batches.push((layer, Vec::new()));
+                batches.len() - 1
+            });
+            batches[index].1.push(copy);
+        }
+        let submitted = (|| -> Result<(), String> {
+            for (layer, mut copies) in batches {
+                copies.sort_unstable_by_key(|copy| copy.device);
+                #[cfg(feature = "test-hooks")]
+                if !copies.is_empty()
+                    && (crate::test_faults::active("local_restore_dma")
+                        || crate::test_faults::active("local_restore_error"))
+                {
+                    self.backend.h2d(&copies[..1], &self.stream)?;
+                    crate::test_faults::pause_blocking("local_restore_dma");
+                    if crate::test_faults::active("local_restore_error") {
+                        return Err("injected failure after first local Restore enqueue".into());
+                    }
+                    self.backend.h2d(&copies[1..], &self.stream)?;
+                } else {
+                    self.backend.h2d(&copies, &self.stream)?;
+                }
+                #[cfg(not(feature = "test-hooks"))]
+                self.backend.h2d(&copies, &self.stream)?;
+                if plan.completed_layers.iter().any(|name| name == layer)
+                    && let Some(event) = layer_events.remove(layer)
+                {
+                    // The caller retains the framework event through this operation's drain.
+                    unsafe {
+                        result::event::record(event as sys::CUevent, self.stream.cu_stream())
+                    }
+                    .map_err(|error| error.to_string())?;
+                }
             }
-        } else {
-            self.backend.h2d(&copies, &self.stream)
-        };
-        #[cfg(not(feature = "test-hooks"))]
-        let submitted = self.backend.h2d(&copies, &self.stream);
+            if final_part {
+                // Layers with no required bytes still need a fresh generation of their event.
+                for (_, event) in layer_events.drain() {
+                    unsafe {
+                        result::event::record(event as sys::CUevent, self.stream.cu_stream())
+                    }
+                    .map_err(|error| error.to_string())?;
+                }
+                enqueued();
+            }
+            Ok(())
+        })();
         if let Some(submitted_at) = submitted_at {
             *submitted_at = Some(std::time::Instant::now());
         }

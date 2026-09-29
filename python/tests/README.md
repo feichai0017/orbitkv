@@ -162,6 +162,14 @@ gate verifies that native `long_warm` had a prefix-cache hit, checks OrbitKV
 save/hit/load activity, and requires OrbitKV `long_warm` to load KV bytes after
 that restart.
 
+Use `--vllm-cudagraph-mode FULL` to qualify restored prefixes entering full-graph
+replay, or `NONE` / `PIECEWISE` for the other consumption boundaries. The option
+applies identically to the native and OrbitKV engines; omitting it retains vLLM's
+default graph selection. Add `--vllm-multi-connector` to exercise cache recovery
+as the second child of the pinned engine's `MultiConnector`; this checks child
+metadata mapping and the recurrent pre-copy boundary independently of the
+separate two-worker P/D payload gate.
+
 Add `--vllm-cache-tier ssd` to enable an 8 GiB SSD cache, wait for writes to
 drain and evict Manager DRAM before the engine restart. The same output and
 GPU-load controls then also require new SSD reads. DRAM remains the default.

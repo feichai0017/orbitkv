@@ -108,7 +108,7 @@ def test_owned_prefix_preparation_keeps_ordinary_lookup_and_page_lifetime(monkey
     client.prepare_prefix.assert_called_once_with("prepared", batch, "queued")
     assert scheduler._recovery is None
     assert not scheduler._pending_load_intents
-    expected = (min(hits * 16, 63), True)
+    expected = (min(hits * 16, 63), False)
     assert scheduler.get_num_new_matched_tokens(req, 0) == expected
     assert scheduler.get_num_new_matched_tokens(req, 0) == expected
     client.query_prefetch.assert_called_once_with(
@@ -155,7 +155,7 @@ def restoring():
     )
     scheduler._tp_shard_client.query = MagicMock(return_value=ShardedQueryReady(2, (b"hold",)))
     restoring = request("restore")
-    assert scheduler.get_num_new_matched_tokens(restoring, 0) == (31, True)
+    assert scheduler.get_num_new_matched_tokens(restoring, 0) == (31, False)
     blocks = SimpleNamespace(
         blocks=([SimpleNamespace(block_hash=None) for _ in range(2)],),
         get_block_ids=lambda: ([1, 2],),
@@ -185,7 +185,7 @@ def test_lookup_waits_for_compute_but_prefetch_can_complete(restoring, kind):
     assert scheduler._tp_shard_client.query.call_count == calls
 
     scheduler.build_connector_meta(step(tokens=1))
-    expected = (31, True) if kind == "hit" else (0, False)
+    expected = (31, False) if kind == "hit" else (0, False)
     assert scheduler.get_num_new_matched_tokens(waiting, 0) == expected
     assert scheduler._tp_shard_client.query.call_count == calls
 

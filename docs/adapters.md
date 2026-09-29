@@ -21,9 +21,14 @@ client.close()
 alongside the IPC metadata used by Publish and Manager SSD/codec routes.
 `start_restore(..., ready_stream=...)` takes the engine's destination-readiness
 stream and returns a client-bound handle for `poll_restore` or
-`wait_restore(timeout=...)`. Unencoded DRAM copies execute in the native engine
-worker; their local result follows DMA drain without waiting for Manager source
-reaping. Repeated registration of the same binding is rejected, and unregister
+`wait_restore(timeout=...)`. Optional `layer_events` bind retained CUDA events
+to registered layers. `wait_restore_enqueued` waits for fresh event records,
+allowing per-layer consumer dependencies; it does not acknowledge destination
+page reuse. Unencoded DRAM copies execute in the native engine worker; their
+final local result follows DMA drain without waiting for Manager source reaping.
+vLLM requires piecewise graphs; SGLang installs external events before capture.
+See [layer consumption](engine-local-restore.md#layer-readiness-and-framework-consumption)
+for recurrent, packed-buffer and multi-part limits. Repeated registration of the same binding is rejected, and unregister
 or close drains accepted operations. Native calls release the GIL. A timeout
 does not release destination page assignments while a copy may still be running. See the [type reference](../python/orbitkv/orbitkv.pyi).
 
@@ -41,7 +46,7 @@ path. `orbitkv.timeout_ms` (default 5000) bounds hot requests and health;
 registration and unregister allow at least 120 seconds for CUDA setup/draining.
 `orbitkv.spin_iterations` defaults to 64. Standalone Cache Managers do
 not start gRPC. Client and Cache Manager must use matching
-bootstrap protocol versions (currently bootstrap 7, channel ABI 11, and lifecycle 4).
+bootstrap protocol versions (currently bootstrap 7, channel ABI 11, cache schema 9, and lifecycle 4).
 Bootstrap transfers five metadata/notification FDs; GPU registration attaches
 the shared payload arena FDs separately. The local executor partitions large
 raw plans into at most 1 MiB parts under one whole-operation fence. Operation

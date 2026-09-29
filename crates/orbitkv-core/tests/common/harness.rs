@@ -1,7 +1,7 @@
 use std::sync::{Arc, OnceLock};
 
 use cudarc::driver::CudaContext;
-use orbitkv_core::transfer::local::{LocalRestoreExecutor, LocalTensor, RawRestorePlan};
+use orbitkv_core::transfer::local::{LocalRestoreExecutor, LocalTensor, RawRestorePart};
 use orbitkv_core::*;
 
 use super::gpu_buffer::GpuBuffer;
@@ -512,12 +512,12 @@ impl TestEnv {
             RestoreExecution::Local(mut grant) => {
                 let result = loop {
                     let (bytes, more) = grant.encoded_plan();
-                    let plan = RawRestorePlan::decode(bytes).expect("decode granted plan");
+                    let plan = RawRestorePart::decode(bytes).expect("decode granted plan");
                     let result = self
                         .local_restore
                         .lock()
                         .unwrap()
-                        .execute(&plan, None)
+                        .execute(&plan, &mut Default::default(), true, || {}, None)
                         .map_err(EngineError::Storage);
                     if result.is_err() || !more {
                         break result;

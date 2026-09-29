@@ -265,7 +265,10 @@ def test_hma_requires_boundary_state_hand_off_api():
         scheduler.build_connector_meta(_scheduler_output({}, with_block_state=False))
 
 
-def test_hma_rejects_incompatible_vllm_before_opening_cache_connections(monkeypatch):
+@pytest.mark.parametrize(
+    "use_v2,error", [(True, "kv_connector_block_state"), (False, "V2 model runner")]
+)
+def test_hma_rejects_incompatible_vllm_before_opening_cache_connections(monkeypatch, use_v2, error):
     from vllm.v1.kv_cache_interface import FullAttentionSpec, MambaSpec
 
     import orbitkv.vllm as vllm
@@ -287,12 +290,13 @@ def test_hma_rejects_incompatible_vllm_before_opening_cache_connections(monkeypa
     connect_cache = MagicMock()
     monkeypatch.setattr("orbitkv.vllm.connector.connect_cache", connect_cache)
     config = SimpleNamespace(
+        use_v2_model_runner=use_v2,
         kv_transfer_config=SimpleNamespace(engine_id="test"),
         parallel_config=SimpleNamespace(tensor_parallel_size=1, world_size=1),
         model_config=SimpleNamespace(hf_text_config=SimpleNamespace()),
     )
 
-    with pytest.raises(RuntimeError, match="kv_connector_block_state"):
+    with pytest.raises(RuntimeError, match=error):
         vllm.OrbitKVConnector(
             config,
             vllm.KVConnectorRole.SCHEDULER,
@@ -365,7 +369,7 @@ def test_checkpoint_short_of_attention_prefix_hints_the_junction():
 
     hit_tokens, load_async = scheduler.get_num_new_matched_tokens(request, 0)
 
-    assert (hit_tokens, load_async) == (3 * VBS, True)
+    assert (hit_tokens, load_async) == (3 * VBS, False)
     assert request.shared_prefix_boundary == 8 * VBS
 
 
@@ -425,7 +429,7 @@ def test_load_targets_cover_only_the_selected_checkpoint_prefix():
     )
     request = _request(num_tokens=5 * VBS, num_hashes=5)
 
-    assert scheduler.get_num_new_matched_tokens(request, 0) == (4 * VBS, True)
+    assert scheduler.get_num_new_matched_tokens(request, 0) == (4 * VBS, False)
 
     blocks = SimpleNamespace(
         get_block_ids=lambda: ([10, 11, 12, 13, 14], [20, 21, 22, 23, 24]),

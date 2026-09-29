@@ -21,9 +21,15 @@ def register() -> None:
         observe_decode_ready,
         observe_deferred_release,
     )
+    from .linker import initialize_layer_counter
     from .pd import install_sglang_tent_backend
 
     install_sglang_tent_backend()
+    HookRegistry.register(
+        "sglang.srt.managers.tp_worker.TpModelWorker.init_cuda_graphs",
+        initialize_layer_counter,
+        HookType.BEFORE,
+    )
     HookRegistry.register(
         "sglang.srt.disaggregation.mooncake.conn.MooncakeKVReceiver.send_metadata",
         capture_decode_pages,
@@ -122,7 +128,7 @@ def create_cache(ctx: Any) -> UnifiedRadixCache:
         ctx.params.component_registry_override = {ComponentType.MAMBA: RecurrentComponent}
     ctx.params.tree_components = tuple(components)
     cache = UnifiedRadixCache(ctx.params)
-    linker = OrbitKVLinker(ctx.server_args, ctx.params, components=set(cache.components))
+    linker = OrbitKVLinker(ctx.server_args, ctx.params)
     try:
         cache.linker = RecoveryLinkerWrapper(
             cache,
@@ -132,10 +138,4 @@ def create_cache(ctx: Any) -> UnifiedRadixCache:
     except Exception:
         linker.close()
         raise
-    counter = linker.layer_done_counter
-    kvcache = ctx.params.token_to_kv_pool_allocator.get_kvcache()
-    kvcache.register_layer_transfer_counter(counter)
-    if ctx.is_hybrid_ssm:
-        ctx.params.req_to_token_pool.register_layer_transfer_counter(counter)
-    ctx.tp_worker.register_hicache_layer_transfer_counter(counter)
     return cache

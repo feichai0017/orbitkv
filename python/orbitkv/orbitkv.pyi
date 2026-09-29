@@ -253,6 +253,7 @@ class CacheManagerClient:
         loads: list[tuple[bytes, list[list[int | None]]]],
         *,
         ready_stream: int,
+        layer_events: list[tuple[str, object]] | None = None,
     ) -> RestoreHandle:
         """Reserve an operation before submission; claimed errors arrive in RestoreStatus.
 
@@ -262,6 +263,10 @@ class CacheManagerClient:
         after timeout. A lost submission ACK retains any claimed operation.
         """
         ...
+    def wait_restore_enqueued(self, handle: RestoreHandle, *, timeout: float) -> None:
+        """Wait until layer events describe this operation's enqueued copies; keep its final fence."""
+        ...
+
     def poll_restore(self, handle: RestoreHandle) -> RestoreStatus: ...
     def wait_restore(self, handle: RestoreHandle, *, timeout: float) -> RestoreStatus:
         """Consume the terminal result without the GIL; timeout preserves ownership."""

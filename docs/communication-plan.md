@@ -61,9 +61,12 @@ the same binding is rejected; unregister and close drain accepted operations
 before releasing their tensor and CUDA owners. Python keeps framework callback
 and layout work, while Rust owns the operation state machines and waiting.
 
-This implements the first single-GPU, unencoded DRAM, whole-operation slice.
-It does not establish layer/group overlap, replay-time CUDA graph dependencies,
-or broad serving qualification. The communication-branch production build
+The native executor now publishes per-layer events while retaining one final
+source-retirement fence. vLLM uses synchronous admission, per-layer callbacks
+for eager/piecewise execution and a dependency on all restored layers at full-graph
+entry. SGLang installs persistent external events before first capture and orders
+each pool's copies by their consuming layer. Serving and performance qualification
+remain separate gates. The communication-branch production build
 passed the scoped Qwen3-8B DRAM correctness gates in both pinned engines. The exact ownership and
 remaining gates are described in [engine-local Restore](engine-local-restore.md).
 
@@ -381,10 +384,12 @@ received replica after original-source eviction; all checked counters drain.
 The matching native hashes, launch logs and results are retained in the same
 artifact directory. These gates do not establish layer overlap or RDMA.
 
-Then add layer/group dependencies so early groups can be consumed while later
-groups restore. Compile actual framework dependencies, preserve one final drain,
-and qualify both eager execution and replay-time graph dependencies. Page-first
-allocations require shared last-use ownership across consuming groups.
+Per-layer event publication now allows raw single-part restores to overlap
+consumer execution. Bounded parts retain their intermediate drains; vLLM
+recurrent state and packed cross-layer bindings retain coarser dependencies.
+The [implemented engine consumption contracts](engine-local-restore.md#layer-readiness-and-framework-consumption)
+separate event publication, final DMA completion and source retirement. Serving
+and matched performance gates must qualify each advertised mode.
 
 SSD materialization, codec execution, and direct SSD routes may migrate only
 with their concrete storage, scratch, registration, and completion owners.
@@ -431,7 +436,7 @@ epochs, acknowledgements, native prerequisites and source-control cutover.
 | Completed: raw plan and idle readiness | Allocation-aware run compaction before encoding; query idle streams and reuse the busy-stream event | Per-page descriptors for contiguous runs and redundant GPU event submission on idle streams | [Matched measurements](communication-performance.md), large dense plan bytes, lease preservation on invalid or over-budget plans, and reused-event readiness |
 | Next: residual raw overhead | Profile native scheduling, fragmented plans and scratch reuse | Measured redundant work in the remaining path | Small-payload latency, unchanged source/destination drain guarantees and failure gates |
 | Implemented: large raw plans | Bounded parts under one operation ID, with a final completion fence and per-session metadata credits | Rejection solely because a compacted plan exceeds the 1 MiB shared bank | Fragmented large-prefix bytes, cancellation between partitions and bounded plan/source credits |
-| Next: execution overlap | Layer-group dependencies with one final retirement fence | Whole-restore waits from engine consumption sites covered by qualified group dependencies | Pinned engine releases, eager/graph replay, page reuse, TTFT/ITL and CPU cost |
+| Implemented, serving qualification in progress: execution overlap | Native layer events with one final retirement fence; vLLM layer callbacks/full-graph entry waits and SGLang external graph waits | vLLM asynchronous load notification bookkeeping, SGLang per-request Restore window and whole-operation first-use wait | Pinned engine releases, eager/graph replay, page reuse, TTFT/ITL and CPU cost |
 | Next: native metadata | Bounded binary notification API and per-peer transport selection | Unsafe string framing and first-transport notification dispatch | Size/queue limits, unreachable peer, mixed transports and native shutdown |
 | Next: peer session | Batched lookup/grant/completion with application ACK and credits | Corresponding hot gRPC methods, retry owner and protobuf messages | Loss, duplication, reorder, restart, corruption, slow peer and multi-host qualification |
 

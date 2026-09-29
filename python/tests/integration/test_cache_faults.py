@@ -1653,6 +1653,9 @@ def test_partitioned_restore_keeps_owners_and_completes_only_after_all_parts(fau
     )[0]
     ready = query(client, ctx, hashes, "partitioned")
     assert ready.num_hit_blocks == count
+    events = [torch.cuda.Event(external=True) for _ in tensors]
+    for event in events:
+        event.record()
     arm(directory, "local_restore_part_drained")
     handle = client.start_restore(
         ctx.instance_id,
@@ -1661,8 +1664,11 @@ def test_partitioned_restore_keeps_owners_and_completes_only_after_all_parts(fau
         [ctx._layer_names],
         [(ready.lease, [list(range(2 * count - 1, count - 1, -1))])],
         ready_stream=torch.cuda.current_stream(0).cuda_stream,
+        layer_events=list(zip(ctx._layer_names, events, strict=True)),
     )
     reached(directory, "local_restore_part_drained")
+    with pytest.raises(TimeoutError):
+        client.wait_restore_enqueued(handle, timeout=0.02)
     with pytest.raises(TimeoutError):
         client.wait_restore(handle, timeout=0.02)
     assert not client.poll_restore(handle).done
@@ -1675,6 +1681,15 @@ def test_partitioned_restore_keeps_owners_and_completes_only_after_all_parts(fau
         server.process.kill()
         server.process.wait(timeout=10)
     (directory / "local_restore_part_drained.pause").unlink()
+    if outcome == "success":
+        client.wait_restore_enqueued(handle, timeout=10)
+        for event in events:
+            torch.cuda.current_stream().wait_event(event)
+    else:
+        from orbitkv import OrbitKVError
+
+        with pytest.raises(OrbitKVError):
+            client.wait_restore_enqueued(handle, timeout=10)
     status = client.wait_restore(handle, timeout=10)
     if outcome == "success":
         assert status.success, status.message

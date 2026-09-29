@@ -4,6 +4,7 @@ use super::*;
 use crate::block::{RawBlock, Segment};
 use crate::memory::pool::PinnedAllocator;
 use crate::transfer::layout::KVCacheGeometry;
+use crate::transfer::local::RawRestorePart;
 use crate::{NumaNode, QueryAdmission, QueryMode, QueryOwner};
 
 #[test]
@@ -60,7 +61,7 @@ fn raw_grant_retains_allocation_and_query_charge_until_explicit_finish() {
     )
     .unwrap();
     let (encoded, bytes, fragments) = prepared.raw.unwrap();
-    let plan = RawRestorePlan::decode(&encoded[0]).unwrap();
+    let plan = RawRestorePart::decode(&encoded[0]).unwrap();
     assert_eq!(fragments, plan.copies.len());
     assert_eq!(plan.copies.len(), 2);
     assert_eq!(plan.copies[0].layer, "layer_99");
@@ -237,7 +238,7 @@ fn raw_plan_orders_permuted_pages_and_compacts_only_matching_allocations() {
                 PreparedRestore::raw_plan(&mut groups, &refs, &[layout])
                     .unwrap()
                     .unwrap();
-            let plan = RawRestorePlan::decode(&encoded[0]).unwrap();
+            let plan = RawRestorePart::decode(&encoded[0]).unwrap();
             assert_eq!(fragments, plan.copies.len());
             let segments = if split { 2 } else { 1 };
             assert_eq!(bytes, segments * 128);
@@ -300,7 +301,7 @@ fn raw_plan_orders_permuted_pages_and_compacts_only_matching_allocations() {
         PreparedRestore::raw_plan(&mut groups, &refs, std::slice::from_ref(&layout))
             .unwrap()
             .unwrap();
-    let plan = RawRestorePlan::decode(&encoded[0]).unwrap();
+    let plan = RawRestorePart::decode(&encoded[0]).unwrap();
     assert_eq!(fragments, plan.copies.len());
     assert_eq!(plan.copies.len(), 2);
     assert_eq!(
@@ -393,7 +394,7 @@ fn large_plan_compacts_or_partitions_after_global_validation_and_preserves_rejec
         );
         let copies: Vec<_> = encoded
             .iter()
-            .flat_map(|part| RawRestorePlan::decode(part).unwrap().copies)
+            .flat_map(|part| RawRestorePart::decode(part).unwrap().copies)
             .collect();
         assert_eq!(fragments, copies.len());
         assert_eq!(bytes, (COUNT * 32) as u64);
@@ -405,9 +406,9 @@ fn large_plan_compacts_or_partitions_after_global_validation_and_preserves_rejec
             assert_eq!(encoded.len(), 1);
             assert_eq!(copies.len(), 1);
             assert_eq!(copies[0].source.size, (COUNT * 32) as u64);
-            assert_eq!(encoded[0].len(), 71);
+            assert_eq!(encoded[0].len(), 72);
         } else {
-            assert_eq!(encoded.len(), 2);
+            assert!(encoded.len() > 1);
             assert_eq!(copies.len(), COUNT);
             for (index, copy) in copies.iter().enumerate() {
                 assert_eq!(copy.destination_offset, (index * 32) as u64);

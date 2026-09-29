@@ -150,6 +150,13 @@ def _install_vllm_stubs() -> None:
     parallel_state.get_pp_group = lambda: _PPGroup()
 
     _ensure_module("vllm.config").VllmConfig = object
+
+    class CUDAGraphMode(Enum):
+        NONE = 0
+        PIECEWISE = 1
+        FULL = 2
+
+    _ensure_module("vllm.config").CUDAGraphMode = CUDAGraphMode
     models_utils = _ensure_module("vllm.model_executor.models.utils")
 
     def extract_layer_index(layer_name: str, num_attn_module: int = 1) -> int:

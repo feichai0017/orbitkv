@@ -124,45 +124,72 @@ def test_enqueue_uses_the_same_salted_storage_keys_without_triggering_a_load(
         submit.assert_not_called()
 
 
-def test_first_use_is_observed_once_even_when_the_first_layer_wait_repeats(monkeypatch):
+@pytest.fixture
+def layer_counter(monkeypatch):
     from orbitkv.sglang.linker import _LayerDoneCounter
 
+    monkeypatch.setattr("orbitkv.sglang.linker.torch.cuda.Event", MagicMock())
+    stream = SimpleNamespace(cuda_stream=17, wait_event=MagicMock())
+    monkeypatch.setattr("orbitkv.sglang.linker.torch.cuda.current_stream", lambda: stream)
+    layout = SimpleNamespace(
+        num_layers=2,
+        pools={
+            "kv": SimpleNamespace(
+                layer_names=["k:0", "k:1", "v:0", "v:1"],
+                entry=SimpleNamespace(layer_mapping={0: 0, 1: 1}),
+            )
+        },
+    )
+    return _LayerDoneCounter(layout), stream
+
+
+def test_first_use_is_observed_once_even_when_the_first_layer_wait_repeats(
+    layer_counter, monkeypatch
+):
+    counter, stream = layer_counter
     trace = MagicMock()
     monkeypatch.setattr("orbitkv.sglang.linker.trace_transfer", trace)
-    counter = _LayerDoneCounter(2)
     index = counter.update_producer()
     counter.request_ids[index] = ["restored"]
-    counter.complete(index)
+    counter.publish_events(index)
     counter.set_consumer(index)
     counter.wait_until(0)
     counter.wait_until(0)
     counter.wait_until(1)
+    assert stream.wait_event.call_count == 6
     trace.assert_called_once_with("first_use", "restored", engine="sglang")
 
 
-def test_graph_consumer_waits_without_any_python_layer_access():
-    from orbitkv.sglang.linker import _LayerDoneCounter
+def test_graph_capture_keeps_dependencies_and_forward_waits_for_new_records(layer_counter):
+    counter, stream = layer_counter
+    # Registration stays component-major; Restore follows the consumer's layer order.
+    assert counter.layer_groups == [["k:0", "v:0", "k:1", "v:1"]]
+    assert counter.layout.pools["kv"].layer_names == ["k:0", "k:1", "v:0", "v:1"]
+    # Capture precedes the first Restore; both components must still emit a wait.
+    counter.wait_until(0)
+    assert stream.wait_event.call_count == 2
+    for _ in range(2):
+        index = counter.update_producer()
+        activation = counter._activations[index]
+        entered, executing = threading.Event(), threading.Event()
 
-    counter = _LayerDoneCounter(2)
-    index = counter.update_producer()
-    entered, executing = threading.Event(), threading.Event()
+        def replay(index=index, entered=entered, executing=executing):
+            entered.set()
+            counter.set_consumer(index)
+            executing.set()
 
-    def replay():
-        entered.set()
-        counter.set_consumer(index)
-        executing.set()
-
-    thread = threading.Thread(target=replay, daemon=True)
-    thread.start()
-    assert entered.wait(timeout=1)
-    try:
-        assert not executing.wait(timeout=0.05)
-    finally:
-        counter.complete(index)
-        thread.join(timeout=1)
-    assert executing.is_set()
-    assert index not in counter._futures
-    assert not counter.request_ids and not counter._futures
+        thread = threading.Thread(target=replay, daemon=True)
+        thread.start()
+        assert entered.wait(timeout=1)
+        try:
+            assert activation.result(timeout=1) == 17
+            assert not executing.wait(timeout=0.05)
+        finally:
+            counter.publish_events(index)
+            thread.join(timeout=1)
+        assert executing.is_set()
+        assert not counter._activations and not counter._staged
+        assert not counter.request_ids
 
 
 def test_pending_query_defers_only_its_request_and_preserves_ready_lease(linker):

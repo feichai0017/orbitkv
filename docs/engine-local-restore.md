@@ -14,10 +14,12 @@ workers. This choice follows the prepared sources; a failed local raw restore
 is never retried through a second executor. Publish and GPU storage encoding
 also retain Manager workers and CUDA IPC tensor registration.
 
-This is the first executable slice: one destination GPU per operation,
-unencoded resident sources, and a whole-operation fence. Layer/group overlap,
-CUDA graph replay dependencies and migration of SSD/codec execution remain
-future work. Large raw plans now execute in bounded parts under the same fence.
+Each operation targets one GPU. Raw resident Restore records persistent engine
+CUDA events after each registered layer's final copy. The consuming stream may
+start that layer while later copies continue. All source, destination, query and
+event owners remain retained through a separate whole-operation drain. Large raw
+plans execute in bounded parts under that same ownership fence. Manager-owned
+SSD/codec execution still publishes consumer events only after its final drain.
 The frozen single-GPU native/fault bundle passed **38 tests**, with **30 cuFile cases skipped** because that
 configuration was not selected. This includes the new local Restore lifecycle
 cases; the caller CUDA-context preservation test also passed. See the
@@ -51,7 +53,8 @@ qualification remain open. Correctness alone does not establish a serving speedu
    separately, and merges consecutive source/destination ranges only within
    the same arena and allocation identity/bounds. Global destination-overlap
    validation still runs before consuming leases. This reduces descriptors
-   before encoding and shared-memory transport, without changing the wire format.
+   before encoding and shared-memory transport. Raw plan version 2 marks each
+   layer's final range across all parts; cache schema 9 rejects mismatched clients.
 5. The Manager installs the grant owner before publishing `Granted`. The native
    worker wins `Granted → Active`, copies the plan locally, validates source
    and destination ranges, and submits through the existing memcpy or mapped
@@ -59,10 +62,13 @@ qualification remain open. Correctness alone does not establish a serving speedu
    equal-width strided rows within one CUDA host registration and GPU allocation.
    Each source allocation retains its own generation, checked bounds and lease;
    no gaps or unlisted rows become accessible through coalescing.
-6. The worker drains all accepted copy work, including partial submission
-   failures. It publishes `Drained` and makes the local result available to
-   `poll_restore`/`wait_restore`. Connector page consumption does not wait for
-   the Manager to reap the source grant.
+6. Each layer event is recorded after all its required ranges. The native
+   `wait_restore_enqueued` call returns once those event records have been
+   submitted, allowing the engine to enqueue waits before each consumer.
+   It does not report DMA completion. The worker drains all accepted copy work,
+   including partial failures, before publishing `Drained` and the final result
+   consumed by `poll_restore`/`wait_restore`. Neither consumer readiness nor the
+   local result waits for Manager source reaping.
 7. A separate retirement loop holds the operation identity and session mapping
    until the Manager releases sources and publishes `Reaped`. The engine then
    acknowledges the record so its slot can serve a new generation.
@@ -254,40 +260,69 @@ allocations when completion is unknown. If the retirement task itself is
 cancelled or panics, its source-owner destructor applies the same conservative
 retention rule.
 
-## Remaining design
+## Layer readiness and framework consumption
 
-Idle-stream queries, reusable busy-stream events, and plan compaction now
-reduce raw Restore overhead; see [matched measurements](communication-performance.md).
-Small operations still carry native scheduling and cross-process handoff costs.
-Profile these costs and fragmented-plan handling before extending overlap.
-Scratch reuse must preserve the same ownership and drain proofs. Partitioning
-consumes accepted leases once; invalid plans leave them available.
+`start_restore(..., layer_events=[(registered_name, event), ...])` retains the
+actual event objects alongside the operation. Events must be live and distinct
+for registered layers; invalid bindings are rejected before lease consumption.
+A layer with no required bytes receives a fresh event generation too.
+The existing `wait_restore` remains the only whole-operation completion call.
+Event publication and intermediate part acknowledgements never release a source
+allocation or acknowledge a framework's destination pages.
 
-The subsequent execution step is group readiness: compile real framework dependency
-groups, publish each group's event after all required copies, and let its
-consumer stream wait before first use. All groups still need one final drain
-for errors and source retirement. Page-first allocations may serve several
-groups, so early source release needs their actual last-use ownership.
-
-The current engine admission rules also have to change before group events can
-produce overlap:
-
-| Engine | Current consumption fence | Required integration |
+| Engine | Admission and first use | Completion and graph behavior |
 | --- | --- | --- |
-| vLLM 0.29.0 | Cache lookup reports an asynchronous load. The scheduler waits for `get_finished` before scheduling that request; `wait_for_layer_load` therefore has no pending layer work to wait for. Worker v2 may submit these loads after the current forward. | Admit a synchronous-load request into the consuming forward, submit before that forward, and establish every attention/recurrent dependency before its first use. Keep asynchronous ownership for final drain and cancellation. |
-| SGLang 0.5.20 | The linker's counter waits for the entire Restore at `set_consumer`. Python pool accessors cannot supply replay-time dependencies by themselves. | Replace that whole-operation consumption wait with native group readiness and dependencies that execute in every supported eager/graph path. Preserve the final completion owner used for page retirement. |
+| vLLM 0.29.0 | A synchronous external hit enters the consuming forward. `start_load_kv` submits one batched Restore, waits for event publication, and attention callbacks wait on their registered layer. Recurrent operators have no layer callback, so their events are waited before the runner migrates checkpoint state. | `wait_for_save` consumes the final Restore outcome after forward submission. Piecewise graphs keep per-layer attention waits. Full-graph replay links all required layer events on its entry stream; Decode steps with no Restore keep their original graph path. |
+| SGLang 0.5.20 | Persistent external events are installed in its GPU pools before the first graph capture. `set_consumer` supplies the actual forward stream and waits for new event records; pool accessors enqueue per-layer waits. | Captured external wait nodes execute on every replay. The background native operation continues to final drain before the completion queue acknowledges the batch. Cancellation of already-published tree destinations completes their Restore before releasing references. |
 
-Splitting one plan into smaller wire parts does not change either admission
-rule. A part is a metadata-capacity boundary and may end within a layer;
-consumer readiness must cover all of that layer's attention and recurrent
-state across all contributing leases. Do not equate a part ACK with a layer
-completion or emit `get_finished` when only an early group is ready.
+The pinned vLLM GPU runner migrates recurrent state before its public
+`pre_forward` connector callback. OrbitKV installs one scoped `update_requests`
+boundary: drain preempted saves before page zeroing, let the runner initialize
+pages and apply copy-on-write, then submit synchronous Restore and recurrent
+waits before `preprocess_state`. The normal callback binds the same metadata;
+its repeat load does not resubmit or consume the lease twice. The boundary
+preserves `MultiConnector` child-to-metadata ordering, so composing cache reuse
+with another connector does not bypass recurrent readiness. Other connectors
+and disabled profiling runs retain their original runner behavior. This adapter
+boundary must be requalified when updating vLLM; it does not modify the engine's
+state migration algorithm. Recurrent Restore requires the V2 runner and rejects
+an explicitly selected V1 runner at startup. Correctness controls retain the
+same native graph configuration as OrbitKV.
+The pinned V2 full-graph branch supplies no attention metadata to the connector;
+that boundary links all Restore events before replay, whose captured body has no
+Python layer callbacks. It does not force ordinary Decode into piecewise graphs.
 
-CUDA graph overlap requires dependencies that execute on every replay. A Python
-callback run only during capture is insufficient. Until qualified on the pinned
-engine release and graph mode, the whole-operation gate remains the supported
-execution shape. Failure after a group has already been consumed must follow
-the engine's execution-error path, not retroactive transparent recomputation.
+SGLang admits a batch only when its consuming forward supplies the readiness
+stream. This prevents a later batch from re-recording shared events before an
+earlier graph replay has used them. Initial events are recorded once so a
+cold forward or capture has valid dependencies even with no pending Restore.
+Within each registered pool, Restore orders buffers by their consuming layer
+(K0, V0, K1, V1 for split attention). Registration and storage slot identities
+remain component-major. This lets the first layer consume both components
+without waiting for every later K buffer.
+The relevant CUDA semantics are [event record and stream wait](https://docs.nvidia.com/cuda/cuda-driver-api/cuda_driver_api/group__CUDA__EVENT.html)
+and [PyTorch external graph events](https://docs.pytorch.org/docs/stable/generated/torch.cuda.Event.html).
+
+A metadata part may end within a layer. Only its last required range can publish
+that layer's event. Publication currently waits until the final part is submitted,
+and preceding parts drain before the next is acquired; a highly fragmented plan
+therefore has less opportunity to overlap than a single part. Packed cross-layer
+bindings also share one event. Splitting physical buffers, pipelining parts, and
+moving recurrent waits into actual operators require separate ownership and
+performance gates. No source is released early when page-first allocations are
+shared across groups.
+
+Once a forward has consumed a layer dependency, any final transfer error is an
+execution failure. It cannot transparently recompute pages already used by that
+forward. A timeout or missing acknowledgement retains destinations until teardown.
+
+Idle-stream queries, reusable destination-readiness events, and plan compaction
+reduce the existing handoff overhead; see [matched measurements](communication-performance.md).
+This layer implementation does not remove the destination's previous-user fence
+or prove a serving speedup. Compare complete requests under matched graph modes,
+HBM budgets and workload pressure before making a performance claim.
+
+## Remaining execution work
 
 SSD host materialization, codec staging/decode, and direct cuFile execution may
 later move through the grant contract. Each migration must move its real I/O,
@@ -296,6 +331,31 @@ workers remain active consumers of those responsibilities. Remote TENT READ
 first materializes and validates local residency; an unencoded resident result
 then uses the same local grant path. Remote source authorization and completion
 retain their existing independent export protocol.
+
+## Layer readiness qualification, 2026-09-29
+
+The H20 source build passes 410 source-only Python tests, 297 Rust core tests
+(18 hardware-specific cases ignored), 60 channel tests (one ignored), and strict
+workspace Clippy. The native GPU/adapter suite passes 47 tests, including CUDA
+event timestamps that demonstrate the first consumer runs before the final H2D
+copy completes, repeated external-event graph replay, exact destination bytes,
+and retained ownership after submission/enqueue/drain errors. The test-hooks
+process-fault suite passes 10 selected cases; serving uses the normal build.
+
+Serving gates use vLLM 0.29.0 and SGLang 0.5.20 with Qwen3-8B and
+Qwen3.5-0.8B. vLLM passes forced `FULL` replay for the dense model (six passed,
+one hybrid-only skip), native graph defaults for the hybrid model on DRAM and
+SSD (seven passed each), and a `MultiConnector` with a no-op child followed by
+OrbitKV (seven passed). SGLang passes DRAM and SSD restart recovery for each
+model with the final consumer-ordered buffer copies (two passed per model).
+The no-op composition tests metadata routing and recurrent initialization; it
+is not a P/D transfer qualification.
+
+Raw logs and the source/binary manifest are under
+`benches/results/runs/layered-restore-20260929/`. Reproduction switches are in
+[the Python test guide](../python/tests/README.md). These gates establish
+correctness and native copy/compute overlap. Serving throughput must be reported
+from the separately repeated, matched before/after and native/LMCache controls.
 
 ## Qualification gates
 

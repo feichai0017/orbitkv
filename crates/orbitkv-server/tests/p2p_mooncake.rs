@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use cudarc::driver::CudaContext;
 use cudarc::driver::sys;
 use orbitkv_catalog::{BlockHashStore, CatalogService, MembershipView, Placement};
-use orbitkv_core::transfer::local::{LocalRestoreExecutor, LocalTensor, RawRestorePlan};
+use orbitkv_core::transfer::local::{LocalRestoreExecutor, LocalTensor, RawRestorePart};
 use orbitkv_core::*;
 use orbitkv_proto::proto::engine::{
     OpenTransferWindowRequest, QueryBlocksForTransferRequest, ReleaseTransferLockRequest,
@@ -142,8 +142,8 @@ async fn restore_and_wait(
             .expect("import source payload arenas");
             let result = loop {
                 let (bytes, more) = grant.encoded_plan();
-                let plan = RawRestorePlan::decode(bytes).expect("decode local Restore plan");
-                let result = executor.execute(&plan, None);
+                let plan = RawRestorePart::decode(bytes).expect("decode local Restore plan");
+                let result = executor.execute(&plan, &mut Default::default(), true, || {}, None);
                 if result.is_err() || !more {
                     break result;
                 }

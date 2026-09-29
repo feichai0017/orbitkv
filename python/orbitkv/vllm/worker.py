@@ -7,7 +7,7 @@ import threading
 import time
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 import torch
 
@@ -24,11 +24,6 @@ from orbitkv.vllm.metadata import (
 from orbitkv.vllm.metrics import OrbitKVConnectorStats
 
 logger = get_connector_logger()
-
-
-if TYPE_CHECKING:
-    from vllm.attention.backends.abstract import AttentionMetadata
-    from vllm.forward_context import ForwardContext
 
 
 _CROSS_LAYER_KEY = "ALL_LAYERS"
@@ -53,6 +48,14 @@ class SaveTask:
     # HMA boundary-state jobs carried by this task; reported back to the
     # scheduler through OrbitKVWorkerMetadata once the batch is done.
     boundary_job_ids: list[int] = field(default_factory=list)
+
+
+@dataclass
+class RestoreTask:
+    handle: RestoreHandle
+    started: float
+    blocks: int
+    request_ids: list[str]
 
 
 _KVCacheLayout = Literal["KV-first", "blocks-first"]
@@ -192,11 +195,8 @@ def _registration_tensor(kv_cache) -> torch.Tensor:
 class WorkerConnector:
     """Holds worker-only state and behaviors."""
 
-    # Maximum time to wait for an in-flight load to reach terminal state before
-    # giving up and reporting it as a load error to vLLM. Load is pure H2D once
-    # prefetch has completed, so 120s is generous. Overridable via env var, but
-    # values below _LOAD_TIMEOUT_FLOOR_SECONDS are clamped at module import time
-    # to prevent production misconfiguration from dropping every in-flight load.
+    # A deadline is fatal once a forward owns Restore destinations. It never
+    # acknowledges pages whose DMA completion remains unknown.
     LOAD_TIMEOUT_SECONDS: int = _LOAD_TIMEOUT_RAW
 
     def __init__(
@@ -230,18 +230,8 @@ class WorkerConnector:
         self._completed_boundary_jobs: list[int] = []
         self._current_metadata: OrbitKVConnectorMetadata | None = None
 
-        self._pending_loads: dict[str, RestoreHandle] = {}
-        self._pending_load_reqs: dict[str, set[str]] = {}
-        self._pending_load_meta: dict[
-            str, tuple[float, int, list[int]]
-        ] = {}  # shm_name -> (start_time, num_blocks, block_ids)
-        self._load_completion_lock = threading.Lock()
-
-        # Failure surface for vLLM's get_block_ids_with_load_errors / get_finished.
-        # Populated when start_load_kv fails synchronously or when an in-flight
-        # load times out waiting for the server. Drained once per get_finished
-        # and get_block_ids_with_load_errors call.
-        self._failed_load_block_ids: set[int] = set()
+        self._restore: RestoreTask | None = None
+        self._layer_events: dict[str, torch.cuda.Event] = {}
 
         self._registered_layers: list[str] = []
         # Page-first storage: all layers of a block in one host page, one slot
@@ -273,6 +263,8 @@ class WorkerConnector:
                 logger.warning("[OrbitKVConnector] Unregister context failed: %s", message)
 
         self._registered_layers.clear()
+        self._layer_events.clear()
+        self._restore = None
 
     def register_kv_caches(self, kv_caches: dict[str, Any]):
         """Register exactly the KV caches vLLM built on this device.
@@ -474,6 +466,9 @@ class WorkerConnector:
             raise RuntimeError(f"Register context batch failed for layers {layer_names}: {message}")
 
         self._registered_layers = layer_names
+        self._layer_events = {name: torch.cuda.Event(external=True) for name in layer_names}
+        for event in self._layer_events.values():
+            event.record(torch.cuda.current_stream(self._torch_device))
 
         if split_layer_count:
             logger.info(
@@ -504,7 +499,6 @@ class WorkerConnector:
 
     def get_finished(self, finished_req_ids: set[str]) -> tuple[set[str] | None, set[str] | None]:
         finished_sending: set[str] | None = None
-        finished_recving: set[str] | None = None
 
         with self._save_completion_lock:
             self._finished_requests.update(
@@ -518,128 +512,13 @@ class WorkerConnector:
                 self._finished_requests -= done_saves
                 finished_sending = done_saves
 
-        hma_load_failure: str | None = None
-        with self._load_completion_lock:
-            completed_reqs: set[str] = set()
-            completed_restore_keys: list[str] = []
-            load_stats_to_record: list[tuple[float, int, bool]] = []
-            now = time.perf_counter()
+        return (finished_sending, None)
 
-            should_poll_restores = False
-            if self._pending_load_reqs:
-                try:
-                    should_poll_restores = self._client.restore_completions_ready()
-                except Exception as error:
-                    self._ctx.state_manager.mark_unavailable(
-                        f"restore notification check exception: {error}"
-                    )
-                    raise RuntimeError(
-                        "OrbitKV lost restore completion visibility; GPU pages remain held"
-                    ) from error
-            for restore_key, req_ids in self._pending_load_reqs.items():
-                sample_req_id = next(iter(req_ids))
-                restore = self._pending_loads.get(sample_req_id)
-                if restore is None:
-                    continue
-
-                meta = self._pending_load_meta.get(restore_key)
-                status = None
-                if should_poll_restores:
-                    try:
-                        status = self._client.poll_restore(restore)
-                    except Exception as error:
-                        self._ctx.state_manager.mark_unavailable(
-                            f"restore completion poll exception: {error}"
-                        )
-                        raise RuntimeError(
-                            "OrbitKV lost restore completion visibility; GPU pages remain held"
-                        ) from error
-                ready = status is not None and status.done
-                timed_out = (
-                    not ready and meta is not None and (now - meta[0]) > self.LOAD_TIMEOUT_SECONDS
-                )
-
-                if ready:
-                    assert status is not None
-                    success = status.success
-                    if not success:
-                        logger.error(
-                            "[OrbitKVConnector] async_load_failed: reqs=%s error=%s",
-                            req_ids,
-                            status.message,
-                        )
-                        if self._cache_groups.group_count > 1:
-                            hma_load_failure = (
-                                f"async load failed for requests {sorted(req_ids)}: "
-                                f"{status.message}"
-                            )
-                        elif meta is not None:
-                            self._failed_load_block_ids.update(meta[2])
-                    else:
-                        for req_id in req_ids:
-                            trace_transfer("gpu_ready", req_id, engine="vllm", success=True)
-                        logger.debug(
-                            "[OrbitKVConnector] async_load_completed: reqs=%s",
-                            req_ids,
-                        )
-
-                    if meta is not None:
-                        start_time, num_blocks, _ = meta
-                        duration = now - start_time
-                        load_stats_to_record.append((duration, num_blocks, success))
-
-                    completed_reqs.update(req_ids)
-                    completed_restore_keys.append(restore_key)
-                elif timed_out:
-                    assert meta is not None
-                    self._ctx.state_manager.mark_unavailable("restore completion timeout")
-                    # A deadline does not cancel DMA in the Cache Manager.
-                    # Fail the engine step without acknowledging or recycling
-                    # any destination; instance teardown drains the GPU worker.
-                    raise RuntimeError(
-                        f"OrbitKV restore timed out for {sorted(req_ids)}; "
-                        "GPU pages remain held until transfer teardown"
-                    )
-
-            for restore_key in completed_restore_keys:
-                restore_req_ids = self._pending_load_reqs.pop(restore_key, set())
-                self._pending_load_meta.pop(restore_key, None)
-                for req_id in restore_req_ids:
-                    self._pending_loads.pop(req_id, None)
-
-            if completed_reqs:
-                finished_recving = completed_reqs
-
-        if load_stats_to_record:
-            with self._stats_lock:
-                for duration, num_blocks, success in load_stats_to_record:
-                    self._stats.record_load(duration, num_blocks, success)
-
-        if hma_load_failure is not None:
-            self._ctx.state_manager.mark_unavailable(hma_load_failure)
-            raise RuntimeError(
-                f"OrbitKV HMA load failed; vLLM cannot recover failed "
-                f"loads for multiple cache groups: {hma_load_failure}"
-            )
-
-        if finished_sending:
-            logger.debug(
-                "[OrbitKVConnector] async_save_completed: reqs=%s",
-                finished_sending,
-            )
-        if finished_recving:
-            logger.debug(
-                "[OrbitKVConnector] finished loading KV for requests: %s",
-                finished_recving,
-            )
-        return (finished_sending, finished_recving)
-
-    def start_load_kv(
-        self,
-        metadata: OrbitKVConnectorMetadata,
-        forward_context: "ForwardContext",
-        **kwargs: Any,
-    ) -> None:
+    def start_load_kv(self, metadata: OrbitKVConnectorMetadata) -> None:
+        if self._current_metadata is metadata:
+            return
+        if self._restore is not None:
+            raise RuntimeError("previous forward still owns its Restore")
         self._current_metadata = metadata
 
         if not metadata.load_intents:
@@ -723,7 +602,15 @@ class WorkerConnector:
                 layer_groups,
                 loads,
                 ready_stream=torch.cuda.current_stream(self._torch_device).cuda_stream,
+                layer_events=list(self._layer_events.items()),
             )
+            self._restore = RestoreTask(restore, load_start, len(all_block_ids), request_ids)
+            self._client.wait_restore_enqueued(restore, timeout=self.LOAD_TIMEOUT_SECONDS)
+            # vLLM's recurrent operators have no KV-connector layer callback.
+            # Their state must be ready before entering this forward.
+            stream = torch.cuda.current_stream(self._torch_device)
+            for name in self._cache_groups.recurrent_layer_names:
+                stream.wait_event(self._layer_events[name])
             if TRANSFER_TRACING:
                 for req_id in request_ids:
                     trace_transfer("restore_link", req_id, engine="vllm", restore_key=restore.key)
@@ -743,18 +630,8 @@ class WorkerConnector:
         schedule_end = time.perf_counter()
         schedule_time_us = (schedule_end - load_start) * 1e6
 
-        with self._load_completion_lock:
-            for req_id in request_ids:
-                self._pending_loads[req_id] = restore
-            self._pending_load_reqs[restore_key] = set(request_ids)
-            self._pending_load_meta[restore_key] = (
-                load_start,
-                num_blocks,
-                all_block_ids,
-            )
-
         logger.debug(
-            "[OrbitKVConnector] started async load: %d blocks across %d layers for %d reqs, "
+            "[OrbitKVConnector] submitted layered load: %d blocks across %d layers for %d reqs, "
             "schedule %.0f us, restore=%s transport=%s",
             num_blocks,
             num_layers,
@@ -765,33 +642,38 @@ class WorkerConnector:
         )
 
     def wait_for_layer_load(self, layer_name: str) -> None:
-        pass
+        if self._restore is None:
+            return
+        name = self._cross_layer_key if self._cross_layer_mode else layer_name
+        torch.cuda.current_stream(self._torch_device).wait_event(self._layer_events[name])
 
-    def get_block_ids_with_load_errors(self) -> set[int]:
-        """Return block IDs whose load failed since the last call, then clear.
-
-        vLLM calls this each forward pass and re-schedules reported blocks for
-        local recomputation. Only terminal Cache Manager failures establish
-        that DMA has stopped; completion timeouts remain fatal.
-        """
-        with self._load_completion_lock:
-            failed = self._failed_load_block_ids
-            self._failed_load_block_ids = set()
-        return failed
-
-    def save_kv_layer(
-        self,
-        metadata: OrbitKVConnectorMetadata,
-        layer_name: str,
-        kv_layer: "torch.Tensor",
-        attn_metadata: "AttentionMetadata",
-        **kwargs: Any,
-    ) -> None:
-        # Save is metadata-driven and submitted from wait_for_save() outside
-        # layer callbacks so CUDA graph replay cannot suppress it.
-        pass
+    def wait_for_all_layers(self) -> None:
+        if self._restore is None:
+            return
+        stream = torch.cuda.current_stream(self._torch_device)
+        for event in self._layer_events.values():
+            stream.wait_event(event)
 
     def wait_for_save(self) -> None:
+        restore = self._restore
+        if restore is not None:
+            try:
+                status = self._client.wait_restore(
+                    restore.handle, timeout=self.LOAD_TIMEOUT_SECONDS
+                )
+                if not status.success:
+                    raise RuntimeError(status.message)
+            except Exception as error:
+                self._ctx.state_manager.mark_unavailable(f"forward Restore failed: {error}")
+                raise RuntimeError(
+                    "OrbitKV forward consumed Restore dependencies; "
+                    "GPU pages remain held until transfer teardown"
+                ) from error
+            with self._stats_lock:
+                self._stats.record_load(time.perf_counter() - restore.started, restore.blocks, True)
+            for req_id in restore.request_ids:
+                trace_transfer("gpu_ready", req_id, engine="vllm", success=True)
+            self._restore = None
         metadata = self._current_metadata
         self._current_metadata = None
         if metadata is None:

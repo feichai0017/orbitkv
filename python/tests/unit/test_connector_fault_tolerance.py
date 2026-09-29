@@ -23,7 +23,7 @@ from orbitkv.vllm.worker import WorkerConnector  # noqa: E402
 def current_cuda_stream(monkeypatch):
     monkeypatch.setattr(
         "orbitkv.vllm.worker.torch.cuda.current_stream",
-        lambda _device=None: SimpleNamespace(cuda_stream=17),
+        lambda _device=None: SimpleNamespace(cuda_stream=17, wait_event=MagicMock()),
     )
 
 
@@ -55,6 +55,7 @@ class FakeEngineClient:
         loads,
         *,
         ready_stream: int,
+        layer_events,
     ) -> SimpleNamespace:
         block_ids = [block_id for _, groups in loads for ids in groups for block_id in ids]
         self.load_calls.append(
@@ -71,11 +72,11 @@ class FakeEngineClient:
             raise self.fail_load_with_exception
         return SimpleNamespace(key=f"restore-{len(self.load_calls)}")
 
-    def restore_completions_ready(self) -> bool:
-        return False
+    def wait_restore_enqueued(self, _handle, *, timeout):
+        pass
 
-    def poll_restore(self, _handle) -> RestoreStatus:
-        return RestoreStatus(done=False, success=False)
+    def wait_restore(self, _handle, *, timeout):
+        return RestoreStatus(done=True, success=True)
 
     def register_context_batch(self, *args, **kwargs) -> tuple[bool, str]:
         self.register_calls.append(args)
@@ -125,17 +126,10 @@ def _make_worker(
         vllm_config=vllm_config,
         kv_cache_config=kv_cache_config,
     )
-    # cross-layer mode skips forward_context layer enumeration so we can drive
-    # start_load_kv with a stub forward_context.
     worker._cross_layer_mode = True
     worker._cross_layer_key = "ALL_LAYERS"
+    worker._layer_events = {"ALL_LAYERS": object()}
     return worker, client, state_manager
-
-
-def _stub_forward_context() -> MagicMock:
-    ctx = MagicMock()
-    ctx.no_compile_layers = {}
-    return ctx
 
 
 def _single_attention_cache_group(*layer_names: str) -> MagicMock:
@@ -160,6 +154,8 @@ def _configure_hma_worker(worker: WorkerConnector) -> None:
     worker._cross_layer_mode = False
     worker._cache_groups = MagicMock(group_count=2, has_recurrent_state=True)
     worker._registered_layers = ["attention", "recurrent"]
+    worker._cache_groups.recurrent_layer_names = ["recurrent"]
+    worker._layer_events = {name: object() for name in worker._registered_layers}
     worker._layer_to_group = {"attention": 0, "recurrent": 1}
 
 
@@ -190,8 +186,7 @@ def test_restore_submission_failure_does_not_release_destinations(hybrid, error)
 
     try:
         with pytest.raises(RuntimeError, match="GPU pages remain held"):
-            worker.start_load_kv(metadata, _stub_forward_context())
-        assert worker.get_block_ids_with_load_errors() == set()
+            worker.start_load_kv(metadata)
         assert client.release_calls == []
         assert worker.get_finished(set())[1] is None
         assert state_mgr.mark_unavailable.called
@@ -212,53 +207,30 @@ def test_hma_load_distinguishes_block_zero_from_absent_recurrent_target():
         }
     )
 
-    worker.start_load_kv(metadata, _stub_forward_context())
+    worker.start_load_kv(metadata)
 
     assert client.load_calls[0][5] == [0, 12, None, 21]
     worker.shutdown()
 
 
 @pytest.mark.parametrize("hybrid", [False, True])
-def test_restore_timeout_keeps_pages_pending(monkeypatch, hybrid):
-    worker, _client, state_mgr = _make_worker()
+@pytest.mark.parametrize("stage", ["enqueue", "drain"])
+@pytest.mark.parametrize("error", [TimeoutError("deadline"), ConnectionError("lost completion")])
+def test_restore_failure_after_admission_keeps_destinations(hybrid, stage, error):
+    worker, client, state_mgr = _make_worker()
     if hybrid:
         _configure_hma_worker(worker)
-        metadata = _hma_load_metadata("timeout")
+        metadata = _hma_load_metadata("pending")
     else:
-        metadata = _load_metadata("timeout", (5, 6, 7))
-    clock = {"now": 10_000.0}
-    monkeypatch.setattr("orbitkv.vllm.worker.time.perf_counter", lambda: clock["now"])
+        metadata = _load_metadata("pending", (5, 6))
+    method = "wait_restore_enqueued" if stage == "enqueue" else "wait_restore"
+    setattr(client, method, MagicMock(side_effect=error))
     try:
-        worker.start_load_kv(metadata, _stub_forward_context())
-        clock["now"] += worker.LOAD_TIMEOUT_SECONDS - 1
+        with pytest.raises(RuntimeError, match="GPU pages remain held"):
+            worker.start_load_kv(metadata)
+            worker.wait_for_save()
+        assert worker._restore is not None
         assert worker.get_finished(set())[1] is None
-        assert not state_mgr.mark_unavailable.called
-        clock["now"] += 2
-        with pytest.raises(RuntimeError, match="GPU pages remain held"):
-            worker.get_finished(set())
-        assert worker.get_block_ids_with_load_errors() == set()
-        assert "timeout" in worker._pending_loads
-        assert worker._pending_load_reqs
-        assert worker._pending_load_meta
-        assert state_mgr.mark_unavailable.called
-    finally:
-        worker.shutdown()
-
-
-@pytest.mark.parametrize("failure", ["notification", "poll"])
-def test_lost_completion_visibility_never_acknowledges_pages(failure):
-    worker, client, state_mgr = _make_worker()
-    try:
-        worker.start_load_kv(_load_metadata("pending", (8, 9)), _stub_forward_context())
-        if failure == "notification":
-            client.restore_completions_ready = MagicMock(side_effect=OSError("closed fd"))
-        else:
-            client.restore_completions_ready = lambda: True
-            client.poll_restore = MagicMock(side_effect=ConnectionError("disconnected"))
-        with pytest.raises(RuntimeError, match="GPU pages remain held"):
-            worker.get_finished(set())
-        assert worker.get_block_ids_with_load_errors() == set()
-        assert "pending" in worker._pending_loads
         assert client.release_calls == []
         assert state_mgr.mark_unavailable.called
     finally:
@@ -266,41 +238,35 @@ def test_lost_completion_visibility_never_acknowledges_pages(failure):
 
 
 @pytest.mark.parametrize("hybrid", [False, True])
-def test_only_confirmed_failure_permits_recovery(hybrid):
-    worker, client, _ = _make_worker()
+def test_confirmed_failure_after_forward_cannot_recompute_consumed_pages(hybrid):
+    worker, client, state_mgr = _make_worker()
     if hybrid:
         _configure_hma_worker(worker)
         metadata = _hma_load_metadata("failed")
     else:
         metadata = _load_metadata("failed", (5, 6))
-    client.restore_completions_ready = lambda: True
-    client.poll_restore = lambda _: RestoreStatus(done=True, success=False, message="drained")
+    client.wait_restore = MagicMock(
+        return_value=RestoreStatus(done=True, success=False, message="drained")
+    )
     try:
-        worker.start_load_kv(metadata, _stub_forward_context())
-        if hybrid:
-            with pytest.raises(RuntimeError, match="cannot recover failed loads"):
-                worker.get_finished(set())
-        else:
-            assert worker.get_finished(set())[1] == {"failed"}
-            assert worker.get_block_ids_with_load_errors() == {5, 6}
-            assert worker.get_block_ids_with_load_errors() == set()
-        assert worker._pending_loads == {}
+        worker.start_load_kv(metadata)
+        with pytest.raises(RuntimeError, match="GPU pages remain held"):
+            worker.wait_for_save()
+        assert worker._restore is not None
+        assert worker.get_finished(set())[1] is None
+        assert client.release_calls == []
+        assert state_mgr.mark_unavailable.called
     finally:
         worker.shutdown()
 
 
-def test_load_uses_registered_layer_names_before_forward_context_names():
+def test_load_uses_registered_layer_names():
     """Load must use the same layer names registered with the server."""
     worker, client, _ = _make_worker()
     worker._cross_layer_mode = False
     worker._registered_layers = ["registered.layer.0", "registered.layer.1"]
 
-    forward_context = MagicMock()
-    forward_layer = MagicMock()
-    forward_layer.kv_cache = object()
-    forward_context.no_compile_layers = {"model.layers.0.attn": forward_layer}
-
-    worker.start_load_kv(_load_metadata("req_registered_layers", (1, 2)), forward_context)
+    worker.start_load_kv(_load_metadata("req_registered_layers", (1, 2)))
 
     assert len(client.load_calls) == 1
     assert client.load_calls[0][4] == [["registered.layer.0", "registered.layer.1"]]
@@ -312,18 +278,22 @@ def test_worker_consumes_restore_completion(monkeypatch):
     data_client = MagicMock(transport="iceoryx2")
     restore = SimpleNamespace(key="local:41:9")
     data_client.start_restore.return_value = restore
-    data_client.restore_completions_ready.return_value = True
-    data_client.poll_restore.return_value = RestoreStatus(done=True, success=True)
+    data_client.wait_restore.return_value = RestoreStatus(done=True, success=True)
     worker, _unused_client, _state_manager = _make_worker(client=data_client, device_id=3)
     worker._torch_device = "cuda:0"
-    current_stream = MagicMock(return_value=SimpleNamespace(cuda_stream=17))
+    current_stream = MagicMock(return_value=SimpleNamespace(cuda_stream=17, wait_event=MagicMock()))
     monkeypatch.setattr("orbitkv.vllm.worker.torch.cuda.current_stream", current_stream)
 
-    worker.start_load_kv(_load_metadata("local-restore", (3, 4)), _stub_forward_context())
-    _, finished_recving = worker.get_finished(set())
-
-    assert finished_recving == {"local-restore"}
-    current_stream.assert_called_once_with("cuda:0")
+    worker.start_load_kv(_load_metadata("local-restore", (3, 4)))
+    assert worker._restore is not None
+    data_client.wait_restore.assert_not_called()
+    worker.wait_for_layer_load("model.layer.0")
+    current_stream.return_value.wait_event.assert_called_once_with(
+        worker._layer_events["ALL_LAYERS"]
+    )
+    worker.wait_for_save()
+    assert worker._restore is None
+    assert worker.get_finished(set())[1] is None
     data_client.start_restore.assert_called_once_with(
         "test_instance",
         0,
@@ -331,8 +301,12 @@ def test_worker_consumes_restore_completion(monkeypatch):
         [["ALL_LAYERS"]],
         [(b"lease-local-restore", [[3, 4]])],
         ready_stream=17,
+        layer_events=list(worker._layer_events.items()),
     )
-    data_client.poll_restore.assert_called_once_with(restore)
+    data_client.wait_restore_enqueued.assert_called_once_with(
+        restore, timeout=worker.LOAD_TIMEOUT_SECONDS
+    )
+    data_client.wait_restore.assert_called_once_with(restore, timeout=worker.LOAD_TIMEOUT_SECONDS)
     worker.shutdown()
 
 
@@ -521,3 +495,72 @@ def test_register_version_mismatch_rpc_error_stops_startup(monkeypatch):
     assert len(client.register_calls) == 1
 
     worker.shutdown()
+
+
+def test_early_restore_is_not_submitted_twice_by_pre_forward():
+    worker, client, _ = _make_worker()
+    metadata = _load_metadata("early", (3, 4))
+    try:
+        worker.start_load_kv(metadata)
+        worker.start_load_kv(metadata)
+        assert len(client.load_calls) == 1
+        with pytest.raises(RuntimeError, match="previous forward"):
+            worker.start_load_kv(_load_metadata("next", (5, 6)))
+        worker.wait_for_save()
+        worker.start_load_kv(_load_metadata("next", (5, 6)))
+        assert len(client.load_calls) == 2
+        worker.wait_for_save()
+    finally:
+        worker.shutdown()
+
+
+def test_full_graph_waits_on_gpu_and_retains_the_final_drain(monkeypatch):
+    worker, client, _ = _make_worker()
+    _configure_hma_worker(worker)
+    events = []
+    stream = SimpleNamespace(cuda_stream=17, wait_event=events.append)
+    monkeypatch.setattr("orbitkv.vllm.worker.torch.cuda.current_stream", lambda _: stream)
+    client.wait_restore = MagicMock(return_value=RestoreStatus(done=True, success=True))
+    try:
+        worker.wait_for_all_layers()
+        assert not events
+        worker.start_load_kv(_hma_load_metadata("graph"))
+        events.clear()
+        worker.wait_for_all_layers()
+        assert events == list(worker._layer_events.values())
+        client.wait_restore.assert_not_called()
+        assert worker._restore is not None
+        worker.wait_for_save()
+        client.wait_restore.assert_called_once()
+        events.clear()
+        worker.wait_for_all_layers()
+        assert not events
+    finally:
+        worker.shutdown()
+
+
+@pytest.mark.parametrize(
+    "mode,has_attention,wait_all",
+    [
+        ("NONE", True, False),
+        ("PIECEWISE", True, False),
+        ("NONE", False, True),
+        ("FULL", True, True),
+    ],
+)
+def test_connector_links_restores_at_the_graph_consumption_boundary(mode, has_attention, wait_all):
+    from vllm.config import CUDAGraphMode
+
+    from orbitkv.vllm.connector import OrbitKVConnector
+
+    connector = object.__new__(OrbitKVConnector)
+    connector._worker = MagicMock()
+    metadata = _load_metadata("graph-entry", (1, 2))
+    connector._get_connector_metadata = lambda: metadata
+    context = SimpleNamespace(
+        attn_metadata={} if has_attention else None,
+        cudagraph_runtime_mode=CUDAGraphMode[mode],
+    )
+    connector.start_load_kv(context)
+    connector._worker.start_load_kv.assert_called_once_with(metadata)
+    assert connector._worker.wait_for_all_layers.call_count == int(wait_all)

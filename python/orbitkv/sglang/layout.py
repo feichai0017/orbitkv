@@ -82,9 +82,14 @@ class GpuLayout:
     pools: dict[PoolName, GpuPool]
 
     @classmethod
-    def from_pool(cls, params: Any, components: set[ComponentType]) -> GpuLayout:
-        page = params.page_size
-        kvcache = params.token_to_kv_pool_allocator.get_kvcache()
+    def from_pool(
+        cls,
+        page: int,
+        kvcache: Any,
+        request_pool: Any,
+        components: set[ComponentType],
+        sliding_window_size: int = 0,
+    ) -> GpuLayout:
         pools = {}
 
         def attention(name, pool, mapping, kind, window=0):
@@ -131,7 +136,7 @@ class GpuLayout:
                 full,
                 "mla" if type(kvcache.full_kv_pool) is MLATokenToKVPool else "attention",
             )
-            attention(PoolName.SWA, kvcache.swa_kv_pool, swa, "window", params.sliding_window_size)
+            attention(PoolName.SWA, kvcache.swa_kv_pool, swa, "window", sliding_window_size)
         elif ComponentType.MAMBA not in components:
             kind = "mla" if type(kvcache) is MLATokenToKVPool else "attention"
             attention(PoolName.KV, kvcache, {i: i for i in range(kvcache.layer_num)}, kind)
@@ -146,7 +151,6 @@ class GpuLayout:
             )
 
         if ComponentType.MAMBA in components:
-            request_pool = params.req_to_token_pool
             mamba = request_pool.mamba_pool
             state = mamba.mamba_cache
             if (

@@ -477,7 +477,7 @@ impl PreparedRestore {
                             continue;
                         }
                         plan_size = plan_size
-                            .checked_add(58)
+                            .checked_add(59)
                             .and_then(|size| size.checked_add(layer.name.len()))
                             .filter(|size| *size <= MAX_RESTORE_PLAN_BYTES)
                             .ok_or_else(|| {

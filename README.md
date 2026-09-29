@@ -49,6 +49,8 @@ Multi-node cache sharing is experimental. Interfaces may change before 1.0.
   and their cold-reuse tradeoff before enabling them.
 - **Native GPU transfers.** Unencoded DRAM Restore executes inside the engine
   using independently imported shared payload arenas and retained tensors.
+  Per-layer CUDA dependencies let consumers start before later copies finish;
+  source and destination ownership lasts through the final drain.
   SSD/codec Restore and Publish retain Manager workers and CUDA IPC bindings;
   adapters supply the CUDA stream dependencies and Rust owns completion.
 - **Model-aware recovery.** Cache identity includes model artifacts, computation
