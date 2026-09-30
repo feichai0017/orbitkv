@@ -73,11 +73,13 @@ def _torch():
 
 
 def find_available_port() -> int:
-    """Find a wildcard listener port outside the outgoing TCP range."""
+    """Find a listener port outside outgoing TCP and TENT auto-port ranges."""
     low, high = map(int, Path("/proc/sys/net/ipv4/ip_local_port_range").read_text().split())
     for _ in range(128):
         port = 1024 + secrets.randbelow(65536 - 1024)
-        if low <= port <= high:
+        # Pinned TENT CoroRpcAgent starts before the engine HTTP listener and
+        # independently chooses an RPC port in [15000, 17000).
+        if low <= port <= high or 15000 <= port < 17000:
             continue
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:

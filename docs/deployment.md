@@ -228,7 +228,7 @@ OrbitKV does not ship a NIXL connector. Its SGLang adapter supports the native
 SGLang P/D control plane over OrbitKV TENT and an opt-in composition with the
 external cache. The same-A100 TCP restart/output gate passes; the H20→A100
 run passes cache reuse but fails full 64-token equality. See the
-[precise P/D qualification](pd.md#sglang-qualification-on-2026-09-28).
+[precise P/D qualification](pd.md#historical-sglang-qualification-on-2026-09-28).
 
 ### Experimental vLLM P/D with NIXL plus OrbitKV cache
 

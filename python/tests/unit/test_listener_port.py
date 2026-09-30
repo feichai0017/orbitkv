@@ -15,12 +15,12 @@ def test_listener_port_rejects_another_interface(monkeypatch):
         monkeypatch.setattr(
             cache_manager.secrets,
             "randbelow",
-            Mock(side_effect=[occupied_port - 1024, free_port - 1024]),
+            Mock(side_effect=[15000 - 1024, 16999 - 1024, occupied_port - 1024, free_port - 1024]),
         )
 
         selected = cache_manager.find_available_port()
 
-        assert selected != occupied_port
+        assert selected == free_port
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
             listener.bind(("0.0.0.0", selected))
             listener.listen(1)
