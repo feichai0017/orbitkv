@@ -13,7 +13,6 @@ use prost::Message;
 use super::*;
 use crate::cluster::Cluster;
 use crate::cluster::tests::etcd::{Etcd, view};
-use crate::cluster::tests::gate::TcpGate;
 
 const SOURCES: usize = 16;
 const KEYS_PER_SOURCE: usize = 2048;
@@ -173,9 +172,6 @@ async fn sustained_churn_bounds_batches_and_rebuilds_exactly() {
             } else {
                 None
             };
-            if let Some(active) = &rebuild {
-                active.gate.heal(Duration::ZERO);
-            }
 
             for source in &mut sources {
                 let old_start = source.window_start;
@@ -240,7 +236,6 @@ async fn sustained_churn_bounds_batches_and_rebuilds_exactly() {
                 rebuild_convergence_ms.push(active.started.elapsed().as_secs_f64() * 1000.0);
                 max_index_bytes = max_index_bytes.max(active.index.bytes());
                 active.cluster.shutdown().await;
-                active.gate.shutdown().await;
             }
             max_index_bytes = max_index_bytes.max(stable_index.bytes());
         }
@@ -347,7 +342,6 @@ async fn sustained_churn_bounds_batches_and_rebuilds_exactly() {
 }
 
 struct ActiveRebuild {
-    gate: TcpGate,
     cluster: Cluster,
     index: Arc<GlobalIndex>,
     first_complete: tokio::task::JoinHandle<Duration>,
@@ -355,14 +349,11 @@ struct ActiveRebuild {
 }
 
 async fn start_rebuild_reader(server: &Etcd, round: usize) -> ActiveRebuild {
-    let gate = TcpGate::start(&server.endpoints[0]).await;
-    gate.set_downstream_delay(Duration::from_millis(2));
     let reader_view = view(62000 + round as u16);
     let index = Arc::new(GlobalIndex::new(Arc::clone(&reader_view), INDEX_BYTES));
     let started = Instant::now();
-    let endpoints = [gate.endpoint.clone()];
     let cluster = Cluster::join(
-        &endpoints,
+        &server.endpoints,
         "sustained-capacity",
         &format!("rebuild-{round}"),
         120,
@@ -382,7 +373,6 @@ async fn start_rebuild_reader(server: &Etcd, round: usize) -> ActiveRebuild {
         started.elapsed()
     });
     ActiveRebuild {
-        gate,
         cluster,
         index,
         first_complete,

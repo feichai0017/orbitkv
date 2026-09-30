@@ -621,6 +621,12 @@ ticks and average cores, RSS/high-water RSS, and etcd backend/in-use growth. It
 writes its workload contract before starting etcd and writes the final JSON before
 applying threshold assertions, so failed runs remain diagnosable.
 
+Each fresh reader joins immediately before its scheduled eviction batch. The gate
+requires its complete index to still be unavailable when mutations begin, then
+measures the unmodified direct-etcd snapshot and Watch catch-up path. Network delay
+and partition behavior stay in S2.2; inserting a byte-stream proxy here would
+measure the proxy's frame scheduling rather than metadata rebuild capacity.
+
 The predeclared acceptance thresholds are at least 1,500 changes/second;
 publication p95 at most 100 ms and max at most 1 second; Watch p95 at most 100 ms
 and max at most 1 second; rebuild and convergence max at most 10 seconds; no
