@@ -135,9 +135,8 @@ consumed released replacement and tests; this audit deletes no protection.
 | `client/connection.py` | Both engine adapters; owns node-local UDS clients, shard sockets and close | Keep shared transport configuration owner |
 | `client/gpu.py` | Engine registration paths; serializes framework CUDA IPC wrappers | Replace in S3 with explicit validated registration data, then remove pickle-compatible representation |
 | `vllm/pd/__init__.py` | vLLM factory loads split P/D public connector classes | Retire after a released native connector plus TENT backend passes all gates |
-| `vllm/pd/base_connector.py` | Split P/D connector inheritance and metrics forwarding | Remove with split connectors; do not create another forwarding base |
 | `vllm/pd/scheduler.py` | Split connector scheduler callbacks; owns active waits/pushes and release reasons | Replace with native P/D request lifecycle after equivalence tests |
-| `vllm/pd/worker.py` | Split connector worker callbacks; owns layer registration and Decode/Prefill handlers | Replace role lifecycle with native worker; retain only consumed TENT/layout adapter responsibilities |
+| `vllm/pd/worker.py` | Shared GPU layer registration, rank identity and TENT construction; no role handlers | Retain only consumed TENT/layout adapter responsibilities at native cutover |
 | `vllm/pd/decode_worker.py` | Decode worker; owns handshake, page grants, generation-scoped waits, async transfer completion and prefill dispatch | Native cancellation/completion must preserve destination generations and terminal drain before removal |
 | `vllm/pd/prefill_worker.py` | Prefill worker; owns target authorization, per-layer push plans, async writers/finalizers and source releases | Native producer lease plus TENT completion must pass partial-submit/preemption/restart before removal |
 | `vllm/pd/mooncake.py` | `worker.py`; thin Rust TENT engine adapter and request-generation bookkeeping | Keep only the explicit TENT payload adapter required by the released native connector; rename at cutover rather than preserve Mooncake compatibility |
@@ -146,8 +145,6 @@ consumed released replacement and tests; this audit deletes no protection.
 | `vllm/pd/metadata.py` | Split scheduler/worker and proxy handshake | Replace with released handshake/result types when all required fields have owners |
 | `vllm/pd/kv_params.py` | Split schedulers parse request transfer parameters | Remove after released router/native connector supplies the same validated request contract |
 | `vllm/pd/chunk_tracker.py` | Prefill handler tracks per-layer submitted/completed chunks | Remove only when native completion owns identical per-range progress |
-| `vllm/pd/async_runner.py` | Decode waiter and prefill task pools | Remove with custom state machines; do not retain a generic executor facade |
-| `vllm/pd/prefill_tasks.py` | Prefill async sender/finalizer task records | Remove with custom prefill pipeline after native terminal completion gates |
 | `vllm/pd/prefill_async.py` | Prefill worker task pools and completion statistics | Remove with custom pipeline; retain required statistics in the native adapter only if consumed |
 | `vllm/pd/prefill.py` | Decode-side HTTP sender to the custom prefill endpoint | Replace with released router/native request flow, then delete |
 | `vllm/pd/proxy.py` | Standalone HTTP proxy/router and its metrics/client pools | Replace with pinned upstream router scenario, then delete rather than keep a legacy mode |
@@ -158,22 +155,30 @@ consumed released replacement and tests; this audit deletes no protection.
 | `sglang/linker.py` | `UnifiedRadixCache`; owns OrbitKV query/load/offload queues, registrations and terminal close | Keep as the released external-linker implementation |
 | `sglang/events.py` | Graph initialization Hook and `OrbitKVLinker`; owns stable CUDA events and forward activation counters | Keep event lifetime and pre-capture registration; import GPU dependencies only when the backend is selected |
 | `sglang/recovery.py` | `plugin.py`; wraps linker/tree and overrides Mamba component checkpoint behavior | Move generic checkpoint lifecycle into released engine components before shrinking; keep safety checks until consumed |
-| `sglang/admission.py` | Three Hook-registry targets in scheduler/prefill adder; owns pending external-query admission/cancel | Replace with public pending-lookup lifecycle callbacks; hooks remain bounded 0.5.20 responsibility |
+| `sglang/admission.py` | Pending-query admission plus opt-in enqueue preparation; cancellation uses native cache finish/linker release | Replace the remaining two targets with public pending-lookup/enqueue callbacks |
 | `sglang/completion.py` | Six Hook-registry targets in native P/D receiver/queue; observes page handoff, DecodeReady, abort/failure/release | Replace with explicit lifecycle callbacks; telemetry must not become release authority |
 | `sglang/pd.py` | Plugin; substitutes the native Mooncake transfer class with a TENT adapter | Replace with a released transport factory/backend boundary; keep native bootstrap and request states |
-| `sglang/plugin.py` | `sglang.srt.plugins` entry point; registers backend and ten internal hooks | Keep public registration; remove each internal hook only with its explicit released replacement |
+| `sglang/plugin.py` | Backend registration; two ordinary cache Hooks, one optional enqueue Hook, six opt-in P/D Hooks | Keep public registration; remove remaining internal Hooks with consumed replacements |
 
 The subsequent S5.2 cleanup removes `vllm/state_manager.py`, its context field,
 health thread and mocks because no production query consumed its availability.
 Restore failures still propagate and retain page ownership. Scheduler and worker
 implementations are named `SchedulerAdapter` and `WorkerAdapter`; their request
 states remain unchanged. This cleanup does not establish a released replacement
-for the lifecycle dependencies inventoried above.
+for the remaining lifecycle dependencies inventoried above. A follow-up removes
+`pd/base_connector.py`, `pd/async_runner.py` and `pd/prefill_tasks.py`: public
+callbacks live on the connector, role workers directly own their request states,
+and task records/accounting live with the executors that consume them. No
+compatibility aliases preserve the removed internal classes.
 
 The current SGLang Hook targets are deliberately explicit. Graph capture uses
-`TpModelWorker.init_cuda_graphs`. Request admission/cancel uses
-`PrefillAdder.add_one_req`, `Scheduler._add_request_to_queue` and
-`Scheduler._release_aborted_request`. P/D evidence uses
+`TpModelWorker.init_cuda_graphs`. Request admission uses
+`PrefillAdder.add_one_req`; opt-in queue preparation uses
+`Scheduler._add_request_to_queue`. Cancellation already has a released
+replacement: `BasePrefixCache.finish(ABORT)` calls
+`UnifiedRadixCache.release_aborted_request`, which calls the installed linker's
+`release_request`. The redundant `Scheduler._release_aborted_request` Hook is
+removed. P/D evidence, registered only when TENT is enabled, uses
 `MooncakeKVReceiver.send_metadata`, `MooncakeKVReceiver.abort`,
 `MooncakeKVReceiver.failure_exception`, `DecodeTransferQueue.add`,
 `DecodeTransferQueue._commit_transfer_to_req` and

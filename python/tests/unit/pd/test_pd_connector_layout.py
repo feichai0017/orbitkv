@@ -92,7 +92,7 @@ def test_pd_worker_registers_mla_and_indexer_layouts_from_layer_specs() -> None:
             "indexer.0": fake_cache_spec(block_size=64, heads=1, content_bytes=128),
         },
     )
-    worker = PdDecodeWorkerConnector(
+    worker = DecodeWorker(
         fake_mla_config(),
         kv_cache_config=kv_cache_config,
         transfer=MockMooncakePort(),
@@ -171,7 +171,7 @@ def test_pd_worker_rejects_mla_physical_logical_block_split() -> None:
             "layer.0": fake_cache_spec(block_size=64, heads=1, content_bytes=128),
         },
     )
-    worker = PdDecodeWorkerConnector(
+    worker = DecodeWorker(
         fake_mla_config(block_size=64),
         kv_cache_config=kv_cache_config,
         transfer=MockMooncakePort(),
@@ -193,7 +193,7 @@ def test_p_worker_maps_mla_prefill_tp_greater_than_decode_tp() -> None:
         )
         for rank in range(4)
     )
-    worker = PdPrefillWorkerConnector(
+    worker = PrefillWorker(
         fake_mla_config(tp_rank=2, tp_size=8),
         transfer=MockMooncakePort(),
     )
@@ -225,7 +225,7 @@ def test_p_worker_skips_non_representative_mla_prefill_rank() -> None:
         )
         for rank in range(4)
     )
-    worker = PdPrefillWorkerConnector(
+    worker = PrefillWorker(
         fake_mla_config(tp_rank=3, tp_size=8),
         transfer=MockMooncakePort(),
     )
@@ -364,8 +364,8 @@ def test_p_worker_prefill_tp_greater_than_decode_tp_registers_remote_head_slices
         layers=(decode_layer,),
     )
 
-    def build_worker(rank: int) -> PdPrefillWorkerConnector:
-        worker = PdPrefillWorkerConnector(
+    def build_worker(rank: int) -> PrefillWorker:
+        worker = PrefillWorker(
             SimpleNamespace(
                 kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
                 model_config=SimpleNamespace(
@@ -772,7 +772,7 @@ def test_pd_worker_builds_mooncake_by_default_when_extension_exists(monkeypatch)
         parallel_config=SimpleNamespace(tensor_parallel_rank=0),
     )
 
-    worker = PdDecodeWorkerConnector(config)
+    worker = DecodeWorker(config)
     worker.register_kv_caches({"layer.0": tensor})
 
     assert isinstance(worker.transfer, RealMooncakePort)
@@ -799,7 +799,7 @@ def test_pd_worker_allows_mooncake_transport_autoselection(monkeypatch) -> None:
         parallel_config=SimpleNamespace(tensor_parallel_rank=0),
     )
 
-    worker = PdDecodeWorkerConnector(config)
+    worker = DecodeWorker(config)
     worker.register_kv_caches({"layer.0": tensor})
 
     assert FakeMooncakeTransferEngineCtor.last_kwargs == {
@@ -829,7 +829,7 @@ def test_pd_worker_uses_runtime_tp_rank_for_mooncake_rank_map(monkeypatch) -> No
         parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=8),
     )
 
-    worker = PdDecodeWorkerConnector(config)
+    worker = DecodeWorker(config)
     worker.register_kv_caches({"layer.0": tensor})
 
     assert FakeMooncakeTransferEngineCtor.last_kwargs["nics"] == ["mlx5_2"]
@@ -856,7 +856,7 @@ def test_pd_worker_rank_map_uses_tp_rank_even_when_cuda_ordinal_differs(monkeypa
         parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
     )
 
-    worker = PdDecodeWorkerConnector(config)
+    worker = DecodeWorker(config)
     worker.register_kv_caches({"layer.0": tensor})
 
     assert FakeMooncakeTransferEngineCtor.last_kwargs["nics"] == ["mlx5_0"]

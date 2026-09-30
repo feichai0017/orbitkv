@@ -16,11 +16,11 @@ from .pd_connector_test_utils import (
     LayerBlockSlices,
     PdConnectorMetadata,
     PdHandshake,
-    PdPrefillWorkerConnector,
+    PrefillWorker,
     PushReqMeta,
     RealMooncakePort,
     packed_remote_layer,
-    prefill_worker_mod,
+    prefill_async_mod,
     split_remote_layer,
 )
 
@@ -62,10 +62,10 @@ def test_queued_push_cannot_borrow_reopened_request_authorization(push_state):
             event_entered.set()
             assert ready.wait(timeout=3)
 
-    sender = prefill_worker_mod._AsyncLayerPushSender(max_workers=1)
+    sender = prefill_async_mod._AsyncLayerPushSender(max_workers=1)
     try:
         sender.submit(
-            prefill_worker_mod._LayerPushTask(
+            prefill_async_mod._LayerPushTask(
                 transfer=transfer,
                 req_id="req",
                 layer_idx=0,
@@ -85,7 +85,7 @@ def test_queued_push_cannot_borrow_reopened_request_authorization(push_state):
         assert engine.writes == []
         assert transfer.write_stats("req")["bytes"] == 0
         sender.submit(
-            prefill_worker_mod._LayerPushTask(
+            prefill_async_mod._LayerPushTask(
                 transfer=transfer,
                 req_id="req",
                 layer_idx=0,
@@ -133,7 +133,7 @@ def test_admitted_write_completion_cannot_update_replacement_statistics(push_sta
         return original(*args, **kwargs)
 
     monkeypatch.setattr(engine, "write", blocked_write)
-    sender = prefill_worker_mod._AsyncLayerPushSender(max_workers=1)
+    sender = prefill_async_mod._AsyncLayerPushSender(max_workers=1)
 
     def wait_for_completion():
         try:
@@ -146,7 +146,7 @@ def test_admitted_write_completion_cannot_update_replacement_statistics(push_sta
     waiter = threading.Thread(target=wait_for_completion)
     try:
         sender.submit(
-            prefill_worker_mod._LayerPushTask(
+            prefill_async_mod._LayerPushTask(
                 transfer=transfer,
                 req_id="req",
                 layer_idx=0,
@@ -176,7 +176,7 @@ def test_admitted_write_completion_cannot_update_replacement_statistics(push_sta
 def test_active_chunks_cannot_replace_push_authorization(push_state, monkeypatch, changed):
     _, transfer, handshake, _ = push_state
     handshake = replace(handshake, layers=(packed_remote_layer(block_ids=(0, 1), block_len=8192),))
-    worker = PdPrefillWorkerConnector(
+    worker = PrefillWorker(
         SimpleNamespace(
             kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
@@ -191,25 +191,25 @@ def test_active_chunks_cannot_replace_push_authorization(push_state, monkeypatch
     )
     try:
         worker.prepare_pushes(PdConnectorMetadata(reqs_to_push={"req": first}))
-        original = worker._prefill._push_authorizations["req"]
+        original = worker._push_authorizations["req"]
         replacement = replace(first, local_block_ids=([2],))
         if changed == "authorization":
             replacement = replace(
                 replacement, handshakes=(replace(handshake, transfer_endpoint="new-peer:1"),)
             )
         elif changed == "target":
-            monkeypatch.setattr(worker._prefill, "_physical_req_ids", lambda *args: ("req#new",))
+            monkeypatch.setattr(worker, "_physical_req_ids", lambda *args: ("req#new",))
         else:
-            plan = worker._prefill._push_plans["req"]
+            plan = worker._push_plans["req"]
             monkeypatch.setattr(
-                worker._prefill, "_build_push_layout_plan", lambda *args: replace(plan, targets=())
+                worker, "_build_push_layout_plan", lambda *args: replace(plan, targets=())
             )
         with pytest.raises(RuntimeError, match="changed before release"):
             worker.prepare_pushes(PdConnectorMetadata(reqs_to_push={"req": replacement}))
-        assert worker._prefill._push_authorizations["req"] == original
-        assert worker._prefill._logical_to_physical["req"] == ("req",)
-        assert worker._prefill.push_reqs["req"] == first
-        assert "req" not in worker._prefill._completed_pushes
+        assert worker._push_authorizations["req"] == original
+        assert worker._logical_to_physical["req"] == ("req",)
+        assert worker.push_reqs["req"] == first
+        assert "req" not in worker._completed_pushes
     finally:
         worker.shutdown()
 
@@ -220,7 +220,7 @@ def test_sender_error_cannot_retire_authorization_before_admitted_write_drains(
 ):
     engine, transfer, handshake, _ = push_state
     handshake = replace(handshake, layers=(packed_remote_layer(block_ids=(0, 1), block_len=8192),))
-    worker = PdPrefillWorkerConnector(
+    worker = PrefillWorker(
         SimpleNamespace(
             kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
@@ -231,7 +231,7 @@ def test_sender_error_cannot_retire_authorization_before_admitted_write_drains(
     worker.register_kv_caches({"layer.0": tensor})
     submitted, completed, draining, retired = (threading.Event() for _ in range(4))
     errors = []
-    sender = worker._prefill._push_sender
+    sender = worker._push_sender
     original_write, original_wait = engine.write, sender.wait_req
 
     def blocked_write(*args, **kwargs):
@@ -268,11 +268,11 @@ def test_sender_error_cannot_retire_authorization_before_admitted_write_drains(
                 }
             )
         )
-        prepared = worker._prefill._push_layer_plans["req"][0].target_pushes[0]
+        prepared = worker._push_layer_plans["req"][0].target_pushes[0]
         worker.save_kv_layer("layer.0", tensor, SimpleNamespace())
         assert submitted.wait(timeout=3)
         sender.submit(
-            prefill_worker_mod._LayerPushTask(
+            prefill_async_mod._LayerPushTask(
                 transfer=transfer,
                 req_id="req",
                 layer_idx=0,
@@ -286,13 +286,13 @@ def test_sender_error_cannot_retire_authorization_before_admitted_write_drains(
         assert draining.wait(timeout=3)
         assert not retired.wait(timeout=0.05)
         assert transfer._request_generations["req"] == prepared.request_generation
-        assert "req" in worker._prefill._push_authorizations
+        assert "req" in worker._push_authorizations
         assert engine.notifications == []
         completed.set()
         assert retired.wait(timeout=3)
         assert errors == []
         assert "req" not in transfer.peer_handshakes
-        assert "req" not in worker._prefill._push_authorizations
+        assert "req" not in worker._push_authorizations
         assert sender.is_idle()
         assert [endpoint for endpoint, _, _ in engine.writes] == ["old-peer:1"]
     finally:

@@ -4,29 +4,30 @@ from __future__ import annotations
 
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from orbitkv.logging_utils import get_connector_logger
-from orbitkv.vllm.pd.async_runner import AsyncTaskPool
 from orbitkv.vllm.pd.layout import KvCacheLayout
 from orbitkv.vllm.pd.layout_mapping import (
     decode_rank_source_counts,
 )
 from orbitkv.vllm.pd.metadata import (
+    RELEASE_CONSUMER_ABORT,
     BlockIds,
     LayerRemoteLayout,
+    PdConnectorMetadata,
     PdHandshake,
+    PdWorkerMetadata,
     WaitReqMeta,
     flatten_block_ids,
     layer_layout_to_compact_dict,
 )
+from orbitkv.vllm.pd.metrics import PdMetricsTracker
 from orbitkv.vllm.pd.mooncake import MooncakePort
 from orbitkv.vllm.pd.prefill import AsyncPrefillSender, PrefillHttpTask
-
-if TYPE_CHECKING:
-    from orbitkv.vllm.pd.worker import PdWorkerBase
-
+from orbitkv.vllm.pd.worker import PdWorkerBase
 
 logger = get_connector_logger()
 
@@ -36,7 +37,7 @@ class _DecodeWaitState:
 
     Groups the seven request-tracking collections that the Mooncake waiter and
     prefill-sender callbacks mutate concurrently with the vLLM forward thread,
-    behind a single lock (the original ``DecodeHandler._lock``).
+    behind a single lock.
 
     Failure marking writes the three failure channels together, but they are
     drained by *different* vLLM callbacks (``get_finished`` /
@@ -333,31 +334,59 @@ class _DecodePeerState:
         }
 
 
-class DecodeHandler:
+class DecodeWorker(PdWorkerBase):
     """Handles D-side requests: Mooncake receive, handshake, prefill dispatch."""
 
     def __init__(
         self,
-        worker: PdWorkerBase,
+        vllm_config: Any,
+        kv_cache_config: Any = None,
+        transfer: MooncakePort | None = None,
         prefill_sender: Any | None = None,
-        completion_callback: Any | None = None,
+        metrics: PdMetricsTracker | None = None,
     ) -> None:
-        self._w = worker
-        self._state = _DecodeWaitState(worker.metrics)
-        self._peers = _DecodePeerState(worker)
-        self._completion_callback = completion_callback
+        super().__init__(vllm_config, kv_cache_config, transfer, metrics)
+        observation_socket = vllm_config.kv_transfer_config.kv_connector_extra_config.get(
+            "orbitkv.pd.completion_observation_socket",
+        )
+        self._completion_instance_id = str(
+            vllm_config.kv_transfer_config.kv_connector_extra_config.get(
+                "orbitkv.pd.completion_observation_instance_id",
+                "",
+            )
+            or ""
+        )
+        self._completion_client: Any | None = None
+        if observation_socket is not None:
+            if not isinstance(observation_socket, str) or not observation_socket:
+                raise ValueError(
+                    "orbitkv.pd.completion_observation_socket must be a non-empty path"
+                )
+            if not self._completion_instance_id:
+                raise ValueError(
+                    "orbitkv.pd.completion_observation_instance_id is required when "
+                    "completion observation is enabled"
+                )
+            from orbitkv import CacheManagerClient
+
+            self._completion_client = CacheManagerClient(observation_socket)
+        self._state = _DecodeWaitState(self.metrics)
+        self._peers = _DecodePeerState(self)
+        self._completion_callback = (
+            self._observe_handoff_completion if self._completion_client is not None else None
+        )
         self._transfer_waiter: _AsyncTransferDoneWaiter | None = (
             _AsyncTransferDoneWaiter(
-                worker.transfer,
+                self.transfer,
                 failure_callback=self._mark_wait_failed,
                 success_callback=self._record_transfer_wait_done,
                 cancellation_callback=self._record_transfer_wait_cancelled,
             )
-            if worker.transfer is not None
+            if self.transfer is not None
             else None
         )
         prefill_sender_worker_count = int(
-            worker.vllm_config.kv_transfer_config.kv_connector_extra_config.get(
+            self.vllm_config.kv_transfer_config.kv_connector_extra_config.get(
                 "orbitkv.pd.prefill_sender_worker_count",
                 16,
             )
@@ -367,11 +396,114 @@ class DecodeHandler:
             failure_callback=self._mark_prefill_failed,
         )
 
+    def register_kv_caches(self, kv_caches: dict[str, Any]) -> None:
+        super().register_kv_caches(kv_caches)
+        if not self._transfer_is_injected:
+            self.init_transfer_waiter()
+        self.gather_peer_info()
+        logger.info(
+            "[PdConnector] decode gathered %d peer ranks",
+            len(self._peers.layouts),
+        )
+
+    def start_load_kv(
+        self,
+        metadata: PdConnectorMetadata,
+        forward_context: Any,
+        **kwargs: Any,
+    ) -> None:
+        logger.debug(
+            "[PdConnector] decode start_load_kv metadata=%s wait_reqs=%s release=%s known_wait=%s",
+            metadata,
+            sorted(metadata.reqs_to_wait),
+            sorted(metadata.reqs_to_release),
+            sorted(self._state.wait_reqs),
+        )
+        if not metadata.reqs_to_wait and not metadata.reqs_to_release and self.is_idle():
+            return
+        assert self.transfer is not None, "PdConnector Mooncake port is not initialized"
+        self.process_wait_reqs(metadata.reqs_to_wait)
+        for req_id in metadata.reqs_to_release:
+            reason = metadata.release_reasons.get(req_id, RELEASE_CONSUMER_ABORT)
+            logger.debug("[PdConnector] decode release req=%s reason=%s", req_id, reason)
+            if reason == RELEASE_CONSUMER_ABORT:
+                self.release(req_id)
+            else:
+                self.transfer.close_request(req_id)
+
+    def wait_for_layer_load(self, layer_name: str) -> None:
+        assert layer_name in self.layouts, (
+            f"PdConnector saw unknown layer {layer_name}; registered={list(self.layouts)}"
+        )
+
+    def get_finished(self, finished_req_ids: set[str]) -> tuple[set[str] | None, set[str] | None]:
+        if not finished_req_ids and self.is_idle():
+            return None, None
+        assert self.transfer is not None, "PdConnector Mooncake port is not initialized"
+        finished_recving = self._state.drain_finished_transfer_waits()
+        finished_recving.update(self._state.drain_finished_aborted_recving())
+        finished_recving.update(self._state.drain_failed_recving())
+        if finished_recving:
+            logger.info(
+                "[PdConnector] D worker finished_recving reqs=%s count=%d "
+                "remaining_wait_before=%d ts_ns=%d",
+                sorted(finished_recving),
+                len(finished_recving),
+                len(self._state.wait_reqs),
+                time.time_ns(),
+            )
+        self.finish_recving(finished_recving)
+        return None, finished_recving or None
+
+    def build_connector_worker_meta(self) -> PdWorkerMetadata | None:
+        failed_recving = self._state.drain_failed_recving_for_meta()
+        if not failed_recving:
+            return None
+        return PdWorkerMetadata(failed_recving=failed_recving)
+
+    def _observe_handoff_completion(self, evidence: Any, outcome: str) -> None:
+        client = self._completion_client
+        if client is None:
+            return
+        if self.device_id is None:
+            logger.warning("[PdConnector] cannot report completion before KV cache registration")
+            return
+        elapsed_ns = max(1, time.time_ns() - evidence.queued_ts_ns)
+        try:
+            client.observe_prefill_to_decode_completion(
+                self._completion_instance_id,
+                self.device_id,
+                evidence.source_endpoint,
+                evidence.transfer_generation,
+                evidence.logical_bytes,
+                evidence.wire_bytes if outcome == "completed" else 0,
+                evidence.fragment_count,
+                elapsed_ns,
+                evidence.logical_bytes,
+                evidence.handoff_queue_depth,
+                evidence.handoff_queue_parallelism,
+                evidence.tent_inflight_bytes,
+                evidence.tent_bandwidth_bytes_per_second,
+                admitted=True,
+                outcome=outcome,
+                representation="raw",
+            )
+        except Exception:
+            logger.exception(
+                "[PdConnector] disabling completion observations after Cache Manager failure"
+            )
+            client.close()
+            self._completion_client = None
+            self.disable_completion_observations()
+
+    def get_block_ids_with_load_errors(self) -> set[int]:
+        return self._state.drain_failed_block_ids()
+
     def init_transfer_waiter(self) -> None:
         """Called after Mooncake port is built (during register_kv_caches)."""
-        if self._transfer_waiter is None and self._w.transfer is not None:
+        if self._transfer_waiter is None and self.transfer is not None:
             self._transfer_waiter = _AsyncTransferDoneWaiter(
-                self._w.transfer,
+                self.transfer,
                 failure_callback=self._mark_wait_failed,
                 success_callback=self._record_transfer_wait_done,
                 cancellation_callback=self._record_transfer_wait_cancelled,
@@ -384,7 +516,7 @@ class DecodeHandler:
         self._completion_callback = None
 
     def process_wait_reqs(self, reqs_to_wait: dict[str, WaitReqMeta]) -> None:
-        assert self._w.transfer is not None, "PdConnector Mooncake port is not initialized"
+        assert self.transfer is not None, "PdConnector Mooncake port is not initialized"
         assert self._transfer_waiter is not None, "PdConnector Mooncake waiter is not initialized"
         for req_id, req in reqs_to_wait.items():
             if self._state.has_wait(req_id):
@@ -401,9 +533,9 @@ class DecodeHandler:
                 wire_bytes, fragment_count = 0, 0
             else:
                 wire_bytes, fragment_count = self._completion_shape(req.local_block_ids)
-            transfer_generation = self._w.transfer.open_request(req_id, wait_handshake)
+            transfer_generation = self.transfer.open_request(req_id, wait_handshake)
             self._state.register_wait(req_id, req)
-            tent_inflight_bytes, tent_bandwidth_bytes_per_second = _tent_pressure(self._w.transfer)
+            tent_inflight_bytes, tent_bandwidth_bytes_per_second = _tent_pressure(self.transfer)
             waiter_queued_ts_ns = time.time_ns()
             self._transfer_waiter.submit(
                 _TransferWaitTask(
@@ -413,7 +545,7 @@ class DecodeHandler:
                     remote_request_id=req.remote_request_id,
                     done_request_id=req.done_request_id,
                     source_endpoint=req.prefill_url,
-                    rank=self._w.tp_rank,
+                    rank=self.tp_rank,
                     block_count=local_block_count,
                     logical_bytes=wire_bytes,
                     wire_bytes=wire_bytes,
@@ -433,7 +565,7 @@ class DecodeHandler:
                 req_id,
                 req.remote_request_id,
                 req.prefill_url or "<oob>",
-                self._w.tp_rank,
+                self.tp_rank,
                 local_block_count,
                 _elapsed_ms(req.proxy_start_ts_ns, queued_ts_ns),
                 _elapsed_ms(req.matched_ts_ns, queued_ts_ns),
@@ -441,7 +573,7 @@ class DecodeHandler:
                 _elapsed_ms(process_ts_ns, queued_ts_ns),
                 queued_ts_ns,
             )
-            if req.prefill_url and self._w.tp_rank == 0:
+            if req.prefill_url and self.tp_rank == 0:
                 self._dispatch_prefill(req, req.local_block_ids)
 
     def release(self, req_id: str) -> None:
@@ -453,45 +585,29 @@ class DecodeHandler:
         for req_id in finished_recving:
             req, was_aborted, is_failed = self._state.finish_recving_one(req_id)
             if req is not None and not was_aborted:
-                self._w.metrics.record_decode_wait(
+                self.metrics.record_decode_wait(
                     duration_s=_elapsed_seconds(req.scheduler_wait_ts_ns, time.time_ns()),
                     transfer_wait_s=None,
                     blocks=len(flatten_block_ids(req.local_block_ids)),
                     success=not is_failed,
                 )
-            self._w.transfer.close_request(req_id)
-
-    def pop_finished_aborted_recving(self) -> set[str]:
-        return self._state.drain_finished_aborted_recving()
-
-    def pop_finished_transfer_waits(self) -> set[str]:
-        return self._state.drain_finished_transfer_waits()
-
-    def pop_failed_recving(self) -> set[str]:
-        return self._state.drain_failed_recving()
-
-    def pop_failed_recving_for_meta(self) -> set[str]:
-        return self._state.drain_failed_recving_for_meta()
-
-    def pop_failed_block_ids(self) -> set[int]:
-        return self._state.drain_failed_block_ids()
+            self.transfer.close_request(req_id)
 
     def shutdown(self) -> None:
         active_request_ids = self._state.request_ids()
         if self._transfer_waiter is not None:
             for req_id in active_request_ids:
                 self._transfer_waiter.cancel(req_id, outcome="cancelled")
-        if self._w.transfer is not None:
+        if self.transfer is not None:
             for req_id in active_request_ids:
-                self._w.transfer.close_request(req_id)
+                self.transfer.close_request(req_id)
         self._state.clear()
         if self._transfer_waiter is not None:
             self._transfer_waiter.close()
         self._prefill_sender.close()
-
-    @property
-    def wait_reqs(self) -> dict[str, WaitReqMeta]:
-        return self._state.wait_reqs
+        if self._completion_client is not None:
+            self._completion_client.close()
+            self._completion_client = None
 
     def is_idle(self) -> bool:
         return self._state.is_idle()
@@ -543,7 +659,7 @@ class DecodeHandler:
         if req is None:
             return
         self._report_completion(task, "cancelled" if was_aborted else "completed")
-        self._w.metrics.record_decode_transfer_wait(wait_s)
+        self.metrics.record_decode_transfer_wait(wait_s)
         logger.info(
             "[PdConnector] D Mooncake wait done req=%s remote_req=%s wait_ms=%.3f proxy_to_transfer_done_ms=%.3f scheduler_wait_to_transfer_done_ms=%.3f ts_ns=%d",
             req_id,
@@ -571,7 +687,7 @@ class DecodeHandler:
     ) -> None:
         """Side effects after a failure is recorded in state: emit the wait
         metric, log, and cancel the Mooncake waiter."""
-        self._w.metrics.record_decode_wait(
+        self.metrics.record_decode_wait(
             duration_s=_elapsed_seconds(req.scheduler_wait_ts_ns, time.time_ns()),
             transfer_wait_s=None,
             blocks=len(failed_blocks),
@@ -602,8 +718,8 @@ class DecodeHandler:
     def _completion_shape(self, block_ids: BlockIds) -> tuple[int, int]:
         wire_bytes = 0
         fragments = 0
-        for layer_idx, layer_name in enumerate(self._w.layer_names):
-            selected = self._w.block_ids_for_layer(block_ids, layer_name)
+        for layer_idx, layer_name in enumerate(self.layer_names):
+            selected = self.block_ids_for_layer(block_ids, layer_name)
             if not selected:
                 continue
             layout = self._remote_layout(layer_name, layer_idx, (min(selected),))
@@ -619,8 +735,8 @@ class DecodeHandler:
         block_ids: BlockIds,
     ) -> PdHandshake:
         layers = []
-        for layer_idx, layer_name in enumerate(self._w.layer_names):
-            layer_block_ids = self._w.block_ids_for_layer(block_ids, layer_name)
+        for layer_idx, layer_name in enumerate(self.layer_names):
+            layer_block_ids = self.block_ids_for_layer(block_ids, layer_name)
             if not layer_block_ids:
                 continue
             layers.append(
@@ -633,10 +749,10 @@ class DecodeHandler:
         assert layers, f"PdConnector D wait req={req_id} has no local KV blocks"
         return PdHandshake(
             request_id=req_id,
-            engine_id=self._w.engine_id,
-            transfer_endpoint=self._w.transfer.endpoint(),
-            tp_rank=self._w.tp_rank,
-            tp_size=self._w.tp_size,
+            engine_id=self.engine_id,
+            transfer_endpoint=self.transfer.endpoint(),
+            tp_rank=self.tp_rank,
+            tp_size=self.tp_size,
             block_size=self._peers.block_size,
             layers=tuple(layers),
             expected_notify_count=self._peers.local_expected_notify_count(),
@@ -654,7 +770,7 @@ class DecodeHandler:
         )
         kv_transfer_params: dict[str, Any] = {
             "do_remote_prefill_sender": True,
-            "target_engine_id": self._w.engine_id,
+            "target_engine_id": self.engine_id,
             "target_request_id": req.done_request_id,
             "pd_handshakes": all_handshakes,
             "pd_consumer_abort_returns_ack": True,
@@ -669,9 +785,7 @@ class DecodeHandler:
         )
         self._prefill_sender.submit(task)
         submitted_ts_ns = time.time_ns()
-        self._w.metrics.record_prefill_http_submit(
-            (submitted_ts_ns - started_ts_ns) / 1_000_000_000
-        )
+        self.metrics.record_prefill_http_submit((submitted_ts_ns - started_ts_ns) / 1_000_000_000)
         logger.info(
             "[PdConnector] D rank0 dispatched prefill req=%s remote_req=%s ranks=%d blocks=%d "
             "build_ms=%.3f proxy_to_dispatch_ms=%.3f matched_to_dispatch_ms=%.3f "
@@ -693,7 +807,7 @@ class DecodeHandler:
         layer_idx: int,
         block_ids: tuple[int, ...],
     ) -> LayerRemoteLayout:
-        layout = self._w.layouts[layer_name].remote_layout(layer_idx, block_ids)
+        layout = self.layouts[layer_name].remote_layout(layer_idx, block_ids)
         return layout
 
 
@@ -717,7 +831,7 @@ class _TransferWaitTask:
     queued_ts_ns: int
 
 
-class _AsyncTransferDoneWaiter(AsyncTaskPool):
+class _AsyncTransferDoneWaiter:
     """Background pool blocking on Mooncake completion notification."""
 
     def __init__(
@@ -729,7 +843,10 @@ class _AsyncTransferDoneWaiter(AsyncTaskPool):
         max_workers: int = 16,
     ) -> None:
         self._max_workers = max(1, int(max_workers))
-        super().__init__("pd-transfer-done-waiter", max_workers=max_workers)
+        self._lock = threading.Lock()
+        self._executor = ThreadPoolExecutor(
+            max_workers=self._max_workers, thread_name_prefix="pd-transfer-done-waiter"
+        )
         self.transfer = transfer
         self._failure_callback = failure_callback
         self._success_callback = success_callback
@@ -763,7 +880,7 @@ class _AsyncTransferDoneWaiter(AsyncTaskPool):
             task.source_endpoint,
             len(self._submitted),
         )
-        self._spawn(task)
+        self._executor.submit(self._execute, task)
         return task
 
     def cancel(self, req_id: str, *, outcome: str = "cancelled") -> None:
@@ -849,6 +966,9 @@ class _AsyncTransferDoneWaiter(AsyncTaskPool):
                     cancelled.pop(task.wait_generation, None)
                     if not cancelled:
                         self._cancelled.pop(task.req_id, None)
+
+    def close(self) -> None:
+        self._executor.shutdown(wait=False, cancel_futures=True)
 
     def _cancellation_outcome(self, task: _TransferWaitTask) -> str | None:
         with self._lock:

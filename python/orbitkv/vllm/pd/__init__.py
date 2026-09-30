@@ -10,50 +10,83 @@ from vllm.distributed.kv_transfer.kv_connector.v1.base import (
     SupportsHMA,
 )
 
-from orbitkv.vllm.pd.base_connector import (
-    PdConnectorClassMixin,
-    assert_supported_config,
-)
+from orbitkv.vllm.pd.layout import model_uses_mla
 from orbitkv.vllm.pd.metadata import PdConnectorMetadata
-from orbitkv.vllm.pd.metrics import PdMetricsTracker
-from orbitkv.vllm.pd.scheduler import (
-    PdDecodeSchedulerConnector,
-    PdPrefillSchedulerConnector,
-)
-from orbitkv.vllm.pd.worker import (
-    PdDecodeWorkerConnector,
-    PdPrefillWorkerConnector,
-)
+from orbitkv.vllm.pd.metrics import PdKVConnectorStats, PdMetricsTracker, PdPromMetrics
 
 
-class _PdSplitConnector(PdConnectorClassMixin, KVConnectorBase_V1, SupportsHMA):
-    """Base for the split decode/prefill connectors.
+class _PdSplitConnector(KVConnectorBase_V1, SupportsHMA):
+    """Public vLLM callbacks shared by Prefill and Decode."""
 
-    Holds the vLLM callbacks that are identical on both sides. Subclasses set
-    ``_scheduler_cls`` / ``_worker_cls`` and override only the callbacks that
-    actually differ between decode and prefill (load/save side, cudagraph
-    requirement, load-error reporting).
-    """
-
-    _scheduler_cls: type
-    _worker_cls: type
+    _is_prefill = False
 
     def __init__(self, vllm_config: Any, role: KVConnectorRole, kv_cache_config: Any = None):
         super().__init__(vllm_config, role, kv_cache_config)
-        assert_supported_config(vllm_config)
+        if model_uses_mla(vllm_config):
+            parallel_config = getattr(vllm_config, "parallel_config", None)
+            dcp_world_size = int(getattr(parallel_config, "decode_context_parallel_size", 1) or 1)
+            pcp_world_size = int(getattr(parallel_config, "prefill_context_parallel_size", 1) or 1)
+            assert dcp_world_size == 1, (
+                "PdConnector MLA first version requires decode_context_parallel_size == 1"
+            )
+            assert pcp_world_size == 1, (
+                "PdConnector MLA first version requires prefill_context_parallel_size == 1"
+            )
         self._scheduler: Any | None = None
         self._worker: Any | None = None
         self._metrics = PdMetricsTracker()
         if role == KVConnectorRole.SCHEDULER:
-            self._scheduler = self._scheduler_cls(vllm_config, metrics=self._metrics)
+            from .scheduler import (
+                PdDecodeSchedulerConnector,
+                PdPrefillSchedulerConnector,
+            )
+
+            scheduler_cls = (
+                PdPrefillSchedulerConnector if self._is_prefill else PdDecodeSchedulerConnector
+            )
+            self._scheduler = scheduler_cls(vllm_config)
         elif role == KVConnectorRole.WORKER:
-            self._worker = self._worker_cls(
+            if self._is_prefill:
+                from .prefill_worker import PrefillWorker as worker_cls
+            else:
+                from .decode_worker import DecodeWorker as worker_cls
+
+            self._worker = worker_cls(
                 vllm_config,
                 kv_cache_config=kv_cache_config,
                 metrics=self._metrics,
             )
         else:
             raise ValueError(f"unsupported KV connector role: {role}")
+
+    @classmethod
+    def get_required_kvcache_layout(cls, vllm_config: Any) -> str | None:
+        if model_uses_mla(vllm_config):
+            return None
+        return "HND"
+
+    @classmethod
+    def requires_piecewise_for_cudagraph(cls, extra_config: dict[str, Any]) -> bool:
+        return True
+
+    def get_kv_connector_stats(self) -> PdKVConnectorStats | None:
+        return self._metrics.get_stats()
+
+    @classmethod
+    def build_kv_connector_stats(cls, data: dict | None = None) -> PdKVConnectorStats | None:
+        if data is None:
+            return None
+        return PdKVConnectorStats(data=data)
+
+    @classmethod
+    def build_prom_metrics(
+        cls,
+        vllm_config,
+        metric_types,
+        labelnames,
+        per_engine_labelvalues,
+    ) -> PdPromMetrics:
+        return PdPromMetrics(vllm_config, metric_types, labelnames, per_engine_labelvalues)
 
     # -- worker-side common callbacks --------------------------------------
 
@@ -119,9 +152,6 @@ class _PdSplitConnector(PdConnectorClassMixin, KVConnectorBase_V1, SupportsHMA):
 class PdDecodeConnector(_PdSplitConnector):
     """Decode-side vLLM connector for P/D Mooncake push."""
 
-    _scheduler_cls = PdDecodeSchedulerConnector
-    _worker_cls = PdDecodeWorkerConnector
-
     def start_load_kv(self, forward_context: Any, **kwargs: Any) -> None:
         if self._worker is None:
             return
@@ -163,8 +193,7 @@ class PdDecodeConnector(_PdSplitConnector):
 class PdPrefillConnector(_PdSplitConnector):
     """Prefill-side vLLM connector for P/D Mooncake push."""
 
-    _scheduler_cls = PdPrefillSchedulerConnector
-    _worker_cls = PdPrefillWorkerConnector
+    _is_prefill = True
 
     def bind_connector_metadata(self, connector_metadata: PdConnectorMetadata) -> None:
         super().bind_connector_metadata(connector_metadata)
@@ -192,12 +221,6 @@ class PdPrefillConnector(_PdSplitConnector):
     def wait_for_save(self) -> None:
         if self._worker is not None:
             self._worker.wait_for_save()
-
-    def get_block_ids_with_load_errors(self) -> set[int]:
-        return set()
-
-    def build_connector_worker_meta(self) -> Any | None:
-        return None
 
 
 __all__ = ["PdDecodeConnector", "PdPrefillConnector"]

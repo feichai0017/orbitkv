@@ -26,6 +26,11 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
 - vLLM uses the KV Connector contract; SGLang uses UnifiedRadixCache and the
   external linker. Preserve valid native HBM hits without external synchronous
   lookup. Keep unselected backend imports free of native initialization.
+- SGLang 0.5.20 cancellation already reaches the external linker through
+  `BasePrefixCache.finish(ABORT)` and `UnifiedRadixCache.release_aborted_request`.
+  Keep cancellation/drain in that consumed lifecycle; do not restore a duplicate
+  private Scheduler abort Hook. Queue preparation and P/D observation Hooks are
+  registered only when their startup options are enabled.
 - Prefer native P/D lifecycle with an explicit TENT backend. Prove equivalence
   before deleting custom P/D state machines or proxy code. Cache restore and live
   handoff must have one writer and one completion/release authority per range.

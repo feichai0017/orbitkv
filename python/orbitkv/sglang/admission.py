@@ -76,20 +76,6 @@ def enqueue_request(original: Callable, scheduler: Any, req: Any, *args: Any, **
     return result
 
 
-def abort_request(original: Callable, scheduler: Any, req: Any) -> Any:
-    from sglang.srt.runtime_context import get_memory
-
-    if get_memory().radix_cache_backend != "orbitkv":
-        return original(scheduler, req)
-    from .linker import OrbitKVLinker
-
-    wrapper = getattr(scheduler.tree_cache, "linker", None)
-    linker = getattr(wrapper, "cache_linker", None)
-    if isinstance(linker, OrbitKVLinker):
-        linker.cancel_query(req.rid)
-    return original(scheduler, req)
-
-
 def admit_request(original: Callable, adder: Any, req: Any, *args: Any, **kwargs: Any) -> Any:
     from sglang.srt.runtime_context import get_memory
 

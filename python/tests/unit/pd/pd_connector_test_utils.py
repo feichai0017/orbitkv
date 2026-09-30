@@ -23,12 +23,14 @@ from vllm.distributed.kv_transfer.kv_connector.v1.metrics import (  # noqa: E402
 import orbitkv.orbitkv as native  # noqa: E402
 import orbitkv.vllm.pd.decode_worker as decode_worker_mod  # noqa: E402
 import orbitkv.vllm.pd.prefill as prefill_mod  # noqa: E402
+import orbitkv.vllm.pd.prefill_async as prefill_async_mod
 import orbitkv.vllm.pd.prefill_worker as prefill_worker_mod  # noqa: E402
 import orbitkv.vllm.pd.worker as worker_mod  # noqa: E402
 from orbitkv.vllm.pd import (  # noqa: E402
     PdDecodeConnector,
     PdPrefillConnector,
 )
+from orbitkv.vllm.pd.decode_worker import DecodeWorker  # noqa: E402
 from orbitkv.vllm.pd.kv_params import parse_consumer  # noqa: E402
 from orbitkv.vllm.pd.layout import (  # noqa: E402
     BlockRegionSlice,
@@ -60,6 +62,7 @@ from orbitkv.vllm.pd.prefill import (  # noqa: E402
     AsyncPrefillSender,
     PrefillHttpTask,
 )
+from orbitkv.vllm.pd.prefill_worker import PrefillWorker  # noqa: E402
 from orbitkv.vllm.pd.proxy import (  # noqa: E402
     PdEndpoint,
     ProxyConfig,
@@ -72,10 +75,6 @@ from orbitkv.vllm.pd.proxy import (  # noqa: E402
 from orbitkv.vllm.pd.scheduler import (  # noqa: E402
     PdDecodeSchedulerConnector,
     PdPrefillSchedulerConnector,
-)
-from orbitkv.vllm.pd.worker import (  # noqa: E402
-    PdDecodeWorkerConnector,
-    PdPrefillWorkerConnector,
 )
 
 
@@ -308,9 +307,9 @@ class FakeMooncakeTransferEngineCtor(FakeMooncakeTransferEngine):
         type(self).last_kwargs = kwargs
 
 
-def drain_pd_pushes(worker: PdDecodeWorkerConnector | PdPrefillWorkerConnector) -> None:
-    worker._prefill._push_sender.wait_all()
-    worker._prefill._push_finalizer.wait_all()
+def drain_pd_pushes(worker: DecodeWorker | PrefillWorker) -> None:
+    worker._push_sender.wait_all()
+    worker._push_finalizer.wait_all()
 
 
 def pushed_layers_by_idx(

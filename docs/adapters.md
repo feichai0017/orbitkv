@@ -47,6 +47,11 @@ The [SGLang 0.5.20 FlexKV integration](https://github.com/sgl-project/sglang/blo
 owns task completion and connection lifetime beside the engine cache. OrbitKV
 uses these explicit backend boundaries while retaining its existing Rust client,
 Unified tree and per-layer GPU completion dependencies.
+The separately inspected [FlexKV adapter at `738ddc14`](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/flexkv/integration/vllm/vllm_v1_adapter.py)
+is a pinned main reference, not an OrbitKV-supported release. Like LMCache MP,
+it separates scheduler callbacks from worker callbacks. OrbitKV follows that
+ownership split without inheriting another cache's task engine or compatibility
+branches.
 
 ## vLLM callbacks and current internal dependencies
 
@@ -97,9 +102,17 @@ nor GPU layout code; graph and admission hooks check the selected backend before
 loading OrbitKV resources. Native bindings load on first native API access.
 
 `RecoveryLinkerWrapper` and `RecurrentComponent` currently extend the released
-Full/SWA linker with checkpoint-specific behavior. The plugin also Hooks internal
-enqueue/abort, graph initialization and P/D completion/release methods. These
-are version-coupled implementation dependencies, not stable public APIs.
+Full/SWA linker with checkpoint-specific behavior. Aborts use the released
+`BasePrefixCache.finish(ABORT)` → `UnifiedRadixCache.release_aborted_request` →
+`RecoveryLinkerWrapper.release_request` lifecycle. It cancels unconsumed queries
+and drains already-published destinations before releasing their tree locks;
+there is no additional Scheduler abort Hook.
+
+The ordinary cache profile registers two internal Hooks: graph initialization
+and pending-query admission. Enqueue preparation adds one Hook only when
+`ORBITKV_PREPARE_REQUESTS=1` or `ORBITKV_QUEUE_WARMUP=1` is set before startup.
+The six P/D observation Hooks are registered only with `ORBITKV_SGLANG_TENT=1`.
+These remaining targets are version-coupled dependencies, not stable public APIs.
 Replace them with consumed factory/lifecycle/component contracts and then delete
 the duplicate logic. Unknown DSA, draft, auxiliary state and unsupported request
 rings remain rejected until they have complete recovery contracts.
@@ -112,7 +125,20 @@ Current live P/D performs TENT WRITE into decoder-authorized destinations.
 Neither operation direction inherently wins on latency, and neither proves RDMA.
 
 vLLM currently has OrbitKV-owned `PdPrefillConnector` / `PdDecodeConnector`
-control logic. SGLang keeps native bootstrap and request states but opt-in TENT
+control logic. The public entry constructs only its selected role. `PrefillWorker`
+and `DecodeWorker` each own their engine callbacks and request lifecycle directly;
+`PdWorkerBase` owns shared GPU layout registration and TENT construction. There is
+no Worker-to-Handler forwarding layer or class-callback mixin. Prefill task
+records and inflight accounting live with their executors in `prefill_async.py`;
+the decode waiter owns its own executor and generation state. Source completion,
+destination grants, cancellation and physical drain retain separate authorities.
+
+The pinned vLLM 0.29.0 Mooncake worker directly constructs the legacy
+`mooncake.engine.TransferEngine`; it has no constructor argument or public
+factory for OrbitKV TENT. Selecting that connector or replacing its module class
+would not preserve the current payload contract. Native lifecycle migration
+therefore remains S5.4 work rather than a connector rename.
+SGLang keeps native bootstrap and request states but opt-in TENT
 uses a module-class replacement. These are experimental integration boundaries.
 The target is native P/D lifecycle plus an explicit TENT backend, independently
 composable with cache reuse. Audit equivalence before deleting the existing path.
