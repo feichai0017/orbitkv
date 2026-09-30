@@ -144,6 +144,41 @@ async fn metadata_handler(State(state): State<AppState>) -> Json<Option<Metadata
     )
 }
 
+#[derive(Deserialize)]
+struct OwnerMetadataQuery {
+    after: Option<uuid::Uuid>,
+    #[serde(default = "default_owner_status_limit")]
+    limit: usize,
+}
+
+fn default_owner_status_limit() -> usize {
+    64
+}
+
+async fn owner_metadata_handler(
+    State(state): State<AppState>,
+    Query(query): Query<OwnerMetadataQuery>,
+) -> impl IntoResponse {
+    if query.limit == 0 || query.limit > 128 {
+        return (
+            StatusCode::BAD_REQUEST,
+            "owner metadata limit must be in 1..=128".to_string(),
+        )
+            .into_response();
+    }
+    match state
+        .engine
+        .metadata_owner_statuses(query.after, query.limit)
+    {
+        Some(owners) => Json(owners).into_response(),
+        None => (
+            StatusCode::CONFLICT,
+            "distributed inventory is not configured",
+        )
+            .into_response(),
+    }
+}
+
 async fn sync_cache_handler(State(state): State<AppState>) -> impl IntoResponse {
     let Some(inventory) = state.inventory.as_ref() else {
         return (
@@ -271,6 +306,7 @@ pub(crate) async fn start_http_server_with_lifecycle(
         .route("/instances/cleanup", post(cleanup_handler))
         .route("/cache/sync", post(sync_cache_handler))
         .route("/cache/metadata/await", post(await_inventory_handler))
+        .route("/cache/metadata/owners", get(owner_metadata_handler))
         .route("/cache/metadata", get(metadata_handler))
         .route("/cache/memory/cleanup", post(cleanup_memory_cache_handler));
 

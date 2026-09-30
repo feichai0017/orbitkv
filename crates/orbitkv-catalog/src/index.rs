@@ -432,6 +432,27 @@ impl GlobalIndex {
             })
     }
 
+    pub fn owner_statuses(&self, after: Option<Uuid>, limit: usize) -> Vec<OwnerIndexStatus> {
+        let view = self.view.read();
+        let mut owners = view
+            .owners
+            .iter()
+            .filter(|(owner, _)| after.is_none_or(|after| **owner > after))
+            .map(|(owner, owner_view)| OwnerIndexStatus {
+                owner: *owner,
+                view_id: owner_view.view_id,
+                applied_sequence: owner_view.applied_sequence,
+                fresh: owner_view.fresh && !owner_view.retired,
+                receipt_age_ms: u64::try_from(owner_view.received_at.elapsed().as_millis())
+                    .unwrap_or(u64::MAX),
+                records: owner_view.records.len(),
+            })
+            .collect::<Vec<_>>();
+        owners.sort_by_key(|status| status.owner);
+        owners.truncate(limit.min(128));
+        owners
+    }
+
     pub fn retire_owner(&self, owner: Uuid) {
         let mut view = self.view.write();
         if let Some(staging) = view.staging.remove(&owner) {

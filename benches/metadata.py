@@ -135,6 +135,16 @@ def _etcd_keys(endpoint: str, prefix: str):
     return [base64.b64decode(row["key"]).decode() for row in response.json().get("kvs", [])]
 
 
+def _owner_status(manager, incarnation):
+    response = requests.get(
+        f"http://127.0.0.1:{manager.http_port}/cache/metadata/owners",
+        params={"limit": 128},
+        timeout=5,
+    )
+    response.raise_for_status()
+    return next((row for row in response.json() if row["owner"] == incarnation), None)
+
+
 def run(tmp_path: Path, profile: str):
     import torch
 
@@ -349,6 +359,7 @@ def run(tmp_path: Path, profile: str):
                 managers,
             )
             assert not missing.lease
+            target_sequence = _metadata(source_manager)["inventory_sequence"] + pages
 
             started = time.monotonic()
             ok, message = source_client.save(
@@ -368,6 +379,21 @@ def run(tmp_path: Path, profile: str):
             immediate_remote_hits.append(immediate.num_hit_blocks)
             if immediate.lease:
                 observer_client.release(immediate.lease)
+            _until(
+                lambda target_sequence=target_sequence: (
+                    status
+                    if (
+                        status := _owner_status(
+                            observer_manager, initial_fence["source_incarnation"]
+                        )
+                    )
+                    and status["fresh"]
+                    and status["applied_sequence"] >= target_sequence
+                    else None
+                ),
+                managers,
+            )
+            low_visibility_ms.append((time.monotonic() - started) * 1000)
             ready = _query_ready(
                 observer_client,
                 "observer",
@@ -377,7 +403,6 @@ def run(tmp_path: Path, profile: str):
                 managers,
             )
             observer_client.release(ready.lease)
-            low_visibility_ms.append((time.monotonic() - started) * 1000)
             _restore(
                 observer_client,
                 "observer",
@@ -393,7 +418,7 @@ def run(tmp_path: Path, profile: str):
                         "phase": "low",
                         "sample": sample,
                         "visibility_ms": low_visibility_ms[-1],
-                        "target_sequence": delete_fence["inventory_sequence"] + pages,
+                        "target_sequence": target_sequence,
                         "immediate_remote_hits": immediate_remote_hits[-1],
                     }
                 )

@@ -552,6 +552,17 @@ impl OrbitKVEngine {
         })
     }
 
+    pub fn metadata_owner_statuses(
+        &self,
+        after: Option<uuid::Uuid>,
+        limit: usize,
+    ) -> Option<Vec<orbitkv_catalog::OwnerIndexStatus>> {
+        self.storage
+            .global_index
+            .as_ref()
+            .map(|index| index.owner_statuses(after, limit))
+    }
+
     /// Flush write pipeline and SSD writer.
     ///
     /// Guarantees that all saves submitted before this call are both
