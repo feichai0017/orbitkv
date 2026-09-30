@@ -544,3 +544,57 @@ This is a bounded one-host A100 correctness gate, not sustained journal capacity
 The source is a real `OrbitKVEngine` but not a complete Manager process. SSD,
 cross-host/two-GPU recovery, P/D, RDMA, native GDS and three-host etcd remain
 independent qualification cells.
+
+## Manager process DRAM and io_uring metadata faults
+
+S2.5 extends the distributed Python integration gate to two independent Manager
+processes plus a separate client process and real etcd. The source Manager alone
+connects through a test-owned TCP gate; the consumer stays connected as the
+authoritative observer. Both DRAM and explicit io_uring SSD cases perform five
+eight-block rounds with unique hashes and deterministic per-block payloads.
+
+Each case covers a no-fault remote restore, three publication/eviction/re-save
+rounds during a transient source metadata partition, snapshot convergence after
+healing and a second partition through the source's actual lease expiry. The
+test decodes records from its isolated etcd namespace to compare the exact
+source incarnation, grouped hash, location-key digest, stored byte count and
+DRAM/SSD medium. Deleted rounds must be absent rather than merely balanced by the
+same number of unexpected records.
+
+The SSD case pins `--ssd-backend uring --ssd-read-path uring`. It waits until
+writes are complete, removes the DRAM copy, requires
+`orbitkv_ssd_prefetch_bytes_total` to advance and only then accepts a byte-exact
+GPU restore. The second Manager's DRAM is cleared before the expired-source
+query; its remote-fetch counter must remain unchanged before and after the
+source network heals.
+
+Run only after freezing the Manager, wheel/extension, TENT and etcd:
+
+```bash
+cd /path/to/frozen-test-bundle
+PYTHONPATH=/path/to/frozen-python:/path/to/frozen-test-bundle \
+LD_LIBRARY_PATH=/path/to/frozen \
+ORBITKV_MOONCAKE_LIB_DIR=/path/to/frozen \
+ORBITKV_CACHE_MANAGER_BINARY=/path/to/frozen/orbitkv-cache-manager \
+ETCD_BIN=/path/to/frozen/etcd MC_FORCE_TCP=1 \
+python3 -m pytest -m integration -vv -s \
+  --basetemp=/var/tmp/orbitkv-evidence/s2-5 \
+  tests/integration/test_distributed_cache.py
+```
+
+The final A100 implementation run passes both parameters in 38.71 seconds. DRAM
+and SSD transient partitions measured 258.5 and 252.3 ms; expiry checks measured
+11.29 and 11.43 seconds. The SSD Manager recorded 163,840 written bytes and
+262,144 io_uring-prefetched bytes, with zero final write/read ownership gauges.
+These values are correctness diagnostics, not latency or capacity claims.
+
+Frozen artifacts and copied raw evidence are under
+`/root/orbitkv-artifacts/s2-s51-20260930/s2-5-manager-process-exact/`.
+The original failed runs remain under the preceding `s2-5-manager-process*`
+directories. Remote raw evidence, including etcd DB/WAL files, remains under
+`/workspace/orbitkv-three-host-20260930/s2-5-manager-process-e4cfc810/`.
+Independent review is pending.
+
+This is one A100 host with multiple processes and loopback TCP. It does not
+qualify a cross-host cache, etcd HA/failure domains, native GDS, P/D, RDMA,
+engine model output or a sustained maximum operating envelope.

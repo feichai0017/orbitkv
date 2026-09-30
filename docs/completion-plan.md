@@ -36,7 +36,7 @@ record submitted, merged and released as different states.
 | --- | --- |
 | S0 | Agent handoff and Codex skill migration merged in PR #190. |
 | S1 | Evidence separation independently verified at `ec3add9b`; this delivery consolidates plans and release-based integration guidance. Acceptance covers S1 only; native CUDA qualification remains blocked on this host. |
-| S2 | Partial: S2.1–S2.4 are independently accepted. S2.5 adds a full-Manager DRAM/io_uring SSD metadata-fault gate at `8d1d4697`; independent review is pending. Three-host metadata is blocked by CPU-node SSH authorization and mutually unreachable A/B container data addresses; sustained capacity and separate-host cells remain open. |
+| S2 | Partial: S2.1–S2.4 are independently accepted. S2.5 adds a full-Manager DRAM/io_uring SSD metadata-fault gate through `e4cfc810`; independent review is pending. Three-host metadata is blocked by CPU-node SSH authorization and mutually unreachable A/B container data addresses; sustained capacity and separate-host cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
 | S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`. vLLM 0.30.0 remains an unqualified upgrade target, and public lifecycle/deployment gates remain open. |
@@ -237,7 +237,8 @@ source incarnation.
 
 The implementation run passes both media on one A100 host with frozen Manager,
 wheel, extension, TENT and etcd artifacts. It covers five eight-block rounds per
-medium and forces repeated 1 KiB journal overflow; independent review is pending.
+medium and forces repeated 1 KiB journal overflow through `e4cfc810`; independent
+review is pending.
 This is same-host multi-process correctness, not cross-host HA, native GDS, a
 large sustained-capacity envelope or an engine-serving qualification. See the
 [Manager process recipe](distributed-cache.md#manager-process-dram-and-io_uring-metadata-faults).
