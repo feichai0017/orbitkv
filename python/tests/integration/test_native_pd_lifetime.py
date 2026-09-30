@@ -185,13 +185,14 @@ def test_vllm_native_pages_wait_for_write_and_shutdown_drain(gpu_pages, tmp_path
         torch.cuda.synchronize()
         assert torch.equal(source[:4096], destination[:4096])
         assert torch.count_nonzero(destination[4096:]).item() == 0
+
         # A cancellation/timeout cannot finish the receive or invalidate pages yet.
-        receiver.receiver_loop.call_soon_threadsafe(
-            receiver._handle_failed_recv,
-            incoming.reqs_to_recv["producer"],
-            {"d"},
-            "test cancellation",
-        )
+        async def cancel_receive():
+            receiver._handle_failed_recv(
+                incoming.reqs_to_recv["producer"], {"d"}, "test cancellation"
+            )
+
+        asyncio.run_coroutine_threadsafe(cancel_receive(), receiver.receiver_loop).result(5)
         assert not receiver.get_transfer_results().finished_recving
         assert not receiver.get_block_ids_with_load_errors()
         sender.reqs_need_send["attempt-1"].expire_time = float("-inf")
