@@ -396,10 +396,14 @@ optional callbacks. The unused service availability owner and its health thread
 are removed; restore exceptions still retain destinations until native drain.
 SGLang event ownership lives in `events.py`, and disabled-backend plugin/admission
 paths leave native and GPU modules unloaded. Registration conflicts are explicit.
-Existing request states, save/load threads and all lifecycle Hooks remain owned
-by their previous consumers; no native P/D replacement is claimed.
+Prefill and Decode now directly own their P/D worker callbacks and request state;
+the intermediate Handlers, class-callback mixin and generic executor facade are
+removed. SGLang cancellation consumes the released cache finish/linker release
+chain instead of a duplicate Scheduler abort Hook. Ordinary cache registration
+has two internal Hooks; enqueue preparation and P/D observation Hooks are opt-in.
+No native P/D replacement is claimed.
 
-The source-only gate passes 414 tests. With frozen native artifacts, the pinned
+The initial cleanup's source-only gate passed 414 tests. With frozen native artifacts, the pinned
 SGLang 0.5.20 admission/event gate passes 22 tests and the vLLM 0.29.0 native
 recovery-contract gate passes seven. These integration tests use controlled
 completion and CUDA-event doubles, not real GPU DMA. The vLLM gate also corrects
@@ -420,6 +424,25 @@ regression protects this boundary, and the fixture retains Manager logs.
 Both failures and the successful rerun remain in external evidence. The original
 fixture deleted its temporary Manager logs during the first run; its pytest and
 engine logs remain available.
+
+The P/D ownership follow-up passes 413 source-only tests, including 139 P/D
+contracts; the assertion-only test for the removed Handler layer is deleted.
+SGLang's pinned admission/event gate passes 24 tests, now including native
+cache-finish cancellation and successful-finish preservation. A reusable vLLM
+P/D E2E gate runs two TP=1/PP=1 eager workers on one A100 over forced TCP:
+129/257/769-token prompts, including chunked prefill, produce the same text and
+output tokens as native execution; 198,180,864 payload bytes are reported and
+all sender/waiter gauges drain. This profile does not qualify multi-GPU/RDMA,
+hybrid P/D, live handoff/cache composition or the proxy HTTP service itself.
+SGLang DRAM/SSD serving recovery also passes again (two cases), as do four
+GPU recurrent/window recovery cases including cancellation of published pages.
+The seven frozen native artifacts are unchanged; postflight finds no engine or
+Manager processes and GPU usage returns to zero.
+The obsolete Python P/D launcher is removed: it selected ordinary cache
+connectors and invoked the removed `orbitkv-router` binary. The maintained
+deployment entry is `scripts/run_pd_local.sh`.
+Follow-up evidence: `/root/orbitkv-artifacts/adapter-cleanup-20260930/pd-followup/`.
+
 Overall S5.2 acceptance, engine upgrades, upstream registration, and additional
 multi-GPU/P/D qualification remain open.
 Evidence: `/root/orbitkv-artifacts/adapter-cleanup-20260930/`.

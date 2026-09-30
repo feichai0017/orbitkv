@@ -38,6 +38,13 @@ and selects `PREFILL_GPU=0`, `DECODE_GPU=1` with `MC_FORCE_TCP=1`. Override
 GPU/NIC affinity. Each child runs in its own process group, startup timeout is
 fatal, and cleanup targets only those groups.
 
+For a focused one-GPU regression, run
+`python -m pytest -m e2e tests/e2e/test_vllm_pd_e2e.py --model /path/to/dense-model --basetemp /var/tmp/orbitkv-pd/run-001`
+from `python/` in the pinned vLLM environment. This needs memory for two model
+copies and validates eager TCP handoff, chunked prefill, native-output equality
+and completion/drain counters. It calls the proxy request builder directly;
+it does not qualify proxy HTTP serving, separate GPUs, RDMA or cache composition.
+
 The decode connector can optionally report the physical handoff completion to
 its node-local Cache Manager. Configure both
 `orbitkv.pd.completion_observation_socket` and

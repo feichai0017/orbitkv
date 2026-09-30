@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -12,53 +13,54 @@ def register() -> None:
     from sglang.srt.mem_cache.registry import register_radix_cache_backend
     from sglang.srt.plugins.hook_registry import HookRegistry, HookType
 
-    from .admission import abort_request, admit_request, enqueue_request
-    from .completion import (
-        capture_decode_pages,
-        capture_handoff_admission,
-        mark_decode_abort,
-        observe_decode_failure,
-        observe_decode_ready,
-        observe_deferred_release,
-    )
+    from .admission import admit_request, enqueue_request
     from .events import initialize_layer_counter
     from .pd import install_sglang_tent_backend
 
-    install_sglang_tent_backend()
+    if install_sglang_tent_backend():
+        from .completion import (
+            capture_decode_pages,
+            capture_handoff_admission,
+            mark_decode_abort,
+            observe_decode_failure,
+            observe_decode_ready,
+            observe_deferred_release,
+        )
+
+        HookRegistry.register(
+            "sglang.srt.disaggregation.mooncake.conn.MooncakeKVReceiver.send_metadata",
+            capture_decode_pages,
+            HookType.AFTER,
+        )
+        HookRegistry.register(
+            "sglang.srt.disaggregation.decode.DecodeTransferQueue.add",
+            capture_handoff_admission,
+            HookType.AFTER,
+        )
+        HookRegistry.register(
+            "sglang.srt.disaggregation.decode.DecodeTransferQueue._commit_transfer_to_req",
+            observe_decode_ready,
+            HookType.AROUND,
+        )
+        HookRegistry.register(
+            "sglang.srt.disaggregation.mooncake.conn.MooncakeKVReceiver.abort",
+            mark_decode_abort,
+            HookType.AFTER,
+        )
+        HookRegistry.register(
+            "sglang.srt.disaggregation.mooncake.conn.MooncakeKVReceiver.failure_exception",
+            observe_decode_failure,
+            HookType.AROUND,
+        )
+        HookRegistry.register(
+            "sglang.srt.disaggregation.decode.DecodeTransferQueue._do_release",
+            observe_deferred_release,
+            HookType.AROUND,
+        )
     HookRegistry.register(
         "sglang.srt.managers.tp_worker.TpModelWorker.init_cuda_graphs",
         initialize_layer_counter,
         HookType.BEFORE,
-    )
-    HookRegistry.register(
-        "sglang.srt.disaggregation.mooncake.conn.MooncakeKVReceiver.send_metadata",
-        capture_decode_pages,
-        HookType.AFTER,
-    )
-    HookRegistry.register(
-        "sglang.srt.disaggregation.decode.DecodeTransferQueue.add",
-        capture_handoff_admission,
-        HookType.AFTER,
-    )
-    HookRegistry.register(
-        "sglang.srt.disaggregation.decode.DecodeTransferQueue._commit_transfer_to_req",
-        observe_decode_ready,
-        HookType.AROUND,
-    )
-    HookRegistry.register(
-        "sglang.srt.disaggregation.mooncake.conn.MooncakeKVReceiver.abort",
-        mark_decode_abort,
-        HookType.AFTER,
-    )
-    HookRegistry.register(
-        "sglang.srt.disaggregation.mooncake.conn.MooncakeKVReceiver.failure_exception",
-        observe_decode_failure,
-        HookType.AROUND,
-    )
-    HookRegistry.register(
-        "sglang.srt.disaggregation.decode.DecodeTransferQueue._do_release",
-        observe_deferred_release,
-        HookType.AROUND,
     )
     register_radix_cache_backend("orbitkv", create_cache)
     HookRegistry.register(
@@ -66,16 +68,12 @@ def register() -> None:
         admit_request,
         HookType.AROUND,
     )
-    HookRegistry.register(
-        "sglang.srt.managers.scheduler.Scheduler._add_request_to_queue",
-        enqueue_request,
-        HookType.AROUND,
-    )
-    HookRegistry.register(
-        "sglang.srt.managers.scheduler.Scheduler._release_aborted_request",
-        abort_request,
-        HookType.AROUND,
-    )
+    if any(os.getenv(name) == "1" for name in ("ORBITKV_PREPARE_REQUESTS", "ORBITKV_QUEUE_WARMUP")):
+        HookRegistry.register(
+            "sglang.srt.managers.scheduler.Scheduler._add_request_to_queue",
+            enqueue_request,
+            HookType.AROUND,
+        )
 
 
 def create_cache(ctx: Any) -> UnifiedRadixCache:

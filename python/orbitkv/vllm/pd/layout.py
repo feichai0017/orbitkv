@@ -190,3 +190,11 @@ class KvCacheLayout:
 
 def block_slices_bytes(block_slices: list[LayerBlockSlices]) -> int:
     return sum(region.bytes for block in block_slices for region in block.regions)
+
+
+def model_uses_mla(vllm_config: Any) -> bool:
+    model_config = getattr(vllm_config, "model_config", None)
+    if bool(getattr(model_config, "use_mla", False)):
+        return True
+    hf_config = getattr(model_config, "hf_text_config", None)
+    return getattr(hf_config, "kv_lora_rank", None) is not None

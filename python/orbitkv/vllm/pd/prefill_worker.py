@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import replace
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass, replace
+from typing import Any
 
 from orbitkv.logging_utils import get_connector_logger
 from orbitkv.vllm.pd.chunk_tracker import ChunkTracker
@@ -26,43 +26,66 @@ from orbitkv.vllm.pd.metadata import (
     RELEASE_PRODUCER_ABORT,
     RELEASE_PRODUCER_PREEMPTED,
     LayerRemoteLayout,
+    PdConnectorMetadata,
     PdHandshake,
     PushReqMeta,
     flatten_block_ids,
 )
-
-# Imported as module globals because PrefillHandler constructs these task and
-# runner types directly.
-from orbitkv.vllm.pd.prefill_async import (  # noqa: F401
+from orbitkv.vllm.pd.metrics import PdMetricsTracker
+from orbitkv.vllm.pd.mooncake import MooncakePort
+from orbitkv.vllm.pd.prefill_async import (
     _AsyncLayerPushSender,
     _AsyncPushFinalizer,
     _elapsed_ms,
-    _gbps,
-    _pct,
-    _run_layer_push,
-    _transfer_link_gbps,
-    _transfer_write_stats,
-)
-from orbitkv.vllm.pd.prefill_tasks import (  # noqa: F401
     _LayerPushTask,
-    _PreparedLayerPush,
-    _PreparedTargetPush,
     _PushFinalizeTask,
-    _PushTrace,
-    _SkipPushRank,
+    _transfer_link_gbps,
 )
-
-if TYPE_CHECKING:
-    from orbitkv.vllm.pd.worker import PdWorkerBase
+from orbitkv.vllm.pd.worker import PdWorkerBase
 
 logger = get_connector_logger()
 
 
-class PrefillHandler:
+class _SkipPushRank(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class _PreparedTargetPush:
+    physical_req_id: str
+    block_slices: list[LayerBlockSlices]
+    request_generation: int
+
+
+@dataclass(frozen=True)
+class _PreparedLayerPush:
+    req_blocks: frozenset[int]
+    pushed_req_blocks: frozenset[int]
+    target_pushes: tuple[_PreparedTargetPush, ...]
+    transfer_bytes: int
+    all_chunks_seen: bool
+
+
+@dataclass
+class _PushTrace:
+    queued_ts_ns: int
+    first_save_ts_ns: int | None = None
+    last_save_ts_ns: int | None = None
+    transfer_bytes: int = 0
+    chunk_count: int = 0
+
+
+class PrefillWorker(PdWorkerBase):
     """Handles P-side requests: KV push via Mooncake."""
 
-    def __init__(self, worker: PdWorkerBase) -> None:
-        self._w = worker
+    def __init__(
+        self,
+        vllm_config: Any,
+        kv_cache_config: Any = None,
+        transfer: MooncakePort | None = None,
+        metrics: PdMetricsTracker | None = None,
+    ) -> None:
+        super().__init__(vllm_config, kv_cache_config, transfer, metrics)
         self._push_reqs: dict[str, PushReqMeta] = {}
         self._pending_push_chunks: set[str] = set()
         self._push_chunk_maps: dict[tuple[str, int], tuple[dict[str, dict[int, int]], bool]] = {}
@@ -81,32 +104,69 @@ class PrefillHandler:
         self._push_traces: dict[str, _PushTrace] = {}
         self._skipped_pushes = 0
         push_worker_count = int(
-            worker.vllm_config.kv_transfer_config.kv_connector_extra_config.get(
+            self.vllm_config.kv_transfer_config.kv_connector_extra_config.get(
                 "orbitkv.pd.push_worker_count",
                 16,
             )
         )
         push_finalizer_worker_count = int(
-            worker.vllm_config.kv_transfer_config.kv_connector_extra_config.get(
+            self.vllm_config.kv_transfer_config.kv_connector_extra_config.get(
                 "orbitkv.pd.push_finalizer_worker_count",
                 16,
             )
         )
         self._push_sender = _AsyncLayerPushSender(
-            metrics=worker.metrics,
+            metrics=self.metrics,
             max_workers=push_worker_count,
         )
         self._push_finalizer = _AsyncPushFinalizer(
             self._push_sender,
-            metrics=worker.metrics,
+            metrics=self.metrics,
             max_workers=push_finalizer_worker_count,
         )
         self._validate_runtime_layout = _bool_config(
-            worker.vllm_config.kv_transfer_config.kv_connector_extra_config.get(
+            self.vllm_config.kv_transfer_config.kv_connector_extra_config.get(
                 "orbitkv.pd.validate_runtime_layout",
                 logger.isEnabledFor(logging.DEBUG),
             )
         )
+
+    def prepare_pushes(self, metadata: PdConnectorMetadata) -> None:
+        logger.debug(
+            "[PdConnector] prefill prepare_pushes metadata=%s push_reqs=%s release=%s known_push=%s",
+            metadata,
+            sorted(metadata.reqs_to_push),
+            sorted(metadata.reqs_to_release),
+            sorted(self.push_reqs),
+        )
+        if (
+            not metadata.reqs_to_push
+            and not metadata.reqs_to_release
+            and not metadata.preempted_req_ids
+            and not self.has_state()
+        ):
+            return
+        assert self.transfer is not None, "PdConnector Mooncake port is not initialized"
+        self.process_push_reqs(metadata.reqs_to_push)
+        for req_id in metadata.preempted_req_ids:
+            logger.debug("[PdConnector] prefill preempt req=%s", req_id)
+            for push_req_id in self.release(req_id, RELEASE_PRODUCER_PREEMPTED):
+                self.transfer.close_request(push_req_id)
+        for req_id in metadata.reqs_to_release:
+            reason = metadata.release_reasons.get(req_id, RELEASE_CONSUMER_ABORT)
+            logger.debug("[PdConnector] prefill release req=%s reason=%s", req_id, reason)
+            released_push_req_ids = self.release(req_id, reason)
+            if released_push_req_ids:
+                for push_req_id in released_push_req_ids:
+                    self.transfer.close_request(push_req_id)
+            elif reason != RELEASE_CONSUMER_ABORT:
+                self.transfer.close_request(req_id)
+
+    def get_finished(self, finished_req_ids: set[str]) -> tuple[set[str] | None, set[str] | None]:
+        if not finished_req_ids and not self.has_state():
+            return None, None
+        releasable_sending = self.get_finished_sending(finished_req_ids)
+        return releasable_sending or None, None
 
     def process_push_reqs(self, reqs_to_push: dict[str, PushReqMeta]) -> None:
         for req_id, req in reqs_to_push.items():
@@ -118,17 +178,17 @@ class PrefillHandler:
                 raise RuntimeError(f"P/D push targets changed before release for request {req_id}")
             if plan.should_skip:
                 self._skipped_pushes += 1
-                self._w.metrics.record_prefill_skipped_push()
+                self.metrics.record_prefill_skipped_push()
                 self._completed_pushes.add(req_id)
                 logger.info(
                     "[PdConnector] P skipped push req=%s target_req=%s rank=%d skipped_total=%d",
                     req_id,
                     req.target_request_id,
-                    self._w.tp_rank,
+                    self.tp_rank,
                     self._skipped_pushes,
                 )
                 continue
-            local_layout = next(iter(self._w.layouts.values()), None)
+            local_layout = next(iter(self.layouts.values()), None)
             handshakes = tuple(
                 _target_handshake_for_local_layout(target, local_layout) for target in plan.targets
             )
@@ -139,7 +199,7 @@ class PrefillHandler:
                         f"P/D push authorization changed before release for request {physical_req_id}"
                     )
             self._push_reqs[req_id] = req
-            self._w.metrics.set_prefill_active_pushes(len(self._push_reqs))
+            self.metrics.set_prefill_active_pushes(len(self._push_reqs))
             self._push_plans[req_id] = plan
             self._push_traces.setdefault(req_id, _PushTrace(queued_ts_ns=time.time_ns()))
             self._pending_push_chunks.add(req_id)
@@ -149,14 +209,14 @@ class PrefillHandler:
             for physical_req_id, handshake in zip(physical_req_ids, handshakes, strict=True):
                 self._physical_to_logical[physical_req_id] = req_id
                 if physical_req_id not in self._push_authorizations:
-                    generation = self._w.transfer.open_request(physical_req_id, handshake)
+                    generation = self.transfer.open_request(physical_req_id, handshake)
                     self._push_authorizations[physical_req_id] = (handshake, generation)
             self._prepare_push_layers(req_id, req, plan)
             logger.info(
                 "[PdConnector] P queued push req=%s target_req=%s rank=%d physical_reqs=%d blocks=%d",
                 req_id,
                 req.target_request_id,
-                self._w.tp_rank,
+                self.tp_rank,
                 len(physical_req_ids),
                 len(flatten_block_ids(req.local_block_ids)),
             )
@@ -173,9 +233,9 @@ class PrefillHandler:
             or self._tracker.has_request(req_id)
         )
         self._push_reqs.pop(req_id, None)
-        self._w.metrics.set_prefill_active_pushes(len(self._push_reqs))
+        self.metrics.set_prefill_active_pushes(len(self._push_reqs))
         if had_push_state:
-            self._w.metrics.record_prefill_release()
+            self.metrics.record_prefill_release()
         self._pending_push_chunks.discard(req_id)
         self._clear_push_chunk_maps(req_id)
         self._clear_push_layer_plans(req_id)
@@ -201,7 +261,7 @@ class PrefillHandler:
         for physical_req_id in physical_req_ids:
             try:
                 self._drain_physical_request(physical_req_id)
-                self._w.transfer.abort_request(physical_req_id)
+                self.transfer.abort_request(physical_req_id)
             except Exception:
                 logger.exception(
                     "[PdConnector] P failed to notify decode abort ack req=%s",
@@ -212,7 +272,7 @@ class PrefillHandler:
         for physical_req_id in physical_req_ids:
             try:
                 self._drain_physical_request(physical_req_id)
-                self._w.transfer.fail_request(physical_req_id)
+                self.transfer.fail_request(physical_req_id)
             except Exception:
                 logger.exception(
                     "[PdConnector] P failed to notify decode abort req=%s",
@@ -231,9 +291,9 @@ class PrefillHandler:
     ) -> None:
         if not self._push_reqs:
             return
-        layout = self._w.layouts.get(layer_name)
+        layout = self.layouts.get(layer_name)
         assert layout is not None, (
-            f"PdConnector saw unknown layer {layer_name}; registered={list(self._w.layouts)}"
+            f"PdConnector saw unknown layer {layer_name}; registered={list(self.layouts)}"
         )
         if self._validate_runtime_layout:
             _assert_runtime_layout_matches(layer_name, kv_layer, layout)
@@ -258,14 +318,14 @@ class PrefillHandler:
     def get_finished_sending(self, finished_req_ids: set[str]) -> set[str]:
         """Return req_ids that are done sending and also finished by the producer."""
         self._producer_finished_req_ids.update(finished_req_ids)
-        finished_sending = self._w.transfer.pop_finished_sending()
+        finished_sending = self.transfer.pop_finished_sending()
         self._record_finished_physical_pushes(finished_sending)
         releasable_sending = self._completed_pushes & self._producer_finished_req_ids
         for req_id in releasable_sending:
             self._completed_pushes.discard(req_id)
             self._producer_finished_req_ids.discard(req_id)
             self._push_reqs.pop(req_id, None)
-            self._w.metrics.set_prefill_active_pushes(len(self._push_reqs))
+            self.metrics.set_prefill_active_pushes(len(self._push_reqs))
             self._pending_push_chunks.discard(req_id)
             self._clear_push_chunk_maps(req_id)
             self._clear_push_layer_plans(req_id)
@@ -275,7 +335,7 @@ class PrefillHandler:
                 self._push_authorizations.pop(physical_req_id, None)
                 self._physical_to_logical.pop(physical_req_id, None)
                 self._completed_physical_pushes.discard(physical_req_id)
-                self._w.transfer.close_request(physical_req_id)
+                self.transfer.close_request(physical_req_id)
             self._push_traces.pop(req_id, None)
             self._tracker.remove(req_id)
             self._clear_remote_block_offsets(req_id, physical_req_ids)
@@ -283,7 +343,7 @@ class PrefillHandler:
 
     def shutdown(self) -> None:
         self._push_reqs.clear()
-        self._w.metrics.set_prefill_active_pushes(0)
+        self.metrics.set_prefill_active_pushes(0)
         self._pending_push_chunks.clear()
         self._push_chunk_maps.clear()
         self._push_layer_plans.clear()
@@ -317,7 +377,7 @@ class PrefillHandler:
         ) or not (self._push_sender.is_idle() and self._push_finalizer.is_idle())
 
     def _push_pending_blocks(self, layer_name: str, event: Any) -> None:
-        layer_idx = self._w._layer_idx(layer_name)
+        layer_idx = self._layer_idx(layer_name)
         for req_id, req in list(self._push_reqs.items()):
             req = self._push_reqs.get(req_id)
             if req is None:
@@ -333,11 +393,11 @@ class PrefillHandler:
             )
             if trace.first_save_ts_ns is None:
                 trace.first_save_ts_ns = time.time_ns()
-            assert self._w.transfer is not None
+            assert self.transfer is not None
             for target_push in prepared.target_pushes:
                 self._push_sender.submit(
                     _LayerPushTask(
-                        transfer=self._w.transfer,
+                        transfer=self.transfer,
                         req_id=target_push.physical_req_id,
                         layer_idx=layer_idx,
                         block_slices=target_push.block_slices,
@@ -355,7 +415,7 @@ class PrefillHandler:
                     layer_idx,
                     set(prepared.pushed_req_blocks),
                 )
-            if layer_idx != len(self._w.layer_names) - 1:
+            if layer_idx != len(self.layer_names) - 1:
                 continue
             trace.chunk_count += 1
             trace.last_save_ts_ns = time.time_ns()
@@ -371,7 +431,7 @@ class PrefillHandler:
                     self._tracker.has_pushed_all_blocks(
                         req_id,
                         self._block_ids_by_layer(req.local_block_ids),
-                        num_layers=len(self._w.layer_names),
+                        num_layers=len(self.layer_names),
                     )
                     or all_layer_chunks_seen
                 )
@@ -389,7 +449,7 @@ class PrefillHandler:
             self._clear_push_layer_plans(req_id)
             self._tracker.mark_done(req_id)
             finalize_ts_ns = time.time_ns()
-            link_gbps = _transfer_link_gbps(self._w.transfer)
+            link_gbps = _transfer_link_gbps(self.transfer)
             logger.info(
                 "[PdConnector] P all chunks submitted req=%s target_req=%s chunks=%d blocks=%d transfer_bytes=%d schedule_to_save_ms=%.3f forward_ms=%.3f link_gbps=%.2f ts_ns=%d",
                 req_id,
@@ -404,13 +464,12 @@ class PrefillHandler:
             )
             self._push_finalizer.submit(
                 _PushFinalizeTask(
-                    transfer=self._w.transfer,
+                    transfer=self.transfer,
                     req_ids=self._logical_to_physical[req_id],
                     target_request_id=req.target_request_id,
                     num_blocks=len(prepared.req_blocks),
                     chunk_count=trace.chunk_count,
                     first_save_ts_ns=trace.first_save_ts_ns,
-                    finalize_queued_ts_ns=finalize_ts_ns,
                     schedule_queued_ts_ns=trace.queued_ts_ns,
                     transfer_bytes=trace.transfer_bytes,
                 )
@@ -425,9 +484,9 @@ class PrefillHandler:
         layers: dict[int, _PreparedLayerPush] = {}
         all_layers_seen = True
         complete_layer_count = 0
-        for layer_idx, layer_name in enumerate(self._w.layer_names):
-            layout = self._w.layouts[layer_name]
-            req_blocks = self._w.block_ids_for_layer(req.local_block_ids, layer_name)
+        for layer_idx, layer_name in enumerate(self.layer_names):
+            layout = self.layouts[layer_name]
+            req_blocks = self.block_ids_for_layer(req.local_block_ids, layer_name)
             if not req_blocks:
                 all_layers_seen = False
                 continue
@@ -483,32 +542,32 @@ class PrefillHandler:
         assert req.handshakes, (
             f"PdConnector push request has no handshakes; target_req={req.target_request_id}"
         )
-        if not self._w.layouts:
-            assert self._w.use_mla, "PdConnector push requires registered KV cache layouts"
+        if not self.layouts:
+            assert self.use_mla, "PdConnector push requires registered KV cache layouts"
             try:
                 handshake = self._select_push_handshake(req)
             except _SkipPushRank:
                 return PushLayoutPlan(targets=())
             return PushLayoutPlan(targets=(PushTargetPlan(handshake=handshake, head_slices=()),))
-        first_layout = next(iter(self._w.layouts.values()))
+        first_layout = next(iter(self.layouts.values()))
         local_heads = int(getattr(first_layout, "num_kv_heads", 1))
         first_handshake = req.handshakes[0]
         remote_heads = _remote_num_kv_heads(first_handshake, first_layout, local_heads)
         total_heads = _total_num_kv_heads(
             local_heads=local_heads,
-            local_tp_size=self._w.tp_size,
+            local_tp_size=self.tp_size,
             remote_heads=remote_heads,
             remote_tp_size=first_handshake.tp_size,
-            use_mla=self._w.use_mla,
+            use_mla=self.use_mla,
         )
         return build_push_layout_plan(
-            prefill_tp_rank=self._w.tp_rank,
-            prefill_tp_size=self._w.tp_size,
+            prefill_tp_rank=self.tp_rank,
+            prefill_tp_size=self.tp_size,
             decode_handshakes=req.handshakes,
             local_num_kv_heads=local_heads,
             remote_num_kv_heads=remote_heads,
             total_num_kv_heads=total_heads,
-            use_mla=self._w.use_mla,
+            use_mla=self.use_mla,
         )
 
     def _physical_req_ids(self, req_id: str, plan: PushLayoutPlan) -> tuple[str, ...]:
@@ -530,37 +589,37 @@ class PrefillHandler:
         )
         _assert_handshake_tp_consistency(req.handshakes)
         decode_tp_size = req.handshakes[0].tp_size
-        if self._w.use_mla:
-            assert self._w.tp_size >= decode_tp_size, (
+        if self.use_mla:
+            assert self.tp_size >= decode_tp_size, (
                 "PdConnector MLA heterogeneous TP requires prefill TP >= decode TP; "
-                f"prefill_tp={self._w.tp_size} decode_tp={decode_tp_size}"
+                f"prefill_tp={self.tp_size} decode_tp={decode_tp_size}"
             )
-            assert self._w.tp_size % decode_tp_size == 0, (
+            assert self.tp_size % decode_tp_size == 0, (
                 "PdConnector MLA heterogeneous TP requires prefill TP to be a "
-                f"multiple of decode TP; prefill_tp={self._w.tp_size} decode_tp={decode_tp_size}"
+                f"multiple of decode TP; prefill_tp={self.tp_size} decode_tp={decode_tp_size}"
             )
-            ratio = self._w.tp_size // decode_tp_size
-            if self._w.tp_rank % ratio != 0:
+            ratio = self.tp_size // decode_tp_size
+            if self.tp_rank % ratio != 0:
                 raise _SkipPushRank
-            target_rank = self._w.tp_rank // ratio
+            target_rank = self.tp_rank // ratio
             for handshake in req.handshakes:
                 if handshake.tp_rank == target_rank:
                     return handshake
             raise AssertionError(
-                f"PdConnector missing MLA target handshake for prefill_tp_rank={self._w.tp_rank} "
+                f"PdConnector missing MLA target handshake for prefill_tp_rank={self.tp_rank} "
                 f"decode_tp_rank={target_rank}; "
                 f"available={[handshake.tp_rank for handshake in req.handshakes]}"
             )
 
-        assert self._w.tp_size == decode_tp_size, (
+        assert self.tp_size == decode_tp_size, (
             "PdConnector non-MLA requires equal P/D TP sizes; "
-            f"prefill_tp={self._w.tp_size} decode_tp={decode_tp_size}"
+            f"prefill_tp={self.tp_size} decode_tp={decode_tp_size}"
         )
         for handshake in req.handshakes:
-            if handshake.tp_rank == self._w.tp_rank:
+            if handshake.tp_rank == self.tp_rank:
                 return handshake
         raise AssertionError(
-            f"PdConnector missing handshake for tp_rank={self._w.tp_rank}; "
+            f"PdConnector missing handshake for tp_rank={self.tp_rank}; "
             f"available={[handshake.tp_rank for handshake in req.handshakes]}"
         )
 
@@ -609,8 +668,8 @@ class PrefillHandler:
 
     def _block_ids_by_layer(self, block_ids: Any) -> dict[int, set[int]]:
         return {
-            layer_idx: self._w.block_ids_for_layer(block_ids, layer_name)
-            for layer_idx, layer_name in enumerate(self._w.layer_names)
+            layer_idx: self.block_ids_for_layer(block_ids, layer_name)
+            for layer_idx, layer_name in enumerate(self.layer_names)
         }
 
     def _all_layer_chunks_seen(
@@ -630,7 +689,7 @@ class PrefillHandler:
         }
         seen_by_layer[current_layer_idx] = current_all_chunks_seen
         return all(
-            seen_by_layer.get(layer_idx, False) for layer_idx in range(len(self._w.layer_names))
+            seen_by_layer.get(layer_idx, False) for layer_idx in range(len(self.layer_names))
         )
 
 

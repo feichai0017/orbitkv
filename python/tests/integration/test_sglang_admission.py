@@ -69,7 +69,7 @@ def test_enqueue_uses_the_same_salted_storage_keys_without_triggering_a_load(
     )
     from sglang.srt.mem_cache.utils import get_storage_hash_str
 
-    from orbitkv.sglang.admission import abort_request, enqueue_request
+    from orbitkv.sglang.admission import enqueue_request
 
     req = request("queued", 257)
     req.extra_key, req.cache_salt = "tenant", "salt"
@@ -103,9 +103,6 @@ def test_enqueue_uses_the_same_salted_storage_keys_without_triggering_a_load(
     submit = linker.client.prepare_recovery if preparation else linker.client.warm_prefix
     assert cache.match_prefix.call_args.args[0].req is None
     assert not linker._lookups and not linker._queued_loads
-    abort_request(MagicMock(), scheduler, req)
-    linker.client.cancel_query.assert_called_once_with("admission", req.rid, group_id=0)
-
     linker.client.reset_mock()
     scheduler.waiting_queue.clear()
     enqueue_request(MagicMock(), scheduler, req)
@@ -126,6 +123,37 @@ def test_enqueue_uses_the_same_salted_storage_keys_without_triggering_a_load(
         scheduler.waiting_queue[:] = [object()] * 4
         enqueue_request(accepted, scheduler, req)
         submit.assert_not_called()
+
+
+@pytest.mark.parametrize("outcome", ["SUCCESS", "ABORT"])
+def test_native_cache_finish_cancels_aborted_query_without_scheduler_hook(linker, outcome):
+    from sglang.srt.mem_cache.base_prefix_cache import (
+        CacheRequestHandle,
+        CacheRequestOutcome,
+    )
+    from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
+
+    from orbitkv.sglang.recovery import RecoveryLinkerWrapper
+
+    cache = object.__new__(UnifiedRadixCache)
+    wrapper = object.__new__(RecoveryLinkerWrapper)
+    wrapper.cache, wrapper.cache_linker = cache, linker
+    wrapper.hit_markers = {"queued": object()}
+    cache.linker = wrapper
+    cache.prefetch_loaded_tokens_by_reqid = {}
+    cache.prefetch_loaded_storage_start_by_reqid = {}
+    cache.storage_prefetch_retries = MagicMock()
+    cache.buffer_pipeline = None
+    cache.discard_storage_prefetch_accounting = MagicMock()
+    cache.ongoing_prefetch = {}
+    cache.finish(CacheRequestHandle("queued", 0), CacheRequestOutcome[outcome])
+    if outcome == "ABORT":
+        linker.client.cancel_query.assert_called_once_with("admission", "queued", group_id=0)
+        assert "queued" not in linker._origins
+        assert not wrapper.hit_markers
+    else:
+        linker.client.cancel_query.assert_not_called()
+        assert "queued" in linker._origins
 
 
 @pytest.fixture

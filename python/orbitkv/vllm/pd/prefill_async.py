@@ -1,29 +1,151 @@
-"""Async executors for the P-side (prefill) push pipeline.
-
-``_AsyncLayerPushSender`` runs per-layer Mooncake writes off the forward thread;
-``_AsyncPushFinalizer`` waits for those writes to complete and signals the
-remote Mooncake completion notification. Both build on ``InflightTaskRunner``
-(see ``async_runner``).
-The Mooncake throughput-stat helpers live here too since the finalizer is their
-main consumer; ``PrefillHandler`` imports them back for its own logging.
-"""
+"""Prefill layer writes and completion notification, with physical-drain accounting."""
 
 from __future__ import annotations
 
+import threading
 import time
-from typing import Any
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from typing import Any, Generic, TypeVar
 
 from orbitkv.logging_utils import get_connector_logger
-from orbitkv.vllm.pd.async_runner import InflightTaskRunner
+from orbitkv.vllm.pd.layout import LayerBlockSlices
 from orbitkv.vllm.pd.mooncake import MooncakePort
-from orbitkv.vllm.pd.prefill_tasks import _LayerPushTask, _PushFinalizeTask
 
 logger = get_connector_logger()
+T = TypeVar("T")
 
 
-# ---------------------------------------------------------------------------
-# Mooncake throughput stats
-# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class _LayerPushTask:
+    transfer: MooncakePort
+    req_id: str
+    layer_idx: int
+    block_slices: list[LayerBlockSlices]
+    request_generation: int
+    event: Any = None
+
+
+@dataclass(frozen=True)
+class _PushFinalizeTask:
+    transfer: MooncakePort
+    req_ids: tuple[str, ...]
+    target_request_id: str
+    num_blocks: int
+    chunk_count: int
+    first_save_ts_ns: int | None
+    schedule_queued_ts_ns: int
+    transfer_bytes: int
+
+
+class _InflightTaskRunner(Generic[T]):
+    """Task pool that tracks inflight count, errors, and supports ``wait_all``.
+
+    Shared by the prefill push sender and finalizer. Uses a ``Condition`` so
+    callers can block until all (or a subset of) submitted tasks drain.
+    Task exceptions are captured and reported after the requested work drains;
+    an error does not establish that another task has stopped accessing pages.
+
+    Subclasses implement ``_run(task)`` (the work body) and may override
+    ``_on_submit_locked`` / ``_on_finish_locked`` to maintain per-request state.
+    ``_set_inflight_metric_locked`` is called whenever the inflight count
+    changes so subclasses can publish their own gauge.
+    """
+
+    def __init__(
+        self,
+        thread_name_prefix: str,
+        metrics: Any | None = None,
+        max_workers: int = 16,
+    ) -> None:
+        self._executor = ThreadPoolExecutor(
+            max_workers=max(1, int(max_workers)), thread_name_prefix=thread_name_prefix
+        )
+        self._condition = threading.Condition()
+        self._inflight = 0
+        self._error: BaseException | None = None
+        self._closed = False
+        self._metrics = metrics
+
+    def _submit(self, task: T, closed_message: str) -> bool:
+        """Register and schedule a task.
+
+        Returns False if the subclass's ``_on_submit_locked`` rejected the task
+        (e.g. dedup); raises if the pool is closed or holds a pending error.
+        """
+        with self._condition:
+            if self._closed:
+                raise RuntimeError(closed_message)
+            if self._error is not None:
+                raise self._error
+            if not self._on_submit_locked(task):
+                return False
+            self._inflight += 1
+            self._set_inflight_metric_locked()
+        try:
+            self._executor.submit(self._execute, task)
+        except BaseException:
+            with self._condition:
+                self._finish_locked(task)
+            raise
+        return True
+
+    def wait_all(self) -> None:
+        with self._condition:
+            while self._inflight > 0:
+                self._condition.wait()
+            self._raise_pending_error_locked()
+
+    def is_idle(self) -> bool:
+        with self._condition:
+            return self._inflight == 0 and self._error is None
+
+    def close(self) -> None:
+        with self._condition:
+            self._closed = True
+            self._condition.notify_all()
+        self._executor.shutdown(wait=False, cancel_futures=True)
+
+    def _execute(self, task: T) -> None:
+        try:
+            self._run(task)
+        except BaseException as exc:
+            with self._condition:
+                self._error = exc
+                self._condition.notify_all()
+            self._on_error(task, exc)
+        finally:
+            with self._condition:
+                self._finish_locked(task)
+
+    def _finish_locked(self, task: T) -> None:
+        self._inflight -= 1
+        self._on_finish_locked(task)
+        self._set_inflight_metric_locked()
+        self._condition.notify_all()
+
+    def _raise_pending_error_locked(self) -> None:
+        if self._error is not None:
+            error = self._error
+            self._error = None
+            raise error
+
+    def _run(self, task: T) -> None:  # pragma: no cover - abstract
+        raise NotImplementedError
+
+    def _on_submit_locked(self, task: T) -> bool:
+        """Update per-request state under the condition lock. Return False to
+        skip scheduling (e.g. duplicate task)."""
+        return True
+
+    def _on_finish_locked(self, task: T) -> None:
+        """Update per-request state when a task completes (lock held)."""
+
+    def _on_error(self, task: T, exc: BaseException) -> None:
+        """Side effects on task failure (e.g. metrics), outside the lock."""
+
+    def _set_inflight_metric_locked(self) -> None:
+        """Publish the inflight gauge. Default no-op."""
 
 
 def _elapsed_ms(start_ts_ns: int | None, end_ts_ns: int | None) -> float:
@@ -125,7 +247,7 @@ def _transfer_write_stats(
 # ---------------------------------------------------------------------------
 
 
-class _AsyncLayerPushSender(InflightTaskRunner["_LayerPushTask"]):
+class _AsyncLayerPushSender(_InflightTaskRunner["_LayerPushTask"]):
     def __init__(self, metrics: Any | None = None, max_workers: int = 16) -> None:
         super().__init__("pd-transfer-push", metrics=metrics, max_workers=max_workers)
         self._inflight_by_req: dict[str, int] = {}
@@ -184,7 +306,7 @@ def _run_layer_push(task: _LayerPushTask) -> None:
     )
 
 
-class _AsyncPushFinalizer(InflightTaskRunner["_PushFinalizeTask"]):
+class _AsyncPushFinalizer(_InflightTaskRunner["_PushFinalizeTask"]):
     def __init__(
         self,
         push_sender: _AsyncLayerPushSender,
@@ -307,6 +429,3 @@ class _AsyncPushFinalizer(InflightTaskRunner["_PushFinalizeTask"]):
     def _set_inflight_metric_locked(self) -> None:
         if self._metrics is not None:
             self._metrics.set_prefill_inflight_finalize_tasks(self._inflight)
-
-
-__all__ = ["_AsyncLayerPushSender", "_AsyncPushFinalizer", "_run_layer_push"]
