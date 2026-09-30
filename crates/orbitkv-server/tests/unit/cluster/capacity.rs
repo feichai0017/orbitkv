@@ -173,6 +173,9 @@ async fn sustained_churn_bounds_batches_and_rebuilds_exactly() {
             } else {
                 None
             };
+            if let Some(active) = &rebuild {
+                active.gate.heal(Duration::ZERO);
+            }
 
             for source in &mut sources {
                 let old_start = source.window_start;
@@ -230,7 +233,6 @@ async fn sustained_churn_bounds_batches_and_rebuilds_exactly() {
             assert_exact(&stable_index, &sources);
 
             if let Some(active) = rebuild {
-                active.gate.heal(Duration::ZERO);
                 let first_complete = active.first_complete.await.unwrap();
                 wait_revision(&active.index, final_revision).await;
                 assert_exact(&active.index, &sources);
