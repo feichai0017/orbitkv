@@ -246,7 +246,8 @@ large sustained-capacity envelope or an engine-serving qualification. See the
 
 ### S2.6 — Sustained metadata churn and capacity
 
-**Implementation pending qualification.** A 60-second ignored release gate uses
+**Implementation qualification passed; independent review pending.** A 60-second
+ignored release gate uses
 16 registered production Publishers and real etcd to rotate 24,576 active DRAM/
 SSD metadata records through 245,760 changes. It starts fresh complete-index
 readers during eviction rounds, checks every final key, source incarnation,
@@ -259,8 +260,14 @@ storage path.
 
 The committed workload contract and command are in the
 [sustained-capacity recipe](distributed-cache.md#sustained-metadata-churn-and-capacity).
-Results remain pending until frozen A100 runs and independent Codex review pass.
-This one-host/one-etcd-member gate cannot close three-host or independent-failure-
+The frozen candidate at `85f0f656` passes once locally and three times on the
+A100 host. All A100 runs sustain 4,032 changes/second; publication p95 is
+1.02–1.04 ms, Watch p95 is 3.46–3.47 ms, fresh-reader snapshots finish within
+374 ms, and target convergence finishes within 454 ms. The exact final 24,576
+records, 7,015,680-byte index peak and every predeclared resource bound pass.
+The same frozen Manager/wheel also reruns the S2.5 DRAM/io_uring gate successfully
+with the new journal diagnostics. Independent review is still required. This
+one-host/one-etcd-member gate cannot close three-host or independent-failure-
 domain qualification.
 
 ## S3 — Transfer lifetime and generation-safe ownership

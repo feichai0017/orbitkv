@@ -650,6 +650,27 @@ S2.4 and S2.5 separately qualify storage-originated journal overflow and complet
 Manager DRAM/io_uring behavior. `GET /cache/metadata` now exposes journal records,
 current/peak retained bytes, configured capacity and production-observed history
 gaps, without adding a metadata owner or widening the storage mutation API.
-Qualification results and immutable evidence paths are added only after the
-frozen implementation and independent review runs finish. One-host execution
-does not qualify three-host or independent-failure-domain behavior.
+The release candidate at `85f0f656` passes once locally and three times on the
+A100 host. Across the three A100 runs, throughput is 4,032 changes/second,
+publication p95 is 1.02–1.04 ms, Watch p95 is 3.46–3.47 ms, fresh-reader snapshot
+max is 350–374 ms and convergence max is 443–454 ms. Every run finishes with
+24,576 exact raw etcd block records and a 7,015,680-byte index peak. Etcd grows
+69.53–69.55 MB; test-process average CPU is 0.056 cores with 16.6–20.0 MiB
+high-water growth, while etcd averages 0.38–0.53 cores with 188–191 MiB growth.
+All predeclared thresholds pass. The same frozen Manager and wheel rerun both
+S2.5 DRAM/io_uring cases in 38.26 seconds and observe bounded journal bytes plus
+at least one production history gap.
+
+Frozen artifacts, the predeclared contract, local runs, copied A100 summaries
+and the Manager regression are under
+`/root/orbitkv-artifacts/s2-s51-20260930/s2-6-sustained-capacity/`. Complete A100
+etcd DB/WAL evidence remains under
+`/workspace/orbitkv-three-host-20260930/s2-6-sustained-capacity-85f0f656/`.
+The retained failed runs show the initial test-only inventory-boundary rejection,
+an arithmetic correction and two runs where a byte-stream proxy inflated rebuild
+time beyond the unchanged 10-second threshold. Direct-etcd measurement removed
+that confounder; S2.2 remains the delayed/partitioned Watch gate.
+
+This is a tested single-host sustained envelope, not a maximum or a multi-host
+availability result. It does not qualify three-host or independent-failure-domain
+behavior, and independent review remains pending.
