@@ -13,9 +13,7 @@ license-files = ["LICENSE", "NOTICE"]
 authors = [
     { name = "OrbitKV Contributors" }
 ]
-dependencies = [
-    "httpx>=0.24.0",
-]
+dependencies = []
 keywords = ["storage", "kv-cache", "rust", "vllm", "sglang", "inference"]
 classifiers = [
     "Development Status :: 3 - Alpha",

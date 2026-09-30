@@ -42,7 +42,7 @@ export const docGroups = [
         title: "LMCache, FlexKV & Mooncake comparison",
       },
       { slug: "pd", title: "P/D, cache reuse & NIXL" },
-      { slug: "pd-mooncake-push", title: "Experimental Mooncake P/D" },
+      { slug: "pd-mooncake-push", title: "Retired P/D protocol" },
     ],
   },
   {

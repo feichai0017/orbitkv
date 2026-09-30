@@ -244,7 +244,7 @@ the external two-GPU gate remains open.
 | Multiple engine instances sharing one host manager | Instances can use the same local socket; use immutable model identities and qualify concurrency for the workload | Instances can use the same local socket; rank/layout-scoped namespaces isolate incompatible pages, and concurrent multi-rank recovery still needs a GPU gate |
 | Replicas on separate hosts | One manager per host with a local global index, etcd metadata and Mooncake fetch; experimental | The same node-local adapter connection with one manager per host; remote fetch and multi-rank behavior still need qualification |
 | One TP replica split across hosts | Unsupported by the current scheduler-to-manager query fan-out | Not qualified by the current single-rank GPU gate |
-| P/D handoff | Experimental OrbitKV `PdPrefillConnector`/`PdDecodeConnector`, or upstream vLLM NIXL | Native SGLang P/D control with OrbitKV TENT payload; P/D plus external-cache gate implemented, external H20 run pending |
+| P/D handoff | Experimental native MooncakeConnector + thin TENT backend + upstream router | Experimental native P/D + TENT factory + public lifecycle observations; [composition gates and limits](pd.md) |
 
 The current embedded directory has one metadata copy per shard. Do not infer
 production multi-node resilience from the validated single-node paths.

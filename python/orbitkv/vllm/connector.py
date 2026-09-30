@@ -221,14 +221,9 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             if role == KVConnectorRole.SCHEDULER:
                 from orbitkv.vllm.scheduler import SchedulerAdapter
 
-                pd_tail_save = bool(get_option("orbitkv.pd_tail_save", False))
-                pd_tail_load = bool(get_option("orbitkv.pd_tail_load", False))
                 self._scheduler = SchedulerAdapter(
                     self._ctx,
                     clients=clients,
-                    pd_tail_save=pd_tail_save,
-                    pd_tail_load=pd_tail_load,
-                    vllm_config=vllm_config,
                     kv_cache_config=kv_cache_config,
                 )
                 # Open the liveness stream from the scheduler process only. One

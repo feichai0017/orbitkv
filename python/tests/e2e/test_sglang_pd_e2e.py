@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import contextlib
 import json
 import os
@@ -41,7 +42,7 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(channel_server, requ
     plugin_dir.mkdir()
     (plugin_dir / "METADATA").write_text("Name: orbitkv-source-plugin\nVersion: 0.0\n")
     (plugin_dir / "entry_points.txt").write_text(
-        "[sglang.srt.plugins]\norbitkv = orbitkv.sglang.plugin:register\n"
+        "[sglang.srt.plugins]\norbitkv_fault_gate = tests.support.pd_faults:register_sglang\n"
     )
 
     env = dict(os.environ)
@@ -49,9 +50,14 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(channel_server, requ
         [str(PYTHON_ROOT), str(tmp_path), env.get("PYTHONPATH", "")]
     )
     env["SGLANG_MOONCAKE_TRANSFER_ENGINE"] = "orbitkv"
+    env["SGLANG_PLUGINS"] = "orbitkv_fault_gate"
     env["ORBITKV_SGLANG_ENDPOINT"] = f"unix://{channel_server.bootstrap_socket}"
     env["ORBITKV_TRANSFER_BACKEND"] = request.config.getoption("--orbitkv-transfer-backend")
     env["MC_FORCE_TCP"] = "1"
+    fault_root = tmp_path / "faults"
+    fault_root.mkdir()
+    env["ORBITKV_TEST_PD_FAULT_DIR"] = str(fault_root)
+    env["SGLANG_DISAGGREGATION_DEFERRED_DECODE_KV_RELEASE_TIMEOUT"] = "1"
 
     logs = {
         "prefill": tmp_path / "sglang-pd-prefill.log",
@@ -60,6 +66,7 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(channel_server, requ
         "monolithic": tmp_path / "sglang-monolithic.log",
     }
     processes: list[subprocess.Popen] = []
+    serving_ports: dict[str, int] = {}
 
     common = [
         sys.executable,
@@ -136,6 +143,7 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(channel_server, requ
     def start_pd() -> int:
         prefill_port = find_available_port()
         decode_port = find_available_port()
+        serving_ports["decode"] = decode_port
         router_port = find_available_port()
         bootstrap_port = find_available_port()
         pd_args = [
@@ -244,9 +252,110 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(channel_server, requ
             "orbitkv_save_bytes_total", 0
         )
         router_port = start_pd()
-        first = request_generation(router_port, first_payload)
+
+        def events_since(start):
+            path = fault_root / "events.jsonl"
+            if not path.exists():
+                return []
+            complete = [
+                json.loads(line)
+                for line in path.read_text().splitlines(keepends=True)
+                if line.endswith("\n")
+            ]
+            return complete[start:]
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as caller:
+            for case in ("delayed", "partial"):
+                case_root = fault_root / case
+                case_root.mkdir()
+                event_start = len(events_since(0))
+                (fault_root / "arm.json").write_text(json.dumps({"name": case}))
+                pending = caller.submit(
+                    request_generation,
+                    router_port,
+                    {
+                        **first_payload,
+                        "rid": f"fault-{case}",
+                    },
+                )
+                try:
+                    deadline = time.monotonic() + 20
+                    while not (case_root / "first-write.json").exists():
+                        assert not pending.done(), pending.result() if pending.done() else None
+                        assert time.monotonic() < deadline, (
+                            "native P/D did not reach the GPU WRITE gate"
+                        )
+                        time.sleep(0.02)
+                    response = requests.post(
+                        f"http://127.0.0.1:{serving_ports['decode']}/abort_request",
+                        json={"abort_all": True},
+                        timeout=5,
+                    )
+                    response.raise_for_status()
+                    while not any(
+                        event["phase"] == "quarantined" for event in events_since(event_start)
+                    ):
+                        assert time.monotonic() < deadline, (
+                            "abort did not retain its destination pages"
+                        )
+                        time.sleep(0.02)
+                    held = events_since(event_start)
+                    assert not any(
+                        event["phase"] in {"completed", "cancelled", "failed"} for event in held
+                    )
+                    (case_root / "held.json").write_text(json.dumps(held, indent=2))
+                finally:
+                    (case_root / "release").touch()
+                deadline = time.monotonic() + 20
+                while not any(event["phase"] == "cancelled" for event in events_since(event_start)):
+                    assert time.monotonic() < deadline, (
+                        "late drain ACK did not release the cancelled pages"
+                    )
+                    time.sleep(0.02)
+                terminal = [
+                    event
+                    for event in events_since(event_start)
+                    if event["phase"] in {"completed", "cancelled", "failed"}
+                ]
+                assert len(terminal) == 1 and terminal[0]["phase"] == "cancelled"
+                try:
+                    result = pending.result(timeout=30)
+                except requests.HTTPError as error:
+                    result = {
+                        "status_code": error.response.status_code,
+                        "body": error.response.text,
+                    }
+                (case_root / "result.json").write_text(json.dumps(result, indent=2))
+
+        # A partial transport failure quarantines the native peer session.
+        # Recreate both workers before admitting new writes to that peer.
+        stop_all()
+        router_port = start_pd()
+        decode_url = f"http://127.0.0.1:{serving_ports['decode']}"
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as caller:
+            pending = caller.submit(request_generation, router_port, first_payload)
+            deadline = time.monotonic() + 30
+            while True:
+                response = requests.get(decode_url + "/v1/loads?include=core", timeout=5)
+                response.raise_for_status()
+                if any(load["num_running_reqs"] for load in response.json()["loads"]):
+                    break
+                assert not pending.done(), "generation finished before native retraction"
+                assert time.monotonic() < deadline, "decode request never became running"
+                time.sleep(0.02)
+            try:
+                response = requests.post(
+                    decode_url + "/pause_generation", json={"mode": "retract"}, timeout=15
+                )
+                response.raise_for_status()
+                assert not pending.done(), "retracted request completed while paused"
+            finally:
+                response = requests.post(decode_url + "/continue_generation", json={}, timeout=15)
+                response.raise_for_status()
+            first = pending.result(timeout=60)
         output_ids = first["output_ids"]
         assert len(output_ids) == 64
+        assert first["meta_info"]["num_retractions"] > 0, first
         wait_for_saved_bytes(save_before)
         (tmp_path / "first-output.json").write_text(json.dumps(first, indent=2))
         (tmp_path / "after-first-metrics.json").write_text(

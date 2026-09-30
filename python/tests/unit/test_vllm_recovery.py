@@ -268,3 +268,18 @@ def test_changed_engine_limit_cannot_reuse_a_different_checkpoint(hybrid):
     assert scheduler.get_num_new_matched_tokens(req, 64) == (0, False)
     assert client.read_recovery.call_count == 2
     assert client.release.call_args_list == [call(b"attention"), call(b"state")]
+
+
+def test_unselected_cache_releases_its_leases_without_a_destination_write(hybrid):
+    scheduler, (client,), _ = hybrid()
+    client.read_recovery.side_effect = [
+        QueryReady(2, b"attention", [0, 1]),
+        QueryReady(1, b"state", [1]),
+    ]
+    req = request()
+    assert scheduler.get_num_new_matched_tokens(req, 64) == (32, False)
+    scheduler.update_state_after_alloc(req, allocations(), 0)
+    assert not scheduler._pending_query_probes
+    assert not scheduler._pending_load_intents
+    assert scheduler._block_index_offsets["r"] == 4
+    assert client.release.call_args_list == [call(b"attention"), call(b"state")]

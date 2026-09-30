@@ -96,7 +96,7 @@ def test_query_and_save_key_blocks_by_their_closing_hash():
     scheduler = _scheduler()
     req = _request("r1", 4 * VBS + 300)
 
-    assert scheduler._build_query(req, 1) == (tuple(_key(i) for i in range(1, 4)), 0)
+    assert scheduler._request_block_hashes(req)[1:] == tuple(_key(i) for i in range(1, 4))
 
     scheduler.update_state_after_alloc(req, None, 0)
     intent = scheduler.build_connector_meta(_output("r1", [10, 11, 12, 13, 14], req.num_tokens))
@@ -131,7 +131,7 @@ def test_boundary_offload_uses_the_hash_closing_the_boundary_block():
 def test_more_keys_than_full_blocks_is_rejected():
     # Fine hashes consumed at scale 1 would alias requests; refuse instead.
     with pytest.raises(RuntimeError, match="finer"):
-        _scheduler(hash_block_size=None)._build_query(_request("r1", 4 * VBS), 0)
+        _scheduler(hash_block_size=None)._request_block_hashes(_request("r1", 4 * VBS))
 
 
 def test_hash_past_a_popped_last_token_is_dropped():
@@ -142,13 +142,13 @@ def test_hash_past_a_popped_last_token_is_dropped():
     # restarts on every 1536-aligned prompt).
     req = _request("r1", 30 * VBS)
     req.num_tokens = req.num_prompt_tokens = 30 * VBS - 1
-    keys, _ = _scheduler()._build_query(req, 0)
+    keys = _scheduler()._request_block_hashes(req)
     assert keys == tuple(_key(i) for i in range(29))
 
     # An unaligned prompt leaves no stale hash and is unaffected.
     req = _request("r1", 30 * VBS + 5)
     req.num_tokens = req.num_prompt_tokens = 30 * VBS + 4
-    assert _scheduler()._build_query(req, 0)[0] == tuple(_key(i) for i in range(30))
+    assert _scheduler()._request_block_hashes(req) == tuple(_key(i) for i in range(30))
 
 
 def test_hash_block_size_isolates_namespace(monkeypatch):

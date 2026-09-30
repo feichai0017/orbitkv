@@ -243,13 +243,15 @@ class VLLMServer:
                 "OrbitKV" if self.use_orbitkv or self.kv_transfer_config is not None else "Baseline"
             )
             print(f"\n[{server_label}] Stopping vLLM server...")
+            with suppress(ProcessLookupError):
+                os.killpg(self.process.pid, signal.SIGTERM)
             try:
-                os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
                 self.process.wait(timeout=10)
-            except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
-                if self.process:
-                    os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
-                    self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                with suppress(ProcessLookupError):
+                    os.killpg(self.process.pid, signal.SIGKILL)
+                self.process.wait(timeout=5)
+            self.process = None
             print("Server stopped.\n")
 
         if self.log_handle:

@@ -66,7 +66,7 @@ export const layers = [
     name: "orbitkv.vllm",
     role: "Connect vLLM.",
     detail:
-      "External KV cache connector plus a separate experimental Mooncake P/D adapter.",
+      "Independent external-cache connector and a thin TENT backend for experimental native P/D.",
     path: "python/orbitkv/vllm/connector.py",
   },
 ];

@@ -138,7 +138,7 @@ orbitkv/
 - `python/orbitkv/vllm/scheduler.py`: vLLM scheduler-side connector
 - `python/orbitkv/vllm/worker.py`: vLLM worker-side connector
 - `python/orbitkv/vllm/connector.py`: vLLM connector entry point
-- `python/orbitkv/vllm/pd/`: P/D connector
+- `python/orbitkv/vllm/transport.py`: thin TENT backend for the experimental native P/D profile
 - `python/orbitkv/sglang/linker.py`: direct SGLang GPU-page linker
 - `crates/orbitkv-channel/src/cache_client.rs`: query tickets, publish connection and restore lifetime
 - `python/orbitkv/client/connection.py`: Cache Manager socket selection for adapters

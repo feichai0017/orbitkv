@@ -121,9 +121,6 @@ class SGLangTentTransferEngine:
     def get_ib_device(self) -> str:
         return self.ib_device
 
-    def nic_load_stats(self) -> list[tuple[str, int, float]]:
-        return self._engine.nic_load_stats()
-
 
 def register_sglang_tent_backend() -> bool:
     """Select TENT through SGLang's explicit payload-engine factory."""
@@ -139,6 +136,11 @@ def register_sglang_tent_backend() -> bool:
     from sglang.srt.distributed.device_communicators.mooncake_transfer_engine import (
         register_mooncake_transfer_engine_factory,
     )
+
+    release_flag = "SGLANG_DISAGGREGATION_DEFERRED_DECODE_KV_RELEASE"
+    os.environ.setdefault(release_flag, "1")
+    if not _enabled(release_flag):
+        raise RuntimeError("OrbitKV TENT P/D requires drain-aware deferred KV release")
 
     register_mooncake_transfer_engine_factory("orbitkv", SGLangTentTransferEngine)
     logger.info(

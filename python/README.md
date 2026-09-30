@@ -28,7 +28,8 @@ retain Manager workers and CUDA IPC tensor bindings.
 - Prometheus metrics and optional request timelines.
 - Experimental peer cache sharing through Mooncake TENT.
 - Experimental vLLM and SGLang P/D payload transfer through the same Rust TENT
-  runtime; SGLang retains its native handoff control plane.
+  runtime, with native engine lifecycles, thin payload backends and independent
+  cache adapters. Use the required experimental engine revisions in [P/D setup](../docs/pd.md).
 
 Pinned engine releases: **vLLM 0.30.0** and **SGLang 0.5.20**. See the
 [upgrade qualification scope](../docs/completion-plan.md#s51--release-and-interface-audit).

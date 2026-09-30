@@ -77,8 +77,9 @@ Multi-node cache sharing is experimental. Interfaces may change before 1.0.
 - **Experimental P/D handoff.** An explicit TENT payload factory can use the
   engines' native P/D lifecycle and router. This requires the pinned experimental
   engine patches in [P/D setup](docs/pd.md#native-pd-with-an-explicit-tent-backend);
-  official engine releases do not yet provide these factories. The vLLM custom
-  path remains until cancellation, generation and drain equivalence is qualified.
+  official engine releases do not yet provide these APIs. Native P/D replaces
+  the custom connectors and proxy; cache adapters remain independent, with one
+  load owner per destination and explicit fault/drain gates.
   RDMA and heterogeneous-GPU strict-output qualification remain open.
 
 See [supported deployments](docs/deployment.md) and

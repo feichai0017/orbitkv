@@ -419,7 +419,7 @@ This delivery does not close S5.3/S5.4 or establish a performance advantage.
   public support claims. Keep one maintained release implementation per engine.
 - Audit reuse of native vLLM P/D: layout/state coverage, rank mapping, source
   retention, cancellation, error reporting and composition with cache restore.
-  Record concrete gaps before expanding or deleting `vllm/pd/`.
+  Native P/D cutover and remaining qualification are tracked in S5.4.
 
 **Acceptance:** release/API inventory with exact callers and an upstream issue/PR
 or a bounded local responsibility for each remaining internal dependency.
@@ -549,56 +549,59 @@ Unreleased required fixes keep only their dependent profiles experimental.
 
 ### S5.4 — Native P/D lifecycle with TENT payloads
 
-The 0.30.0 Mooncake receive timeout/error path reports completion without a
-remote-write drain acknowledgement; its thread-pool shutdown is nonblocking.
-An explicit TENT constructor is insufficient by itself. Native replacement must
-first consume destination generation, write authorization/revocation and final
-drain evidence from S3. Existing custom owners therefore remain implementation
-dependencies, not obsolete code ready for mechanical deletion.
+**Implemented and locally qualified; independent acceptance pending.** The
+experimental profile now uses native engine request/page lifecycles, explicit
+thin TENT backends and independent historical-cache adapters. The custom vLLM
+P/D connectors, handshake state machines, HTTP sender/proxy and partial-tail
+cache extension are removed. Required fork revisions and runnable commands
+are in [P/D setup](pd.md#native-pd-with-an-explicit-tent-backend); official
+vLLM 0.30.0/SGLang 0.5.20 dependency pins do not supply these APIs.
 
-- Keep cache offload/reuse and live P/D handoff independently selectable. Prefer
-  native engine bootstrap, request states and DecodeReady authority; add a
-  released, explicit TENT transport construction boundary without replacing a
-  module's global class. TENT API calls do not establish GPUDirect RDMA use.
-- **Implemented, pending independent review:** explicit engine factories replace
-  SGLang's class substitution and enable native vLLM MooncakeConnector with TENT
-  and vllm-router. Exact experimental engine revisions and commands are in
-  [P/D setup](pd.md#native-pd-with-an-explicit-tent-backend). Official release pins
-  are unchanged; selecting SGLang TENT without the patch fails startup.
-- **Implemented, pending independent review:** vLLM receive failures wait for all
-  producer terminals, retain pages after timeout, and emit finished/failed
-  receives together. Rust TENT completion accounting reads the aggregate batch
-  counter rather than summing overlapping merged-task counters. The unchanged
-  wheel fails both new GPU READ/WRITE byte-count regressions; the fixed wheel
-  passes both without relaxing payload equality.
-- **Local qualification complete, independent acceptance pending:** A100
-  same-GPU TCP native vLLM P/D matches all three monolithic outputs; SGLang P/D
-  matches initial/continuation output and restores 576 tokens after restart.
-  The Mooncake suite passes 156 cases, the SGLang factory suite six, and the
-  exact Rust transfer binary 11. Source-only Python passes 423 cases. Preserve
-  the complete gates, final wheel/source hashes and failed attempts under
-  `/root/orbitkv-artifacts/native-pd-tent-20260930/HANDOFF.md`. These results do
-  not qualify S3 remote failure or retire the old vLLM P/D owner.
-- **Implementation/qualification open:** replace the six SGLang private P/D
-  observation Hooks with public callbacks. Fix upstream deferred-release timeout
-  reclamation, consume S3 destination generations/revocation and prove shutdown
-  drain; factory registration alone cannot authorize deletion. Keep native
-  bootstrap/rank logic. Optional failed-peer probing waits for S3's stable
-  native liveness contract.
-- vLLM: reuse native P/D after S5.1 proves lifecycle/layout equivalence. Fill real
-  upstream gaps in focused PRs; then remove superseded custom handshake, request
-  states and proxy code. Keep only examples needed to launch the chosen upstream
-  router, with one tested production handoff path.
-- Qualify cold/partial/full P/D plus cache reuse. Exactly one owner writes each
-  destination range, commits DecodeReady and authorizes release. `MultiConnector`
-  registration/order alone does not establish safe composition.
-- Preserve producer events, destination generations and physical drain on abort,
-  preemption, restart and partial submission. Close heterogeneous-GPU strict-output
-  failures with matched native controls, not relaxed output assertions.
+- vLLM `MultiConnector` selects one destination writer. The unselected cache
+  releases its query leases; unselected native P/D sends an empty source-cleanup
+  pull without writing or reporting receive completion. Saves follow the
+  engine's valid computed extent, including prefixes supplied by native P/D,
+  so Decode-generated blocks can be restored after a process restart.
+- vLLM receive failure and shutdown wait for every producer terminal and native
+  write completion. Empty pulls cannot produce phantom completions; aggregate
+  statistics tolerate children without a Prometheus exporter. Existing upstream
+  fixes and their attribution are linked in [P/D setup](pd.md).
+- SGLang consumes public decode-owned `PDTransferEvent` observations; all six
+  private P/D observation Hooks are removed. P may restore cached state, while
+  D saves completed state and leaves incoming writes to native P/D. Ordinary
+  cache admission/graph Hooks remain S5.3 work.
+- SGLang aborts retain source pages and destination pages until all submitted
+  futures and every writer's per-attempt ACK drain. Duplicate/stale ACKs cannot
+  release a new attempt. Hold timeout quarantines and retries ABORT; it never
+  frees pages. Memory unload rejects unresolved destinations. Partial transport
+  failure isolates the peer session and requires fresh workers.
+- **Local qualification:** A100, Qwen3-8B BF16, TP=1/PP=1, eager, same-host TCP.
+  vLLM standalone P/D and both cache-selection orders match monolithic output
+  through restart; the constrained-pool gate requires actual native preemption
+  and restores Decode-generated complete blocks. A real GPU byte-level gate
+  covers partial write, cancellation, delayed ACK, shutdown drain and page reuse.
+  SGLang model execution covers blocked real writes, cancellation/quarantine,
+  partial submission, delayed ACK, native retraction and restart cache reuse,
+  with exact initial/continuation output controls.
+- **Evidence:** current gates, installed artifact/source hashes and all failed
+  attempts are retained under
+  `/root/orbitkv-artifacts/native-pd-cutover-20260930/HANDOFF.md`; the prior
+  factory/aggregate TENT completion qualification remains under
+  `/root/orbitkv-artifacts/native-pd-tent-20260930/HANDOFF.md`. A reviewer must
+  rerun the claimed profile before independent acceptance.
+- **Qualification open:** permanent peer loss, cross-host destination
+  generation/revocation, independent failure domains and RDMA remain S3 gates.
+  Without drain evidence this profile may retain pages indefinitely; it does
+  not claim automatic failover. Heterogeneous GPUs/ranks, hybrid P/D, graph modes
+  and native GDS are unqualified. Historical strict-output failures remain in
+  the preserved evidence. A TENT call does not establish GPUDirect RDMA use.
+- **Upstream/release open:** publish only focused, nonduplicate engine API and
+  lifetime contributions, consume their released replacements, and then qualify
+  the corresponding official release. A fork commit is not released support.
 
-**Acceptance:** real transfer/output/drain evidence for both P and D, standalone
-cache and composed modes. Retire old paths only in the same change that proves
-the replacement; do not keep TE/TENT compatibility fallbacks or duplicate owners.
+**Acceptance:** independently reproduce transfer/output/drain evidence for the
+claimed native P/D and cache-composed modes. The replacement and retirement
+ship together; no TE/TENT compatibility fallback or duplicate P/D owner remains.
 
 ### S5.5 — Deployment matrix and upstream maintenance
 

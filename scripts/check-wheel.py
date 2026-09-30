@@ -25,7 +25,8 @@ def check_wheel(path: Path, variant: str, version: str | None = None) -> None:
         "orbitkv/vllm/layout.py",
         "orbitkv/vllm/metadata.py",
         "orbitkv/vllm/metrics.py",
-        "orbitkv/vllm/pd/__init__.py",
+        "orbitkv/vllm/transport.py",
+        "orbitkv/sglang/completion.py",
         "orbitkv/sglang/plugin.py",
         "orbitkv/sglang/linker.py",
         "orbitkv/sglang/config.py",
@@ -58,6 +59,7 @@ def check_wheel(path: Path, variant: str, version: str | None = None) -> None:
             "orbitkv/pd_connector/",
             "orbitkv/nixl_connector/",
             "orbitkv/vllm/nixl/",
+            "orbitkv/vllm/pd/",
             "tests/",
             "benches/",
         )

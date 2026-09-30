@@ -101,7 +101,7 @@ replacement for TENT plus OrbitKV state contracts.
 | Cancellation and preemption | Scheduler paths clean aborted/preempted requests; workers defer failure until submitted handles finish and retain a handle when release fails. `requires_kv_delivery` makes preempted reliable handoffs recompute, and `MultiConnector` requires delivery when any child does. | Reuse these engine lifecycle semantics. Keep the earlier OrbitKV preemption fence, generation checks and current destination/source retention until real abort, partial-submit and restart gates prove the TENT adaptation. |
 | Completion and failure | `KVConnectorTransferResults` distinguishes finished sends, finished receives and failed receives. NIXL polls transfer state and releases completed handles. | Map TENT terminal status into this result exactly once. A timeout, heartbeat loss or lease expiry must not stand in for native drain. The native NIXL TTL behavior is not evidence for OrbitKV source reclamation. |
 | Cache composition | `MultiConnector` now gives non-loading caches real blocks and tracks extra asynchronous saves. LMCache documents NIXL handoff plus LMCache offload using this path. | Test cold, partial and full handoff with OrbitKV `save_only` and ordinary read/write cache modes. Exactly one connector may load/write each destination; all required save completions must delay block free. |
-| Request routing | The vLLM router and NIXL own the released P/D request flow. | Remove OrbitKV's proxy only after an executable released router scenario carries the required request IDs, rank metadata, errors and cancellation. Routing remains outside Cache Manager policy. |
+| Request routing | The vLLM router and NIXL own the released P/D request flow. | Native P/D now uses the upstream router with the exact patched engine revision in S5.4; OrbitKV's custom proxy is removed. Routing remains outside Cache Manager policy. |
 
 Two released ordering gaps remain decisive. In vLLM 0.30.0, the model runner
 updates requests and performs page zeroing/COW before
@@ -138,21 +138,7 @@ consumed released replacement and tests; this audit deletes no protection.
 | `client/__init__.py` | Both adapters import the shared client and CUDA registration surface from here | Keep the small public export surface aligned with the native type stubs |
 | `client/connection.py` | Both engine adapters; owns node-local UDS clients, shard sockets and close | Keep shared transport configuration owner |
 | `client/gpu.py` | Engine registration paths; serializes framework CUDA IPC wrappers | Replace in S3 with explicit validated registration data, then remove pickle-compatible representation |
-| `vllm/pd/__init__.py` | vLLM factory loads split P/D public connector classes | Retire after a released native connector plus TENT backend passes all gates |
-| `vllm/pd/scheduler.py` | Split connector scheduler callbacks; owns active waits/pushes and release reasons | Replace with native P/D request lifecycle after equivalence tests |
-| `vllm/pd/worker.py` | Shared GPU layer registration, rank identity and TENT construction; no role handlers | Retain only consumed TENT/layout adapter responsibilities at native cutover |
-| `vllm/pd/decode_worker.py` | Decode worker; owns handshake, page grants, generation-scoped waits, async transfer completion and prefill dispatch | Native cancellation/completion must preserve destination generations and terminal drain before removal |
-| `vllm/pd/prefill_worker.py` | Prefill worker; owns target authorization, per-layer push plans, async writers/finalizers and source releases | Native producer lease plus TENT completion must pass partial-submit/preemption/restart before removal |
-| `vllm/pd/mooncake.py` | `worker.py`; thin Rust TENT engine adapter and request-generation bookkeeping | Keep only the explicit TENT payload adapter required by the released native connector; rename at cutover rather than preserve Mooncake compatibility |
-| `vllm/pd/layout.py` | P/D worker registration | Merge only with a consumed engine layout mapper; keep explicit layout validation |
-| `vllm/pd/layout_mapping.py` | Prefill target planning and decode rank fan-in | Keep for heterogeneous TP until native released mapping proves equivalent; reject unsupported mappings |
-| `vllm/pd/metadata.py` | Split scheduler/worker and proxy handshake | Replace with released handshake/result types when all required fields have owners |
-| `vllm/pd/kv_params.py` | Split schedulers parse request transfer parameters | Remove after released router/native connector supplies the same validated request contract |
-| `vllm/pd/chunk_tracker.py` | Prefill handler tracks per-layer submitted/completed chunks | Remove only when native completion owns identical per-range progress |
-| `vllm/pd/prefill_async.py` | Prefill worker task pools and completion statistics | Remove with custom pipeline; retain required statistics in the native adapter only if consumed |
-| `vllm/pd/prefill.py` | Decode-side HTTP sender to the custom prefill endpoint | Replace with released router/native request flow, then delete |
-| `vllm/pd/proxy.py` | Standalone HTTP proxy/router and its metrics/client pools | Replace with pinned upstream router scenario, then delete rather than keep a legacy mode |
-| `vllm/pd/metrics.py` | Split P/D connector metrics callbacks | Migrate only metrics consumed by the released connector; delete with old state owners |
+| `vllm/transport.py` | Native MooncakeConnector factory | Thin TENT payload backend; custom P/D request states, handshake and proxy removed in S5.4 |
 | `sglang/__init__.py` | Package import surface | Keep a small public export surface |
 | `sglang/config.py` | `linker.py`; owns model/adapter/representation identity | Keep engine-specific identity; add live-weight invalidation before supporting it |
 | `sglang/layout.py` | `plugin.py`/`linker.py`; maps Unified pools to GPU regions | Keep; reject unknown DSA/draft/auxiliary layouts |
@@ -160,9 +146,9 @@ consumed released replacement and tests; this audit deletes no protection.
 | `sglang/events.py` | Graph initialization Hook and `OrbitKVLinker`; owns stable CUDA events and forward activation counters | Keep event lifetime and pre-capture registration; import GPU dependencies only when the backend is selected |
 | `sglang/recovery.py` | `plugin.py`; wraps linker/tree and overrides Mamba component checkpoint behavior | Move generic checkpoint lifecycle into released engine components before shrinking; keep safety checks until consumed |
 | `sglang/admission.py` | Pending-query admission plus opt-in enqueue preparation; cancellation uses native cache finish/linker release | Replace the remaining two targets with public pending-lookup/enqueue callbacks |
-| `sglang/completion.py` | Six Hook-registry targets in native P/D receiver/queue; observes page handoff, DecodeReady, abort/failure/release | Replace with explicit lifecycle callbacks; telemetry must not become release authority |
+| `sglang/completion.py` | Public decode-owned `PDTransferEvent` observer | Six private P/D Hooks removed; reports only terminal observations and never authorizes page release |
 | `sglang/pd.py` | Plugin; registers the TENT factory explicitly on the patched engine | Factory implemented and tested; official 0.5.20 lacks the API. Keep native bootstrap and request states; qualify S3 drain before claiming safe fault recovery |
-| `sglang/plugin.py` | Backend registration; two ordinary cache Hooks, one optional enqueue Hook, six opt-in P/D Hooks | Keep public registration; remove remaining internal Hooks with consumed replacements |
+| `sglang/plugin.py` | Backend/factory registration; two ordinary cache Hooks and one optional enqueue Hook | Native P/D uses public observations; ordinary cache internal Hooks remain S5.3 work |
 
 The subsequent S5.2 cleanup removes `vllm/state_manager.py`, its context field,
 health thread and mocks because no production query consumed its availability.
@@ -182,15 +168,12 @@ The current SGLang Hook targets are deliberately explicit. Graph capture uses
 replacement: `BasePrefixCache.finish(ABORT)` calls
 `UnifiedRadixCache.release_aborted_request`, which calls the installed linker's
 `release_request`. The redundant `Scheduler._release_aborted_request` Hook is
-removed. P/D evidence, registered only when TENT is enabled, uses
-`MooncakeKVReceiver.send_metadata`, `MooncakeKVReceiver.abort`,
-`MooncakeKVReceiver.failure_exception`, `DecodeTransferQueue.add`,
-`DecodeTransferQueue._commit_transfer_to_req` and
-`DecodeTransferQueue._do_release`. The plugin also replaces the module-level
-`MooncakeTransferEngine` class. The Hook registry itself is released; these
-targets and the class assignment are version-coupled dependencies. Their
-replacement is a backend factory plus enqueue, abort, allocation, DecodeReady,
-failure and deferred-release callbacks carrying the same ownership evidence.
+removed. The subsequent S5.4 cutover removes the six private P/D observation
+Hooks and consumes public `PDTransferEvent` callbacks plus the explicit TENT
+factory. The module-global transfer-engine class is not replaced. These are
+fork APIs at the exact revisions in [P/D setup](pd.md), not released support.
+The two ordinary cache Hook targets and optional enqueue Hook still need
+consumed public replacements.
 
 The two vLLM monkey patches are also separate. `runtime.py` replaces
 `GPUModelRunner.update_requests` for preemption and recurrent restore ordering;
@@ -200,52 +183,26 @@ the connector in the public factory.
 
 ## Configuration inventory
 
-The 0.30.0 upgrade must parse and validate these once, without old/new aliases.
+Current adapters parse and validate these without old/new aliases.
 
 | Owner | Current entries |
 | --- | --- |
 | vLLM cache endpoint/session | `orbitkv.host`, `orbitkv.port`, `orbitkv.bootstrap_socket`, `orbitkv.tp_shard_endpoints`, `orbitkv.tp_shard_bootstrap_sockets`, `orbitkv.timeout_ms`, `orbitkv.spin_iterations`; environment overrides `ORBITKV_HOST`, `ORBITKV_PORT`, `ORBITKV_INSTANCE_ID` |
-| vLLM cache behavior and identity | `orbitkv.mode`, `orbitkv.transfer_backend`, `orbitkv.wait_for_full_prefix`, `orbitkv.pd_tail_save`, `orbitkv.pd_tail_load`; `ORBITKV_CROSS_LAYER_BLOCKS`, `ORBITKV_LOAD_TIMEOUT_SECONDS`, `ORBITKV_PREPARE_REQUESTS`, `ORBITKV_QUEUE_WARMUP`, `PYTHONHASHSEED`, `CUDA_VISIBLE_DEVICES` |
-| vLLM custom P/D connector | `orbitkv.pd.mooncake.bind_host`, `orbitkv.pd.mooncake.rank_map`, `orbitkv.pd.prefill_tp_size`, `orbitkv.pd.prefill_sender_worker_count`, `orbitkv.pd.push_worker_count`, `orbitkv.pd.push_finalizer_worker_count`, `orbitkv.pd.validate_runtime_layout`, `orbitkv.pd.completion_observation_socket`, `orbitkv.pd.completion_observation_instance_id` |
-| vLLM custom P/D request fields | Consumer: `do_remote_prefill`, `prefill_url`, `remote_request_id`, `done_request_id`, `prefill_max_tokens`, `proxy_start_ts_ns`. Producer: `do_remote_prefill_sender`, `target_engine_id`, `target_request_id`, `pd_handshakes`, `pd_consumer_abort_returns_ack` |
-| vLLM custom P/D proxy CLI | `--listen-host`, `--listen-port`, `--prefill-url`, `--decode-url`, `--prefill-urls`, `--decode-urls`, `--routing-policy`, `--timeout-s`, `--prefill-max-tokens`, `--decode-warmup-connections`, `--log-file` |
+| vLLM cache behavior and identity | `orbitkv.mode`, `orbitkv.transfer_backend`, `orbitkv.wait_for_full_prefix`; `ORBITKV_CROSS_LAYER_BLOCKS`, `ORBITKV_LOAD_TIMEOUT_SECONDS`, `ORBITKV_PREPARE_REQUESTS`, `ORBITKV_QUEUE_WARMUP`, `PYTHONHASHSEED`, `CUDA_VISIBLE_DEVICES` |
 | SGLang | `ORBITKV_SGLANG_ENDPOINT`, `ORBITKV_TRANSFER_BACKEND`, `ORBITKV_PREPARE_REQUESTS`, `ORBITKV_QUEUE_WARMUP`, `SGLANG_MOONCAKE_TRANSFER_ENGINE`, `ORBITKV_SGLANG_TENT_TIMEOUT_S`, `SGLANG_ENABLE_FAILED_SESSION_PROBE`, `MC_FORCE_TCP`; standard SGLang flags select the plugin/backend and native P/D mode |
 
-`PYTHONHASHSEED` is part of cache identity and is required by partial-tail reuse;
-`CUDA_VISIBLE_DEVICES` affects GPU ordinal/UUID resolution. Preserve both inputs
-until their consumers have an explicit replacement. The proxy CLI and request
-fields retire with the custom router/control plane. P/D worker counts, rank maps
-and completion-observation settings retire with the custom connector unless a
-released TENT backend still consumes them. Cache Manager socket, timeout,
-physical backend and model/adapter identity configuration remain OrbitKV
-responsibilities.
+The custom P/D configuration, request fields and proxy CLI are retired with
+that implementation. Native `kv_role`, `mooncake_protocol`, `device_name` and
+`transfer_engine_factory` configure vLLM P/D; let each start choose a new native
+engine identity. GPU visibility, model/cache identity, Manager connection,
+physical backend and cache timeout settings remain OrbitKV responsibilities.
 
-## Upgrade and contribution sequence
+## Execution and remaining qualification
 
-1. Upgrade vLLM as a standalone commit: set the optional dependency to `0.30.0`,
-   update the lock and submodule together, and adapt only to the released API.
-   Do not change the public support matrix until source-only, installed-wheel,
-   cold/partial/full, restart, eager/graph and overhead gates pass.
-2. Move completion reporting to `KVConnectorTransferResults`. Use `pre_forward`
-   only for load submission proven safe at that point. Retain preemption drain
-   before `update_requests` and restore after page initialization/COW but before
-   `preprocess_state`; propose those two narrow ordering boundaries upstream.
-3. Replace the blanket HMA block-pool override with released divergent-hit and
-   all-group readiness only after dense+recurrent state is proven atomic. Keep
-   the property false until then. Mark ordinary cache delivery best effort and
-   P/D producer delivery reliable; test their any/all aggregation in
-   `MultiConnector`.
-4. Upstream one vLLM registration/configuration/tests/docs change, then any
-   generic recurrent-ordering or TENT transport work separately. Record submitted,
-   merged and released states separately.
-5. For SGLang, upstream external-linker construction/registration separately
-   from request lifecycle and TENT transport. Replace each internal Hook with a
-   named lifecycle callback and the class substitution with a transport factory.
-6. Only after native vLLM P/D plus TENT passes layout, hybrid, cancellation,
-   completion and cache-composition gates may the custom `vllm/pd/` controller,
-   HTTP sender and proxy be deleted in the same change.
-
-No adapter or P/D implementation is removed by this audit. vLLM 0.29.0 remains
-the only qualified vLLM baseline, and SGLang 0.5.20 remains the current SGLang
-baseline. CUDA compute failed in the current container, so no new engine cell is
-qualified here.
+[The completion plan](completion-plan.md) is the only delivery queue. This audit
+began against the 0.29.0 baseline; current ordinary cache pins are vLLM 0.30.0
+and SGLang 0.5.20. Native P/D requires the separate patched revisions in
+[P/D setup](pd.md). Its source/drain/output gates and legacy removal belong to
+S5.4; ordinary hybrid ordering and public cache lifecycle remain S5.3. Fork
+implementation, local hardware qualification, independent acceptance, upstream
+merge and released support remain distinct statuses.

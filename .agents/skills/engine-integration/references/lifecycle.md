@@ -36,8 +36,10 @@ OrbitKV's compiled recovery requirements do not allocate the engine's pages.
 
 ## P/D
 
-Current vLLM `pd/` owns its handoff state; SGLang `pd.py` supplies payload movement
-under native request states. Trace producer CUDA readiness, authorized decoder
+Both engines own native P/D request states at the exact patched revisions in
+`docs/pd.md`. vLLM `transport.py` and SGLang `pd.py` only adapt TENT payloads.
+SGLang public `PDTransferEvent` callbacks observe queue-owned transitions; no
+private P/D Hooks or custom vLLM P/D package remain. Trace producer CUDA readiness, authorized decoder
 ranges, TENT completion, rank agreement and the one DecodeReady transition.
 Do not report a WRITE return or a telemetry observation as engine readiness.
 For composition, identify which connector may restore each missing interval;

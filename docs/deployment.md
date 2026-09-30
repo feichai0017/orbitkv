@@ -22,8 +22,8 @@ does not establish OrbitKV compatibility.
 | Multiple engines on one node | Engines share one Manager and its cache budget | Shared endpoint and independent instance registrations are implemented; concurrent multi-engine serving and container isolation need separate qualification |
 | Independent matching replicas, TP=1 | Two engines, two Managers and etcd | Qwen3-8B sharing and restart gates pass on both engines over same-host TCP and the recorded H20/A100 TCP natural-text suite; [recorded scope](shared-cache-qualification.md#recorded-result) |
 | Shared cache across nodes | One Cache Manager per host with local global index + etcd metadata | Experimental; [two-host TCP correctness](shared-cache-qualification.md#two-host-tcp-2026-09-28) is recorded with numerical limits; RDMA and metadata scale/failure qualification remain open |
-| vLLM P/D through OrbitKV's split connectors | Prefill, decode, P/D proxy; Mooncake TENT transfers KV | Experimental; does not need Cache Manager or Catalog for the handoff |
-| SGLang P/D over OrbitKV TENT | SGLang prefill, decode and native router; optional node-local cache | Same-A100 TCP P/D plus cache/restart output gate passes; H20→A100 reuse passes but strict 64-token equality fails; RDMA remains open |
+| vLLM native P/D over OrbitKV TENT | Patched native MooncakeConnector, thin TENT backend and upstream router; optional Manager for historical reuse | Experimental same-A100 TCP composition, drain, preemption and restart gates; [exact profile](pd.md) |
+| SGLang P/D over OrbitKV TENT | Patched native lifecycle, public observations, TENT factory and upstream router; optional Manager | Experimental same-A100 TCP composition, fault/drain, retraction and restart gates; historical heterogeneous-output failure and RDMA remain open |
 | vLLM P/D through upstream NIXL | Prefill, decode, NIXL-aware router | Upstream vLLM connector; separate from OrbitKV cache |
 
 ```mermaid
@@ -219,18 +219,15 @@ P/D moves KV for the same request from prefill to decode. Remote caching finds
 reusable KV from an earlier request. These are independent paths; see
 [P/D and NIXL](pd.md) for the ownership and control-flow distinction.
 
-OrbitKV's vLLM `PdPrefillConnector` and `PdDecodeConnector` push KV through
-Mooncake TENT directly between GPU workers. Try the
-[local P/D example](../scripts/run_pd_local.sh) for that path.
-vLLM `0.30.0` also includes its own NIXL connector; the
-[NIXL comparison example](../scripts/run_nixl_local.sh) uses vLLM's code.
-OrbitKV does not ship a NIXL connector. The experimental
-[native TENT factories](pd.md#native-pd-with-an-explicit-tent-backend) require the
-exact patched engine revisions documented there. SGLang retains its native P/D
-control plane and supports opt-in external-cache composition; its patched
-same-A100 TCP restart/output gate passes. The earlier H20→A100 reuse/output
-result used the former adapter and does not qualify these factories; see the
-[historical P/D qualification](pd.md#historical-sglang-qualification-on-2026-09-28).
+The [native TENT profile](pd.md#native-pd-with-an-explicit-tent-backend)
+uses patched native vLLM/SGLang lifecycles, thin OrbitKV payload backends and
+upstream routers. Use the exact engine revisions there; official release pins
+lack those APIs. The [local vLLM launcher](../scripts/run_pd_local.sh) consumes
+`MooncakeConnector` and `vllm-router`, with no OrbitKV proxy. Cache composition
+keeps one load owner per destination and independent historical-cache adapters.
+The native model/fault gates, restart requirements and remaining qualification
+limits are in [P/D setup](pd.md). OrbitKV ships no NIXL connector; the
+[NIXL comparison launcher](../scripts/run_nixl_local.sh) uses upstream code.
 
 ### Experimental vLLM P/D with NIXL plus OrbitKV cache
 

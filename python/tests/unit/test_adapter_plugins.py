@@ -21,7 +21,7 @@ def test_unselected_plugins_do_not_load_native_or_gpu_modules(engine):
                 if fullname in {
                     "torch", "orbitkv.orbitkv", "orbitkv.sglang.linker",
                     "orbitkv.sglang.layout", "orbitkv.vllm.connector",
-                    "orbitkv.vllm.pd",
+                    "orbitkv.vllm.transport",
                     "orbitkv.sglang.completion", "sglang.srt.disaggregation",
                 }:
                     raise AssertionError(f"unselected runtime imported: {fullname}")
@@ -53,7 +53,7 @@ def test_unselected_plugins_do_not_load_native_or_gpu_modules(engine):
             from orbitkv.vllm.plugin import register
             register()
             assert set(registered) == {
-                "OrbitKVConnector", "PdDecodeConnector", "PdPrefillConnector"
+                "OrbitKVConnector"
             }
             try:
                 register()
