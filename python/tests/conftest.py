@@ -192,6 +192,7 @@ def channel_server(request, tmp_path):
         pool_size = configuration.get("pool_size", pool_size)
     server = CacheManagerProcess(
         port=find_available_port(),
+        log_path=tmp_path / "orbitkv-cache-manager.log",
         pool_size=pool_size,
         query_budget="128kb" if mode == "budget" else None,
         query_instance_budget="64kb" if mode == "budget" else None,

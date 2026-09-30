@@ -21,7 +21,8 @@ pytestmark = [pytest.mark.integration, pytest.mark.gpu]
 @pytest.fixture
 def load_linker(monkeypatch):
     pytest.importorskip("sglang")
-    from orbitkv.sglang.linker import OrbitKVLinker, _LayerDoneCounter
+    from orbitkv.sglang.events import _LayerDoneCounter
+    from orbitkv.sglang.linker import OrbitKVLinker
 
     linker = object.__new__(OrbitKVLinker)
     linker.instance_id = "layered-restore"
@@ -146,7 +147,8 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
     torch = pytest.importorskip("torch")
     from orbitkv import CacheManagerClient, QueryLoading, QueryReady
     from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
-    from orbitkv.sglang.linker import OrbitKVLinker, _LayerDoneCounter, _Load
+    from orbitkv.sglang.events import _LayerDoneCounter
+    from orbitkv.sglang.linker import OrbitKVLinker, _Load
 
     if not torch.cuda.is_available():
         pytest.skip("CUDA is required")

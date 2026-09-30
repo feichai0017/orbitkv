@@ -73,7 +73,7 @@ def _torch():
 
 
 def find_available_port() -> int:
-    """Avoid outgoing TCP ports while GPU initialization delays the listener."""
+    """Find a wildcard listener port outside the outgoing TCP range."""
     low, high = map(int, Path("/proc/sys/net/ipv4/ip_local_port_range").read_text().split())
     for _ in range(128):
         port = 1024 + secrets.randbelow(65536 - 1024)
@@ -81,7 +81,8 @@ def find_available_port() -> int:
             continue
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:
-                s.bind(("127.0.0.1", port))
+                s.bind(("0.0.0.0", port))
+                s.listen(1)
             except OSError as error:
                 if error.errno != errno.EADDRINUSE:
                     raise

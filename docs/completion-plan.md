@@ -389,7 +389,7 @@ or a bounded local responsibility for each remaining internal dependency.
 
 ### S5.2 — Minimal official cache backends
 
-**Local adapter cleanup implemented; GPU qualification and independent review open.**
+**Local adapter cleanup implemented and checked on A100; independent review open.**
 The public vLLM entry constructs only `SchedulerAdapter` or `WorkerAdapter`,
 closes native connections on initialization failure, and inherits unchanged
 optional callbacks. The unused service availability owner and its health thread
@@ -399,14 +399,29 @@ paths leave native and GPU modules unloaded. Registration conflicts are explicit
 Existing request states, save/load threads and all lifecycle Hooks remain owned
 by their previous consumers; no native P/D replacement is claimed.
 
-The source-only gate passes 413 tests. With frozen native artifacts, the pinned
+The source-only gate passes 414 tests. With frozen native artifacts, the pinned
 SGLang 0.5.20 admission/event gate passes 22 tests and the vLLM 0.29.0 native
 recovery-contract gate passes seven. These integration tests use controlled
 completion and CUDA-event doubles, not real GPU DMA. The vLLM gate also corrects
 a pre-existing async-load expectation reproduced on the unchanged baseline: a
 forward-consumed recovery reports a synchronous scheduler hit.
-Both engine GPU correctness gates remain unrun for this candidate. This does not
-accept S5.2, upgrade either engine or claim upstream registration.
+The A100 Qwen3-8B TP=1/PP=1 serving gates pass: vLLM reports six passed and one
+hybrid-only assertion skipped; SGLang passes DRAM and io_uring SSD recovery.
+The gates compare model outputs with controls, check native cache reuse and
+verify external loads after process restart. The dense model leaves hybrid
+serving qualification open.
+The SGLang event/linker gate passes 19 tests, including real GPU page overwrite,
+full/window/checkpoint recovery on DRAM/SSD, and controlled failure/drain cases.
+
+Two initial SGLang SSD starts failed at TCPStore binding before model loading.
+A minimal reproduction showed that loopback availability did not imply wildcard
+availability. The test port helper now checks wildcard bind/listen; a real-socket
+regression protects this boundary, and the fixture retains Manager logs.
+Both failures and the successful rerun remain in external evidence. The original
+fixture deleted its temporary Manager logs during the first run; its pytest and
+engine logs remain available.
+Overall S5.2 acceptance, engine upgrades, upstream registration, and additional
+multi-GPU/P/D qualification remain open.
 Evidence: `/root/orbitkv-artifacts/adapter-cleanup-20260930/`.
 
 - vLLM: retain `OrbitKVConnector` and distinct scheduler/worker responsibilities.
