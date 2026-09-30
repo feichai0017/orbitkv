@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -251,6 +252,13 @@ def run(tmp_path: Path, profile: str):
             tensors=[observer_tensor],
         )
         assert ok, message
+
+        def unregister_on_exit():
+            for client, instance in [(observer_client, "observer"), (source_client, "source")]:
+                with contextlib.suppress(Exception):
+                    client.unregister_context(instance)
+
+        stack.callback(unregister_on_exit)
         _until(
             lambda: (
                 _metadata(source_manager)["index"]["available"]
@@ -286,6 +294,7 @@ def run(tmp_path: Path, profile: str):
                 indent=2,
             )
         )
+        immediate_local_hits = []
         save_ms = []
         query_ms = []
         cleanup_ms = []
@@ -304,16 +313,28 @@ def run(tmp_path: Path, profile: str):
             assert ok, message
 
             started = time.monotonic()
+            query_calls = 1
             ready = source_client.query_prefetch("source", hash_batch, f"s2.7-burst-{cycle}")
+            immediate_local_hits.append(
+                ready.num_hit_blocks if isinstance(ready, QueryReady) else 0
+            )
+            deadline = started + 5
+            while not isinstance(ready, QueryReady) or ready.num_hit_blocks != pages:
+                if isinstance(ready, QueryReady) and ready.lease:
+                    source_client.release(ready.lease)
+                assert time.monotonic() < deadline, (cycle, ready)
+                time.sleep(0.0005)
+                query_calls += 1
+                ready = source_client.query_prefetch("source", hash_batch, f"s2.7-burst-{cycle}")
             query_ms.append((time.monotonic() - started) * 1000)
-            assert isinstance(ready, QueryReady)
-            assert ready.num_hit_blocks == pages
             source_client.release(ready.lease)
             raw.write(
                 json.dumps(
                     {
                         "phase": "burst",
                         "cycle": cycle,
+                        "query_calls": query_calls,
+                        "immediate_hits": immediate_local_hits[-1],
                         "save_ms": save_ms[-1],
                         "query_ms": query_ms[-1],
                         "cleanup_ms": cleanup_ms[-1],
@@ -457,6 +478,7 @@ def run(tmp_path: Path, profile: str):
                 "cleanup_ms": _summary(cleanup_ms),
                 "low_traffic_visibility_ms": _summary(low_visibility_ms),
                 "effective_local_hit_rate": 1.0,
+                "immediate_local_hit_rate": sum(immediate_local_hits) / (pages * cycles),
                 "immediate_remote_hit_rate": sum(immediate_remote_hits)
                 / (pages * low_traffic_samples),
                 "after_visibility_remote_hit_rate": 1.0,
