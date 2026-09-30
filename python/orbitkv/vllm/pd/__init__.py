@@ -7,6 +7,7 @@ from typing import Any
 from vllm.distributed.kv_transfer.kv_connector.v1.base import (
     KVConnectorBase_V1,
     KVConnectorRole,
+    KVConnectorTransferResults,
     SupportsHMA,
 )
 
@@ -94,10 +95,10 @@ class _PdSplitConnector(KVConnectorBase_V1, SupportsHMA):
         if self._worker is not None:
             self._worker.register_kv_caches(kv_caches)
 
-    def get_finished(self, finished_req_ids: set[str]) -> tuple[set[str] | None, set[str] | None]:
+    def get_transfer_results(self, finished_req_ids: set[str]) -> KVConnectorTransferResults:
         if self._worker is None:
-            return None, None
-        return self._worker.get_finished(finished_req_ids)
+            return KVConnectorTransferResults()
+        return self._worker.get_transfer_results(finished_req_ids)
 
     def shutdown(self) -> None:
         if self._worker is not None:
@@ -183,11 +184,6 @@ class PdDecodeConnector(_PdSplitConnector):
         if self._worker is None:
             return set()
         return self._worker.get_block_ids_with_load_errors()
-
-    def build_connector_worker_meta(self) -> Any | None:
-        if self._worker is None:
-            return None
-        return self._worker.build_connector_worker_meta()
 
 
 class PdPrefillConnector(_PdSplitConnector):

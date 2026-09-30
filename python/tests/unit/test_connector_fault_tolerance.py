@@ -185,7 +185,7 @@ def test_restore_submission_failure_does_not_release_destinations(hybrid, error)
         with pytest.raises(RuntimeError, match="GPU pages remain held"):
             worker.start_load_kv(metadata)
         assert client.release_calls == []
-        assert worker.get_finished(set())[1] is None
+        assert worker.get_transfer_results(set()).finished_recving == set()
     finally:
         worker.shutdown()
 
@@ -226,7 +226,7 @@ def test_restore_failure_after_admission_keeps_destinations(hybrid, stage, error
             worker.start_load_kv(metadata)
             worker.wait_for_save()
         assert worker._restore is not None
-        assert worker.get_finished(set())[1] is None
+        assert worker.get_transfer_results(set()).finished_recving == set()
         assert client.release_calls == []
     finally:
         worker.shutdown()
@@ -248,7 +248,7 @@ def test_confirmed_failure_after_forward_cannot_recompute_consumed_pages(hybrid)
         with pytest.raises(RuntimeError, match="GPU pages remain held"):
             worker.wait_for_save()
         assert worker._restore is not None
-        assert worker.get_finished(set())[1] is None
+        assert worker.get_transfer_results(set()).finished_recving == set()
         assert client.release_calls == []
     finally:
         worker.shutdown()
@@ -287,7 +287,7 @@ def test_worker_consumes_restore_completion(monkeypatch):
     )
     worker.wait_for_save()
     assert worker._restore is None
-    assert worker.get_finished(set())[1] is None
+    assert worker.get_transfer_results(set()).finished_recving == set()
     data_client.start_restore.assert_called_once_with(
         "test_instance",
         0,

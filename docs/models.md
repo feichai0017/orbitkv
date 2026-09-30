@@ -4,10 +4,14 @@ OrbitKV qualifies a checkpoint, engine release, cache format and execution
 path together. A model family name or an engine's ability to load weights is
 not evidence that OrbitKV can restore every state it needs.
 
-The current engine baselines are **vLLM 0.29.0** and **SGLang 0.5.20**. Engines
+The current engine pins are **vLLM 0.30.0** and **SGLang 0.5.20**. Engines
 own GPU allocation; OrbitKV restores registered attention pages and sealed
 checkpoints through the [compiled recovery contract](hybrid-recovery.md).
 See [deployment patterns](deployment.md) for topology limits.
+
+The historical model tables below use vLLM 0.29.0 and SGLang 0.5.20. Their
+results do not automatically qualify 0.30.0; see the [upgrade gates](completion-plan.md#s51--release-and-interface-audit)
+for the new release's measured scope.
 
 Engine-native FP8 KV is qualified separately from FP8 weights. See
 [KV precision and SSD compression](storage-formats.md) for format boundaries,

@@ -50,8 +50,9 @@ maintained skill per workflow and update it when the consumed API changes.
 ## Project Overview
 
 OrbitKV is a framework-neutral state cache with compiled recovery requirements
-for LLM inference; general physical planning remains future work. The single-node data plane is validated with vLLM `0.29.0`
-and SGLang `0.5.20`; the SGLang UnifiedRadixCache linker is implemented, while
+for LLM inference; general physical planning remains future work. Engine pins are vLLM `0.30.0`
+and SGLang `0.5.20`; see S5.1 for the 0.30.0 qualification scope and historical
+0.29.0 evidence. The SGLang UnifiedRadixCache linker is implemented, while
 public lifecycle integration and broader deployment qualification remain open.
 
 - Single-node KV cache offloading between GPU and host memory
@@ -146,13 +147,13 @@ orbitkv/
 
 ## Build, Check, Test
 
-The supported engine baselines are the pinned `third-party/vllm` v0.29.0 and
+The selected engine baselines are the pinned `third-party/vllm` v0.30.0 and
 `third-party/sglang` v0.5.20 tags. Keep Python optional dependency pins and
 the source submodules aligned when updating a release. Native builds and wheel
 CI only initialize `third-party/mooncake`; initialize engine submodules for
 source inspection or release upgrades. The latest-release reference is vLLM
-0.30.0 and SGLang 0.5.20 as checked on 2026-09-29; vLLM 0.30.0 remains an upgrade
-target until S5.1 qualification. Check official release tags again when starting
+0.30.0 and SGLang 0.5.20 as checked on 2026-09-30; S5.1 records local upgrade
+qualification and independent acceptance separately. Check official release tags again when starting
 an upgrade. Use main only to locate fixes and prepare upstream contributions.
 See `docs/adapters.md` and the `engine-integration` skill for ownership and
 removal gates; do not delete a correctness Hook before its replacement is consumed.
@@ -197,7 +198,7 @@ Notes:
 | Default unit | Every Python PR before review | `cd python && uv run --group test pytest` | Must not start vLLM, `orbitkv-cache-manager`, or GPU runtime. Collection still imports deselected files, so top-level imports must be in the `test` dependency group or moved behind fixtures. |
 | Source-only default | CI and dependency-boundary checks | `cd python && uv run --isolated --no-project --with pytest --with numpy --with 'requests>=2.26.0' pytest` | Proves default gate does not need torch, vLLM, CUDA, native extension build, or a running server. |
 | Integration | Server/native/client/session lifecycle changes | `cd python && uv run --group test pytest -m integration` | Requires built native extension, server binary, and GPU where the test uses CUDA IPC. |
-| vLLM correctness E2E | Python test gates, vLLM connector, connector-visible cache semantics, save/load, query planning, or release-confidence changes | `cd python && ../.venv/vllm-release/bin/python -m pytest -m e2e tests/e2e/test_vllm_e2e_correctness.py --model /path/to/model --max-model-len 4096` | Use the vLLM `0.29.0` release environment described in `python/README.md`; reviewer reruns the gate on the GPU machine. |
+| vLLM correctness E2E | Python test gates, vLLM connector, connector-visible cache semantics, save/load, query planning, or release-confidence changes | `cd python && ../.venv/vllm-release/bin/python -m pytest -m e2e tests/e2e/test_vllm_e2e_correctness.py --model /path/to/model --max-model-len 4096` | Use the vLLM `0.30.0` release environment described in `python/README.md`; reviewer reruns the gate on the GPU machine. |
 | SGLang direct GPU E2E | SGLang linker, CUDA IPC layout, or plugin changes | `cd python && ../.venv/sglang-release/bin/python -m pytest -m e2e tests/e2e/test_sglang_direct_e2e.py --model /path/to/model` | Checks actual GPU load bytes after SGLang process restart against a cold-control namespace. |
 | Shared-cache serving E2E | Peer transfers, index recovery, source ownership or shared-cache adapter changes | See `docs/shared-cache-qualification.md`; run `tests/e2e/test_shared_cache.py` separately in both engine environments | Requires etcd and a prebuilt Manager; one GPU, two TP=1 replicas, same-host TCP only. |
 | Stress | Warm-hit pressure, lease cleanup, scheduler/cache concurrency | `cd python && uv run --group test pytest -m stress tests/stress/test_vllm_warm_hit_stress.py --model /data/models/Qwen3-4B --max-model-len 2048` | Targeted single-GPU evidence, not default PR feedback. |

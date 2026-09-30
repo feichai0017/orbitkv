@@ -26,6 +26,10 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
 - vLLM uses the KV Connector contract; SGLang uses UnifiedRadixCache and the
   external linker. Preserve valid native HBM hits without external synchronous
   lookup. Keep unselected backend imports free of native initialization.
+- vLLM 0.30.0 workers return `KVConnectorTransferResults` directly. P/D failed
+  receives must also be finished receives in the same poll; do not restore a
+  custom worker-metadata failure queue. Ordinary cache delivery is best effort,
+  while a P/D producer retains the native reliable-delivery requirement.
 - SGLang 0.5.20 cancellation already reaches the external linker through
   `BasePrefixCache.finish(ABORT)` and `UnifiedRadixCache.release_aborted_request`.
   Keep cancellation/drain in that consumed lifecycle; do not restore a duplicate

@@ -10,6 +10,7 @@ from vllm.config import CUDAGraphMode
 from vllm.distributed.kv_transfer.kv_connector.v1.base import (
     KVConnectorBase_V1,
     KVConnectorRole,
+    KVConnectorTransferResults,
     SupportsHMA,
 )
 from vllm.distributed.parallel_state import get_pp_group, get_tensor_model_parallel_rank
@@ -39,6 +40,10 @@ logger = get_connector_logger()
 
 class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
     """v1 KV connector for OrbitKV with separated scheduler/worker logic."""
+
+    @property
+    def requires_kv_delivery(self) -> bool:
+        return False
 
     def __init__(self, vllm_config, role: KVConnectorRole, kv_cache_config=None):
         super().__init__(vllm_config, role, kv_cache_config)
@@ -318,10 +323,10 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             return
         self._worker.wait_for_save()
 
-    def get_finished(self, finished_req_ids: set[str]) -> tuple[set[str] | None, set[str] | None]:
+    def get_transfer_results(self, finished_req_ids: set[str]) -> KVConnectorTransferResults:
         if not self._worker:
-            return (None, None)
-        return self._worker.get_finished(finished_req_ids)
+            return KVConnectorTransferResults()
+        return self._worker.get_transfer_results(finished_req_ids)
 
     def build_connector_worker_meta(self):
         if not self._worker:

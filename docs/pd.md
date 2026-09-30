@@ -87,14 +87,13 @@ OrbitKV currently integrates at different boundaries in the two engines:
 | Native registration, batch drain and memory lifetime | Shared Rust/TENT owner | The same shared Rust/TENT owner |
 | Request routing | Example OrbitKV P/D proxy or external orchestrator | Separate SGLang router |
 
-The checked OrbitKV tree contains 6,038 Python lines in `vllm/pd/`, including
-794 proxy lines and 438 metric lines, versus 233 lines in `sglang/pd.py`.
-These are source-line counts including comments, not equivalent feature or
-complexity measurements. SGLang's adapter delegates its control lifecycle to
-the pinned upstream engine; it has not eliminated that lifecycle. Completion
-observation and plugin installation also live outside `sglang/pd.py`.
+SGLang's smaller payload adapter delegates control lifecycle to the pinned
+upstream engine; that lifecycle still exists. Completion observation and plugin
+installation also live outside `sglang/pd.py`. vLLM's adapter currently owns its
+handoff lifecycle, while native 0.30.0 transfer results carry completion and
+failure to the scheduler. There is no separate P/D worker-metadata failure path.
 
-vLLM 0.29.0 does include its own Mooncake connector. OrbitKV chose a separate
+vLLM 0.30.0 does include its own Mooncake connector. OrbitKV chose a separate
 split push protocol and native lifetime owner, so the extra code is not forced
 by a lack of upstream P/D support. Before replacing it with a thinner adapter,
 check the actual upstream transport contract, cancellation/drain behavior,

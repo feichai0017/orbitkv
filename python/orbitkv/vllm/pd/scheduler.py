@@ -153,8 +153,7 @@ class PdDecodeSchedulerConnector:
         return meta
 
     def update_connector_output(self, connector_output: Any) -> None:
-        worker_meta = getattr(connector_output, "kv_connector_worker_meta", None)
-        failed_recving = set(getattr(worker_meta, "failed_recving", None) or ())
+        failed_recving = connector_output.failed_recving
         for req_id in connector_output.finished_recving or ():
             finished_ts_ns = time.time_ns()
             wait_req = self._active_waits.get(req_id)

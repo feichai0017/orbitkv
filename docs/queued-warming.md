@@ -3,7 +3,7 @@
 For artifact locations and verification limits, see [benchmark evidence](benchmark-evidence.md).
 The [pre-migration report](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/queued-warming.md) retains full tables and historical run details.
 
-vLLM 0.29.0 and SGLang 0.5.20 can announce an exact missing prefix when a
+The vLLM 0.30.0 and SGLang 0.5.20 adapters can announce an exact missing prefix when a
 request enters their ordinary serving queue. OrbitKV uses that interval to
 prepare DRAM pages from SSD or a peer. This is the first P3 implementation;
 it does not predict future prompts or decide engine admission.

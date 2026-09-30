@@ -3,9 +3,11 @@
 OrbitKV integrates external cache recovery with engine-owned GPU pages and
 request lifecycles. Start with the [single-node quickstart](single-node.md).
 The [completion plan](completion-plan.md#release-baseline-and-reference-policy)
-records release targets and upgrade gates: vLLM **0.29.0** and SGLang **0.5.20**
-are the current recorded serving baselines; vLLM **0.30.0** is the next target,
-not an already-qualified dependency update.
+records release targets and upgrade gates. The package and source pins are
+vLLM **0.30.0** and SGLang **0.5.20**. The vLLM upgrade has local A100
+DRAM/SSD and eager/graph evidence; independent acceptance and broader deployment
+qualification remain open. Historical 0.29.0 model/topology evidence is not
+automatically transferred to the new release.
 
 ## Ownership contract
 
@@ -41,7 +43,7 @@ release contract. API similarity and upstream support matrices do not qualify
 OrbitKV. Do not inherit LMCache's version compatibility branches or assume its
 documented P/D prerequisite patches are in the selected engine release.
 
-The pinned [vLLM 0.29.0 FlexKV entry](https://github.com/vllm-project/vllm/blob/98dff2a81d747d1dba01a47f939f48c3526d4206/vllm/distributed/kv_transfer/kv_connector/v1/flexkv_connector.py)
+The pinned [vLLM 0.30.0 FlexKV entry](https://github.com/vllm-project/vllm/blob/ced6857afa0ea7b2e3f0846a62e1394e90f15607/vllm/distributed/kv_transfer/kv_connector/v1/flexkv_connector.py)
 loads its separately installed implementation when the connector is constructed.
 The [SGLang 0.5.20 FlexKV integration](https://github.com/sgl-project/sglang/blob/94602c9c2b7cbdb8efd5c52802dac6a1c180089e/python/sglang/srt/mem_cache/storage/flexkv/flexkv_connector.py)
 owns task completion and connection lifetime beside the engine cache. OrbitKV
@@ -60,6 +62,13 @@ branches.
 allocated pages to `WorkerAdapter` in `worker.py`; the worker registers tensors, restores/saves state and reports
 completion through the pinned engine contract. `layout.py` and `metadata.py`
 describe actual groups and intents rather than a second cache scheduler.
+
+All worker roles implement 0.30.0's `get_transfer_results` directly. P/D failure
+and receive completion are drained together into `KVConnectorTransferResults`;
+the scheduler consumes native `failed_recving`, including through MultiConnector.
+There is no P/D failure-metadata class or duplicate failure queue. Ordinary cache
+publication declares `requires_kv_delivery=False`; a reliable P/D producer keeps
+the engine's delivery requirement. Divergent hybrid hits remain disabled.
 
 Only the selected role implementation is imported and constructed. Metrics come
 from that role; native sessions close if role initialization fails. The connector
@@ -133,17 +142,29 @@ records and inflight accounting live with their executors in `prefill_async.py`;
 the decode waiter owns its own executor and generation state. Source completion,
 destination grants, cancellation and physical drain retain separate authorities.
 
-The pinned vLLM 0.29.0 Mooncake worker directly constructs the legacy
+The pinned vLLM 0.30.0 Mooncake worker directly constructs the legacy
 `mooncake.engine.TransferEngine`; it has no constructor argument or public
 factory for OrbitKV TENT. Selecting that connector or replacing its module class
 would not preserve the current payload contract. Native lifecycle migration
 therefore remains S5.4 work rather than a connector rename.
+Its receive-error path also marks a request finished without a remote WRITE
+drain acknowledgement. A synchronous TENT wrapper alone cannot make decoder
+page reuse safe: cancellation must revoke new writes and retain destinations
+until every already-authorized writer has drained. This is a prerequisite for
+retiring OrbitKV's generation/grant/cancellation protocol.
 SGLang keeps native bootstrap and request states but opt-in TENT
 uses a module-class replacement. These are experimental integration boundaries.
 The target is native P/D lifecycle plus an explicit TENT backend, independently
 composable with cache reuse. Audit equivalence before deleting the existing path.
 Do not allow two connectors to write the same target range or independently
 release it. See [current P/D configuration and limits](pd.md).
+
+As checked on 2026-09-30, SGLang's [external-linker construction PR #40595](https://github.com/sgl-project/sglang/pull/40595)
+is open, the [Mamba lifecycle proof of concept #40759](https://github.com/sgl-project/sglang/pull/40759)
+is closed without merge, and [load-failure lifecycle PR #40896](https://github.com/sgl-project/sglang/pull/40896)
+is open. None is a released replacement for the remaining Hooks. Graph events
+must exist before capture; constructing a linker later does not establish that
+ordering. Track the cutover in S5.3/S5.4 rather than adding version fallbacks.
 
 ## Native client
 
