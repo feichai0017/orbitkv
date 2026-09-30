@@ -19,7 +19,8 @@ The NIXL integration described here is
 | --- | --- | --- | --- | --- |
 | OrbitKV external cache | Repeated-prefix lookup | Cache Manager DRAM/SSD, then engine HBM | Local index; global location index + exact source grant | GPU-validated locally; multi-node experimental |
 | OrbitKV vLLM split P/D connectors | P-to-D request handoff | Decode worker's GPU KV pages | OrbitKV handshake and proxy; Mooncake TENT moves bytes | A100 same-host TCP output gate passes; H20→A100 byte gate passes, strict output gate fails |
-| OrbitKV SGLang TENT adapter | P-to-D request handoff | Decode worker's GPU KV pages | SGLang 0.5.20 bootstrap/room protocol; OrbitKV Rust/TENT moves bytes | A100 same-host TCP output/restart gate passes; H20→A100 reuse passes, strict 64-token output gate fails |
+| OrbitKV SGLang TENT factory (patched 0.5.20) | P-to-D request handoff | Decode worker's GPU KV pages | SGLang 0.5.20 bootstrap/room protocol; OrbitKV Rust/TENT moves bytes | A100 same-host TCP output/restart gate passes; patched cross-host and fault-reclamation profiles remain unqualified |
+| Native vLLM Mooncake + OrbitKV TENT factory | P-to-D request handoff | Decode worker's GPU KV pages | Native MooncakeConnector and vllm-router 0.1.15 | Experimental pinned patches; output gate below, S3 fault/reclamation qualification open |
 | vLLM `NixlConnector` | P-to-D request handoff | Decode worker's GPU KV pages | vLLM's NIXL side channel and request router | Upstream vLLM connector, not OrbitKV code |
 
 The OrbitKV `PdPrefillConnector` and `PdDecodeConnector` live in
@@ -35,7 +36,9 @@ The script requires an explicit model path, uses `.venv/vllm-release` by default
 and selects `PREFILL_GPU=0`, `DECODE_GPU=1` with `MC_FORCE_TCP=1`. Override
 `VLLM_PYTHON` for another pinned environment. RDMA testing requires
 `MC_FORCE_TCP=0` plus `PREFILL_NIC` and `DECODE_NIC`; the script does not infer
-GPU/NIC affinity. Each child runs in its own process group, startup timeout is
+GPU/NIC affinity. The launcher translates `MC_FORCE_TCP=0` into an unset native
+environment variable; TENT treats even the string `0` as forcing TCP when present.
+Each child runs in its own process group, startup timeout is
 fatal, and cleanup targets only those groups.
 
 For a focused one-GPU regression, run
@@ -104,14 +107,104 @@ while shared notification delivery, deduplication and native waiting belong to
 the Rust transport owner. Remove obsolete forwarding and duplicate state only
 with all consumers and fault/output gates updated.
 
+## Native P/D with an explicit TENT backend
+
+This S5.4 substage follows the separation used by the
+[LMCache 0.5.5 MP recipe](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/docs/source/mp/disaggregated_prefill.rst):
+the engine and its router own live request handoff; the cache connector owns
+historical reuse. OrbitKV retains TENT for the payload. A factory adapts memory
+registration and synchronous batch completion without copying bootstrap,
+request tables or router logic into another OrbitKV Python package.
+
+These are experimental engine revisions, not APIs shipped in vLLM 0.30.0 or
+SGLang 0.5.20. Use separate environments and match both workers to the same
+revision. Optional dependency pins and engine submodules still select official
+releases for ordinary cache serving.
+
+| Component | Exact source |
+| --- | --- |
+| vLLM receive lifecycle fix | [`685310b2`](https://github.com/feichai0017/vllm/commit/685310b2c95c41aa423e051495640c7691274245), based on upstream main `91dab0eb` |
+| vLLM payload factory, including that fix | [`b348b054`](https://github.com/feichai0017/vllm/commit/b348b054bb3de88aedf44945bed5cdaf4f5ba042) |
+| SGLang payload factory | [`bee89684`](https://github.com/feichai0017/sglang/commit/bee896846cbbdda0d003cef520ff6a26b07c1556), based on official 0.5.20 `94602c9c` |
+| Native vLLM router | [`vllm-router 0.1.15`](https://github.com/vllm-project/router/tree/1fbcde7443d75b36befb61bc081f64c2a1f13a4b) |
+
+Build/install the selected engine revision using that engine's instructions,
+then install the OrbitKV wheel. Do not install an OrbitKV engine extra afterward:
+it would replace the experimental engine with the official release pin.
+
+For native vLLM, use this KV configuration on P and D, changing `kv_role` to
+`kv_consumer` and `engine_id` to `decode` for D:
+
+```json
+{
+  "kv_connector": "MooncakeConnector",
+  "kv_role": "kv_producer",
+  "engine_id": "prefill",
+  "kv_connector_extra_config": {
+    "mooncake_protocol": "tcp",
+    "transfer_engine_factory": "orbitkv.vllm.transport.TentTransferEngine"
+  }
+}
+```
+
+Set `MC_FORCE_TCP=1` and `VLLM_MOONCAKE_BOOTSTRAP_PORT=8998` on the workers.
+After P and D listen on ports 8100 and 8200, respectively, start the upstream
+router in its own environment:
+
+```bash
+uv pip install 'vllm-router==0.1.15'
+vllm-router --vllm-pd-disaggregation --kv-connector mooncake \
+  --prefill http://127.0.0.1:8100 8998 --decode http://127.0.0.1:8200 \
+  --host 127.0.0.1 --port 8000
+```
+
+The factory exchanges TENT's actual endpoint and rejects mismatched factories.
+Import/construction errors fail startup. OrbitKV neither replaces a vLLM module
+class nor runs its custom P/D connector or proxy in this profile. Cache
+composition with `MultiConnector` remains unqualified; do not give both the
+cache connector and live handoff authority to write the same D pages.
+
+Run the maintained model gate from `python/`, with that router on `PATH`:
+
+```bash
+python -m pytest -m e2e tests/e2e/test_vllm_native_pd_e2e.py \
+  --model /path/to/dense-model --basetemp /var/tmp/orbitkv-native-pd/run-001
+```
+
+It compares monolithic and routed native P/D output for 129-, 257- and 769-token
+prompts, checks actual transferred bytes, and proves both workers selected TENT.
+Two TP=1 processes share one GPU using eager execution and TCP. This gate is not
+a performance comparison or a multi-GPU/RDMA/fault-recovery qualification.
+
+The receive fix waits for all participating producers, ignores duplicate
+terminal results, keeps destination pages after a receive timeout, and reports
+failed/finished receives in the same poll. It does not prove remote termination
+after permanent peer loss or fix nonblocking sender shutdown. SGLang 0.5.20's
+`DecodeTransferQueue.resolve_deferred_releases` also releases after its hold
+timeout without a complete drain acknowledgement. These remain S3/S5.4 blockers;
+a successful synchronous TENT call or a completion-observation Hook does not
+close them. Keep the existing vLLM generation/grant owners until their native
+replacements pass cancellation, partial-submit, restart and page-reuse gates.
+
+On 2026-09-30, the A100 same-GPU TCP model gates passed for these patched
+profiles: native vLLM matched all three monolithic outputs, and SGLang matched
+both initial and continuation outputs while restoring 576 tokens after restart.
+The final wheel's 40 native files match the tested runtime byte for byte.
+Full commands, hashes, controls and limitations are maintained in
+`/root/orbitkv-artifacts/native-pd-tent-20260930/HANDOFF.md`. These local results
+await independent review and do not qualify the unresolved fault paths above.
+
 ## SGLang P/D over TENT
 
-The pinned SGLang `0.5.20` release already owns the hard framework-specific
+SGLang `0.5.20` already owns the hard framework-specific
 parts of disaggregation: bootstrap rooms, decode-page grants, TP/PP/CP mapping,
 chunking, staging, request polling and terminal failure propagation. OrbitKV
-does not copy that state machine. When `ORBITKV_SGLANG_TENT=1`, the SGLang
-plugin installs `orbitkv.sglang.pd.SGLangTentTransferEngine` before SGLang
-creates its process-wide transfer engine. SGLang's control plane remains in
+does not copy that state machine. When `SGLANG_MOONCAKE_TRANSFER_ENGINE=orbitkv`, the SGLang
+plugin registers `orbitkv.sglang.pd.SGLangTentTransferEngine` through the
+explicit factory API in the patched revision above. SGLang lazily creates its
+process-wide transfer engine; its module-global class is never replaced.
+Official 0.5.20 lacks that API, so selecting this profile on the unpatched
+release stops startup instead of silently using the legacy engine. SGLang's control plane remains in
 place while its registered HBM/host regions and every payload batch are handed
 to the same Rust TENT owner used by the rest of OrbitKV.
 
@@ -125,12 +218,12 @@ drain the batch, retain the source/destination regions until the drain ends,
 and invalidate the failed peer segment before SGLang marks the room failed.
 
 For a same-host, two-GPU correctness run, enable TENT's TCP path and launch the
-pinned SGLang processes with the OrbitKV plugin installed. The router is a separate package; the pinned SGLang source
+patched SGLang processes with the OrbitKV plugin installed. The router is a separate package; the pinned SGLang source
 uses `sglang-router 0.3.2`. Install it in the environment that runs the router:
 
 ```bash
 uv pip install 'sglang-router==0.3.2'
-export ORBITKV_SGLANG_TENT=1
+export SGLANG_MOONCAKE_TRANSFER_ENGINE=orbitkv
 export MC_FORCE_TCP=1
 
 python -m sglang.launch_server --model-path /path/to/model \
@@ -155,10 +248,11 @@ timeout defaults to 30 seconds and can be changed with
 `ORBITKV_SGLANG_TENT_TIMEOUT_S`. SGLang's optional failed-session background
 probe must remain disabled for this revision (it is disabled by default): the
 current TENT C ABI does not expose its peer-liveness probe, and OrbitKV rejects
-startup if `SGLANG_ENABLE_FAILED_SESSION_PROBE=1`. Ordinary transfer failure,
-cancellation and room teardown are supported and fail closed.
+startup if `SGLANG_ENABLE_FAILED_SESSION_PROBE=1`. Local batch failure drains submitted TENT work before returning. Remote abort
+and page reclamation still have the hold-timeout gap described above and must
+not be claimed as qualified fault recovery.
 
-The external two-GPU correctness gate is:
+The model correctness gate supports two GPUs, or two TP=1 replicas on one GPU:
 
 ```bash
 cd python
@@ -166,7 +260,8 @@ cd python
   tests/e2e/test_sglang_pd_e2e.py --model /path/to/model
 ```
 
-It compares greedy P/D output with a monolithic SGLang control and asserts that
+The gate gives its Manager an explicit 512MB DRAM budget; a default 100MB pool
+can evict the tested continuation before restart. It compares greedy P/D output with a monolithic SGLang control and asserts that
 both P and D processes installed OrbitKV's Rust/TENT engine. The gate also
 starts a Cache Manager and enables the OrbitKV external linker on both workers.
 After a P/D restart, a continuation must recover past the last page boundary
@@ -175,7 +270,10 @@ state was published and reused by the next prefill. Cache Manager load bytes
 must increase. Run forced TCP first, then repeat the deployment on two hosts
 with RDMA and external NIC counters before claiming GPUDirect.
 
-### SGLang qualification on 2026-09-28
+### Historical SGLang qualification on 2026-09-28
+
+These runs used the former class-substitution adapter and do not qualify the
+new factory patch. Their original evidence is retained.
 
 Qwen3-8B revision `b968826d9c46dd6066d109eabc6255188de91218`, SGLang 0.5.20,
 BF16, TP=1, 64-token pages, eager deterministic inference and forced TCP were
@@ -218,7 +316,7 @@ export ORBITKV_SGLANG_ENDPOINT=unix:///run/orbitkv/orbitkv.sock
 The decode worker additionally needs
 `--disaggregation-decode-enable-radix-cache`. OrbitKV rejects a composed P/D
 configuration unless its live-transfer backend is the SGLang `mooncake` route
-with `ORBITKV_SGLANG_TENT=1`; this prevents a deployment from silently sending
+with `SGLANG_MOONCAKE_TRANSFER_ENGINE=orbitkv`; this prevents a deployment from silently sending
 the live request through NIXL or the legacy Python Transfer Engine. P and D
 share cache bytes only when their model, computation, TP/PP/CP and physical
 layout identities match.

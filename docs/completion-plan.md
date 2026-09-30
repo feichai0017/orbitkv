@@ -509,12 +509,14 @@ status is reported separately from local adapter qualification.
 
 The 2026-09-30 source check confirms that released 0.30.0 and current vLLM main
 still invoke preemption drain after page initialization, and synchronous restore
-after recurrent preprocessing. Generic preemption-ordering patch `98b917d5` is
-prepared against vLLM main `fb91712b`: six CPU tests pass; unchanged main fails
-both new real-step regressions. Its complete upstream lint selection passes.
-Evidence and portable patch: `/root/orbitkv-artifacts/engine-native-lifecycle-20260930/vllm-upstream/`.
-It is not submitted, merged, released or qualified with a main-branch GPU model;
-upstream requires human review and test execution before submission.
+after recurrent preprocessing. The generic preemption-ordering fix is submitted
+as [vLLM #59410](https://github.com/vllm-project/vllm/pull/59410), linked to
+[#59409](https://github.com/vllm-project/vllm/issues/59409), at `2f868f14` based on
+main `91dab0eb`. It supersedes the earlier unsubmitted `98b917d5` patch. Local
+qualification includes 46 A100 worker tests and one native MultiConnector
+Qwen3-8B output gate; the upstream contributor-eligibility gate still needs
+maintainer validation. It is not merged or released. Evidence:
+`/root/orbitkv-artifacts/engine-native-lifecycle-20260930/vllm-upstream/submission-20260930/HANDOFF.md`.
 Moving only that fence does not remove `runtime.py`'s restore
 boundary. SGLang PR #40595 (external-linker construction) and #40896 (load-failure
 lifecycle) are open; #40759 (Mamba lifecycle proof of concept) is closed unmerged.
@@ -558,9 +560,31 @@ dependencies, not obsolete code ready for mechanical deletion.
   native engine bootstrap, request states and DecodeReady authority; add a
   released, explicit TENT transport construction boundary without replacing a
   module's global class. TENT API calls do not establish GPUDirect RDMA use.
-- SGLang: replace `install_sglang_tent_backend` class substitution and private
-  completion/release Hooks. Keep native bootstrap/rank logic. Optional failed-peer
-  probing waits for S3's stable native liveness contract.
+- **Implemented, pending independent review:** explicit engine factories replace
+  SGLang's class substitution and enable native vLLM MooncakeConnector with TENT
+  and vllm-router. Exact experimental engine revisions and commands are in
+  [P/D setup](pd.md#native-pd-with-an-explicit-tent-backend). Official release pins
+  are unchanged; selecting SGLang TENT without the patch fails startup.
+- **Implemented, pending independent review:** vLLM receive failures wait for all
+  producer terminals, retain pages after timeout, and emit finished/failed
+  receives together. Rust TENT completion accounting reads the aggregate batch
+  counter rather than summing overlapping merged-task counters. The unchanged
+  wheel fails both new GPU READ/WRITE byte-count regressions; the fixed wheel
+  passes both without relaxing payload equality.
+- **Local qualification complete, independent acceptance pending:** A100
+  same-GPU TCP native vLLM P/D matches all three monolithic outputs; SGLang P/D
+  matches initial/continuation output and restores 576 tokens after restart.
+  The Mooncake suite passes 156 cases, the SGLang factory suite six, and the
+  exact Rust transfer binary 11. Source-only Python passes 423 cases. Preserve
+  the complete gates, final wheel/source hashes and failed attempts under
+  `/root/orbitkv-artifacts/native-pd-tent-20260930/HANDOFF.md`. These results do
+  not qualify S3 remote failure or retire the old vLLM P/D owner.
+- **Implementation/qualification open:** replace the six SGLang private P/D
+  observation Hooks with public callbacks. Fix upstream deferred-release timeout
+  reclamation, consume S3 destination generations/revocation and prove shutdown
+  drain; factory registration alone cannot authorize deletion. Keep native
+  bootstrap/rank logic. Optional failed-peer probing waits for S3's stable
+  native liveness contract.
 - vLLM: reuse native P/D after S5.1 proves lifecycle/layout equivalence. Fill real
   upstream gaps in focused PRs; then remove superseded custom handshake, request
   states and proxy code. Keep only examples needed to launch the chosen upstream

@@ -224,11 +224,13 @@ Mooncake TENT directly between GPU workers. Try the
 [local P/D example](../scripts/run_pd_local.sh) for that path.
 vLLM `0.30.0` also includes its own NIXL connector; the
 [NIXL comparison example](../scripts/run_nixl_local.sh) uses vLLM's code.
-OrbitKV does not ship a NIXL connector. Its SGLang adapter supports the native
-SGLang P/D control plane over OrbitKV TENT and an opt-in composition with the
-external cache. The same-A100 TCP restart/output gate passes; the H20→A100
-run passes cache reuse but fails full 64-token equality. See the
-[precise P/D qualification](pd.md#sglang-qualification-on-2026-09-28).
+OrbitKV does not ship a NIXL connector. The experimental
+[native TENT factories](pd.md#native-pd-with-an-explicit-tent-backend) require the
+exact patched engine revisions documented there. SGLang retains its native P/D
+control plane and supports opt-in external-cache composition; its patched
+same-A100 TCP restart/output gate passes. The earlier H20→A100 reuse/output
+result used the former adapter and does not qualify these factories; see the
+[historical P/D qualification](pd.md#historical-sglang-qualification-on-2026-09-28).
 
 ### Experimental vLLM P/D with NIXL plus OrbitKV cache
 

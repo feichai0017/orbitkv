@@ -161,7 +161,7 @@ consumed released replacement and tests; this audit deletes no protection.
 | `sglang/recovery.py` | `plugin.py`; wraps linker/tree and overrides Mamba component checkpoint behavior | Move generic checkpoint lifecycle into released engine components before shrinking; keep safety checks until consumed |
 | `sglang/admission.py` | Pending-query admission plus opt-in enqueue preparation; cancellation uses native cache finish/linker release | Replace the remaining two targets with public pending-lookup/enqueue callbacks |
 | `sglang/completion.py` | Six Hook-registry targets in native P/D receiver/queue; observes page handoff, DecodeReady, abort/failure/release | Replace with explicit lifecycle callbacks; telemetry must not become release authority |
-| `sglang/pd.py` | Plugin; substitutes the native Mooncake transfer class with a TENT adapter | Replace with a released transport factory/backend boundary; keep native bootstrap and request states |
+| `sglang/pd.py` | Plugin; registers the TENT factory explicitly on the patched engine | Factory implemented and tested; official 0.5.20 lacks the API. Keep native bootstrap and request states; qualify S3 drain before claiming safe fault recovery |
 | `sglang/plugin.py` | Backend registration; two ordinary cache Hooks, one optional enqueue Hook, six opt-in P/D Hooks | Keep public registration; remove remaining internal Hooks with consumed replacements |
 
 The subsequent S5.2 cleanup removes `vllm/state_manager.py`, its context field,
@@ -209,7 +209,7 @@ The 0.30.0 upgrade must parse and validate these once, without old/new aliases.
 | vLLM custom P/D connector | `orbitkv.pd.mooncake.bind_host`, `orbitkv.pd.mooncake.rank_map`, `orbitkv.pd.prefill_tp_size`, `orbitkv.pd.prefill_sender_worker_count`, `orbitkv.pd.push_worker_count`, `orbitkv.pd.push_finalizer_worker_count`, `orbitkv.pd.validate_runtime_layout`, `orbitkv.pd.completion_observation_socket`, `orbitkv.pd.completion_observation_instance_id` |
 | vLLM custom P/D request fields | Consumer: `do_remote_prefill`, `prefill_url`, `remote_request_id`, `done_request_id`, `prefill_max_tokens`, `proxy_start_ts_ns`. Producer: `do_remote_prefill_sender`, `target_engine_id`, `target_request_id`, `pd_handshakes`, `pd_consumer_abort_returns_ack` |
 | vLLM custom P/D proxy CLI | `--listen-host`, `--listen-port`, `--prefill-url`, `--decode-url`, `--prefill-urls`, `--decode-urls`, `--routing-policy`, `--timeout-s`, `--prefill-max-tokens`, `--decode-warmup-connections`, `--log-file` |
-| SGLang | `ORBITKV_SGLANG_ENDPOINT`, `ORBITKV_TRANSFER_BACKEND`, `ORBITKV_PREPARE_REQUESTS`, `ORBITKV_QUEUE_WARMUP`, `ORBITKV_SGLANG_TENT`, `ORBITKV_SGLANG_TENT_TIMEOUT_S`, `SGLANG_ENABLE_FAILED_SESSION_PROBE`, `MC_FORCE_TCP`; standard SGLang flags select the plugin/backend and native P/D mode |
+| SGLang | `ORBITKV_SGLANG_ENDPOINT`, `ORBITKV_TRANSFER_BACKEND`, `ORBITKV_PREPARE_REQUESTS`, `ORBITKV_QUEUE_WARMUP`, `SGLANG_MOONCAKE_TRANSFER_ENGINE`, `ORBITKV_SGLANG_TENT_TIMEOUT_S`, `SGLANG_ENABLE_FAILED_SESSION_PROBE`, `MC_FORCE_TCP`; standard SGLang flags select the plugin/backend and native P/D mode |
 
 `PYTHONHASHSEED` is part of cache identity and is required by partial-tail reuse;
 `CUDA_VISIBLE_DEVICES` affects GPU ordinal/UUID resolution. Preserve both inputs

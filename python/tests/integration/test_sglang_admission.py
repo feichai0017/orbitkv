@@ -474,7 +474,7 @@ def test_factory_selects_restore_owner_from_pinned_runtime_role(monkeypatch, mod
 
     from orbitkv.sglang.plugin import create_cache
 
-    monkeypatch.setenv("ORBITKV_SGLANG_TENT", "1")
+    monkeypatch.setenv("SGLANG_MOONCAKE_TRANSFER_ENGINE", "orbitkv")
     monkeypatch.setattr(
         "sglang.srt.runtime_context.get_disagg",
         lambda: SimpleNamespace(

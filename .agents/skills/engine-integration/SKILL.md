@@ -36,14 +36,23 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
   private Scheduler abort Hook. Queue preparation and P/D observation Hooks are
   registered only when their startup options are enabled.
 - Prefer native P/D lifecycle with an explicit TENT backend. Prove equivalence
-  before deleting custom P/D state machines or proxy code. Cache restore and live
+  before deleting custom P/D state machines or proxy code. The experimental
+  `vllm.transport` adapter consumes a patched native MooncakeConnector; SGLang
+  registers a lazy factory selected by `SGLANG_MOONCAKE_TRANSFER_ENGINE=orbitkv`.
+  Use the exact engine revisions in `docs/pd.md`; official pins do not provide
+  these APIs and there is no class-substitution fallback. Cache restore and live
   handoff must have one writer and one completion/release authority per range.
+- Native receive timeout and SGLang's deferred-release hold timeout do not prove
+  remote WRITE termination. Retain S3 generation/revocation/drain gates even
+  after native P/D output passes. The six SGLang P/D Hooks record observations;
+  they do not own physical release. TENT may merge descriptors: use batch status
+  for additive byte accounting and per-task status for terminal drain.
 
 ## Replace internal coupling safely
 
 Inventory the concrete callers before editing `vllm/runtime.py`, the multi-group
 native-prefix bypass, `sglang/recovery.py`, private lifecycle Hooks or the SGLang
-TENT class substitution. Identify a released replacement or propose a minimal
+TENT factory registration. Identify a released replacement or propose a minimal
 engine-generic upstream fix. Preserve safety until the replacement is consumed;
 then remove the old path in the same change. Do not add a generic facade merely
 to hide internal dependencies. A public adapter owns an interface and may remain.

@@ -98,6 +98,9 @@ Runs tests that start or require a local `orbitkv-cache-manager` but do not run 
   local publish, cold and warm `QueryBundle`, asynchronous
   restore with GPU byte verification, local lease release, and shutdown across
   a real process boundary;
+- `test_tent_transfer.py` checks native GPU READ/WRITE bytes and exact batch
+  accounting when TENT merges adjacent descriptors. Run it for native transfer
+  completion changes with a built wheel and working CUDA driver.
 - `test_session_watcher.py`
 - `test_state_demand.py` checks the native public demand API, absolute ranges,
   identity/alignment rejection and the distinction between required state and
@@ -290,3 +293,22 @@ the codec is lossy. Report those differences as quality evidence, not a passing
 exact-recovery result. Use `--storage-codec none` for the exact regression gate.
 See [format qualification](../../docs/storage-formats.md) for commands, the
 storage-quantization scope and the distinction from native GDS qualification.
+
+## Experimental native P/D factories
+
+Use the exact patched engine revisions from [P/D setup](../../docs/pd.md#native-pd-with-an-explicit-tent-backend).
+Official vLLM/SGLang dependency pins do not include the factories. These tests
+are explicit GPU gates and are deselected by the source-only default suite.
+
+- `test_vllm_native_pd_e2e.py`: native MooncakeConnector, OrbitKV TENT payload
+  factory and upstream `vllm-router==0.1.15`; three prompt lengths, strict
+  monolithic output comparison and actual transfer counters. One GPU, two TP=1
+  processes, eager TCP. No custom OrbitKV P/D connector/proxy is imported.
+- `test_sglang_pd_e2e.py`: native SGLang lifecycle, explicit TENT registration,
+  shared 512MB Manager, strict output and restart reuse past a decode-produced
+  page boundary. Uses separate GPUs when available, otherwise two TP=1 workers
+  share one GPU. Records the actual topology.
+
+Keep `--basetemp` and all result/log archives outside the checkout. Successful
+model output does not qualify cancellation, remote drain, RDMA, rank changes,
+heterogeneous GPUs or vLLM native P/D plus external-cache composition.
