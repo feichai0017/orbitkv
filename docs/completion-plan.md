@@ -39,7 +39,7 @@ record submitted, merged and released as different states.
 | S2 | Partial: S2.1–S2.7 are independently accepted; bounded publication coalescing keeps a zero-wait default with a qualified 2 ms opt-in. S2.8 owner inventory streams are next. Three-host metadata remains blocked by CPU-node SSH authorization and mutually unreachable A/B container data addresses; live-store soak and separate-host cells remain open under S2.10. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
-| S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.30.0 adapter upgrade consumes native transfer results and is under local qualification. Independent upgrade acceptance and public lifecycle/deployment gates remain open. |
+| S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.30.0 adapter upgrade consumes native transfer results with local A100 cache/P/D evidence. Independent upgrade acceptance and public lifecycle/deployment gates remain open. |
 | S6 | Partial: observations/limited choices exist; unified executed decisions remain open. |
 | S7 | Open: consumed retention/checkpoint compiler beyond recovery validation. |
 | S8 | Partial: existing wheel workflow; final images, artifact gates and publication remain open. |
@@ -375,7 +375,7 @@ integration contracts from [the adapter guide](adapters.md#lmcache-and-flexkv-re
 
 ### S5.1 — Release and interface audit
 
-**vLLM 0.30.0 implementation delivered; qualification in progress, independent
+**vLLM 0.30.0 implementation delivered with local qualification; independent
 review open.** Dependency and submodule use the exact release above. Cache and
 P/D workers return native `KVConnectorTransferResults`; failed receive and
 finished receive share one snapshot, replacing `PdWorkerMetadata` and its
@@ -385,10 +385,24 @@ released-engine test. No 0.29/0.30 compatibility alias remains.
 
 The complete CUDA 13 wheel passes build/repair/isolated import. Its installed
 production package passes A100 Qwen3-8B DRAM eager, DRAM graph and forced-io_uring
-SSD eager gates; P/D, composition and hybrid checks are recorded separately.
+SSD eager gates (six checks each; the recurrent-only check is inapplicable).
+Same-GPU TCP P/D and save-only MultiConnector each pass one gate; the latter
+uses DecodeBench as the load owner and does not qualify live P/D/cache overlap.
+Fourteen exact native recovery tests and three released connector-contract tests
+pass. Fixed Qwen3.5-0.8B passes seven checks each for DRAM eager, DRAM graph and
+forced-io_uring SSD eager modes. The full A100 selection totals 58 passes and
+three inapplicable dense-model recurrent skips.
+These profiles use TP=1/PP=1; multi-GPU, RDMA and historical model/topology cells
+remain separately unqualified on the new release.
 Source-only Python passes 413 tests, with one skip and 160 deselected. The
 generated `python/uv.lock` is ignored by repository policy; its resolved 0.30.0
 snapshot is archived with the wheel rather than force-added.
+All 44 Python production modules match the tested wheel byte for byte. The first
+six gates preserve all 146 installed-artifact hashes and 72 test-file hashes;
+the extended hybrid/recovery selection also preserves its installed/test hashes
+and returns GPU usage to zero. Local full Rust tests reach 47 CUDA-device failures
+in `orbitkv-core` on this GPU-inaccessible host; they are not recorded as passed.
+The PR's CI covers both CUDA builds, Clippy, Python and wheel packaging separately.
 Evidence: `/root/orbitkv-artifacts/engine-native-lifecycle-20260930/vllm-0.30/`.
 Previous 0.29.0 model, topology and performance measurements remain historical.
 This delivery does not close S5.3/S5.4 or establish a performance advantage.
@@ -495,8 +509,13 @@ status is reported separately from local adapter qualification.
 
 The 2026-09-30 source check confirms that released 0.30.0 and current vLLM main
 still invoke preemption drain after page initialization, and synchronous restore
-after recurrent preprocessing. A separate generic preemption-ordering patch is
-being prepared; moving only that fence does not remove `runtime.py`'s restore
+after recurrent preprocessing. Generic preemption-ordering patch `98b917d5` is
+prepared against vLLM main `fb91712b`: six CPU tests pass; unchanged main fails
+both new real-step regressions. Its complete upstream lint selection passes.
+Evidence and portable patch: `/root/orbitkv-artifacts/engine-native-lifecycle-20260930/vllm-upstream/`.
+It is not submitted, merged, released or qualified with a main-branch GPU model;
+upstream requires human review and test execution before submission.
+Moving only that fence does not remove `runtime.py`'s restore
 boundary. SGLang PR #40595 (external-linker construction) and #40896 (load-failure
 lifecycle) are open; #40759 (Mamba lifecycle proof of concept) is closed unmerged.
 Do not delete consumed safety behavior based on these proposals.
