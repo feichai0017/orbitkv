@@ -77,12 +77,12 @@ local journal state, stream bytes/frames, session counts, queue high-water marks
 cluster identity and the all-namespace scope digest. Etcd traffic no longer grows
 with block churn; inspect stream diagnostics separately from membership traffic.
 
-The frozen same-host A100 candidate uses native commit `46f23928` and benchmark
+The frozen same-host A100 candidate uses native commit `344ef6c9` and benchmark
 harness `53314d52`. A 16-owner, 60-second all-to-all run applies 245,760 changes
-at 4,083.19 changes/s, with 29.67 ms installed-visibility p99, a 7,929,600-byte
-index, 652,262-byte aggregate queue peak and zero etcd database growth during
+at 4,083.12 changes/s, with 29.53 ms installed-visibility p99, a 7,929,600-byte
+index, 697,538-byte aggregate queue peak and zero etcd database growth during
 churn. Five independent full-Manager runs each at 0 and 2 ms show median stream
-bytes of 499,634 and 78,762 (84.24% lower) and visibility p95 of 2.15 and 5.09 ms.
+bytes of 500,775 and 82,265 (83.57% lower) and visibility p95 of 1.68 and 5.17 ms.
 Both profiles have zero etcd revision change during block churn and 100% exact
 post-visibility GPU restores; model inference latency is not measured.
 

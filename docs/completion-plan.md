@@ -370,15 +370,24 @@ sync result, waits for exact lease removal, aborts abandoned source input tasks,
 and bounds aggregate-credit and response-queue waits. The rejected report,
 environment failures and corrected probes remain with the evidence.
 
-Frozen A100 evidence at native `46f23928` and harness `53314d52` passes the
+The second independent review at `a25169af` found a budget-repair race: an etcd
+membership progress revision could clear the retired state while the old owner
+view was being removed in bounded batches. The partially cleaned view could then
+resume at its old cursor and report complete coverage with missing rows. Commit
+`344ef6c9` makes withdrawal monotonic across membership refresh; only a complete
+replacement snapshot can make that still-live owner active again. The review's
+120,000-record stress case now converges to all 110,000 final rows after 172
+membership refreshes, with both reconnects using full bootstrap.
+
+Frozen A100 evidence at native `344ef6c9` and harness `53314d52` passes the
 real-etcd stream reset/overflow gate, membership/leader/quorum gates, a 60-second
 16-owner all-to-all run, full-Manager DRAM/io_uring faults, live DRAM overflow and
 the 260-block TCP P2P restore. The capacity run sustains 245,760 changes at
-4,083.19 changes/s with 29.67 ms visibility p99, a 7,929,600-byte index,
-652,262-byte queue peak and zero etcd DB growth during churn. Five-run 0/2 ms
+4,083.12 changes/s with 29.53 ms visibility p99, a 7,929,600-byte index,
+697,538-byte queue peak and zero etcd DB growth during churn. Five-run 0/2 ms
 Manager comparisons retain exact GPU restores and zero etcd revisions; 2 ms
-reduces median stream bytes by 84.24% while visibility p95 rises from 2.15 to
-5.09 ms. Default waiting remains 0. Scope filtering, physical cross-host and
+reduces median stream bytes by 83.57% while visibility p95 rises from 1.68 to
+5.17 ms. Default waiting remains 0. Scope filtering, physical cross-host and
 serving gates remain open. Independent review is required before S2.9.
 
 ### S2.9 — Scoped discovery and explicit coverage
