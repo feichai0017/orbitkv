@@ -36,7 +36,7 @@ record submitted, merged and released as different states.
 | --- | --- |
 | S0 | Agent handoff and Codex skill migration merged in PR #190. |
 | S1 | Evidence separation independently verified at `ec3add9b`; this delivery consolidates plans and release-based integration guidance. Acceptance covers S1 only; native CUDA qualification remains blocked on this host. |
-| S2 | Partial: S2.1–S2.3 and the bounded S2.4 live-DRAM metadata-loss gate are independently accepted; S2.4's final observer barrier is `f7d953a8`. Three-host metadata is blocked by CPU-node SSH authorization and mutually unreachable A/B container data addresses; sustained journal, full-Manager/SSD and larger capacity cells remain open. |
+| S2 | Partial: S2.1–S2.4 are independently accepted. S2.5 adds a full-Manager DRAM/io_uring SSD metadata-fault gate at `8d1d4697`; independent review is pending. Three-host metadata is blocked by CPU-node SSH authorization and mutually unreachable A/B container data addresses; sustained capacity and separate-host cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
 | S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`. vLLM 0.30.0 remains an unqualified upgrade target, and public lifecycle/deployment gates remain open. |
@@ -215,6 +215,32 @@ correctness scenario using Engine and Cluster owners in one test process. It is
 not sustained churn or a capacity envelope, and does not qualify a complete
 Manager process, SSD, cross-host cache, P/D, RDMA, native GDS or three-host etcd.
 See the [live metadata-loss recipe](distributed-cache.md#live-dram-journal-overflow-and-metadata-loss).
+
+### S2.5 — Full-Manager DRAM and io_uring metadata-fault correctness
+
+The Python distributed gate now runs an independent client process against two
+real Cache Manager processes and one real etcd process. DRAM and explicit
+io_uring SSD cases each cover a no-fault remote restore, three rounds of source
+publication/eviction/re-save while only the source's etcd transport is severed,
+snapshot recovery after healing, and a second partition through actual lease
+expiry. Every round and block uses a distinct deterministic payload; every
+restore zeroes the GPU destination and compares all bytes.
+
+The test reads the isolated etcd namespace as an independent oracle, validates
+the exact source incarnation and location-key digest, and requires the complete
+set of retained hashes under the expected DRAM or SSD medium. Deleted hashes
+must be absent. For SSD, each save waits for io_uring completion, evicts DRAM and
+requires the SSD-read counter to advance before accepting restored bytes. Before
+testing the expired source from the second Manager, its own DRAM is evicted so a
+local hit cannot mask remote rejection. Healing cannot re-register the old
+source incarnation.
+
+The implementation run passes both media on one A100 host with frozen Manager,
+wheel, extension, TENT and etcd artifacts. It covers five eight-block rounds per
+medium and forces repeated 1 KiB journal overflow; independent review is pending.
+This is same-host multi-process correctness, not cross-host HA, native GDS, a
+large sustained-capacity envelope or an engine-serving qualification. See the
+[Manager process recipe](distributed-cache.md#manager-process-dram-and-io_uring-metadata-faults).
 
 ## S3 — Transfer lifetime and generation-safe ownership
 

@@ -151,13 +151,13 @@ def _etcd_range(endpoint: str, prefix: str):
     ]
 
 
-def _member_incarnation(endpoint: str, cluster: str, node: str) -> str | None:
+def _member_owner(endpoint: str, cluster: str, node: str) -> dict | None:
     key = f"/orbitkv/v2/{cluster}/members/{node}"
     rows = [row for row in _etcd_range(endpoint, key) if row[0] == key]
     if not rows:
         return None
     assert len(rows) == 1
-    return json.loads(rows[0][1])["owner"]["incarnation"]
+    return json.loads(rows[0][1])["owner"]
 
 
 def _varint(data: bytes, offset: int) -> tuple[int, int]:
@@ -223,7 +223,9 @@ def _source_records(endpoint: str, cluster: str, incarnation: str):
         digest.update(namespace)
         digest.update(record["block_hash"])
         assert key == f"{prefix}{digest.hexdigest()}/{medium}"
-        records[(record["block_hash"], medium)] = record
+        identity = (record["block_hash"], medium)
+        assert identity not in records
+        records[identity] = record
     return records
 
 
@@ -418,9 +420,9 @@ def test_manager_process_metadata_faults_preserve_exact_dram_and_ssd(tmp_path, m
         control_hashes, control_payload = save_round(0)
         control_revision = _sync(source_manager)
         _wait_for_revision(consumer_manager, control_revision, managers)
-        source_incarnation = _until(
-            lambda: _member_incarnation(endpoint, cluster, "source"), managers
-        )
+        source_owner = _until(lambda: _member_owner(endpoint, cluster, "source"), managers)
+        assert source_owner["endpoint"] == f"127.0.0.1:{source_manager.port}"
+        source_incarnation = source_owner["incarnation"]
         expected_medium = "ssd" if medium == "ssd" else "dram"
         control_records = _wait_source_records(
             endpoint,
@@ -542,7 +544,7 @@ def test_manager_process_metadata_faults_preserve_exact_dram_and_ssd(tmp_path, m
         expiry_started = time.monotonic()
         _until(lambda: not _metadata(source_manager)["index"]["registration_valid"], managers)
         _until(
-            lambda: _member_incarnation(endpoint, cluster, "source") is None
+            lambda: _member_owner(endpoint, cluster, "source") is None
             and _metadata(consumer_manager)["index"]["available"],
             managers,
             timeout=25,
@@ -584,7 +586,7 @@ def test_manager_process_metadata_faults_preserve_exact_dram_and_ssd(tmp_path, m
         source_after_heal = _metadata(source_manager)
         assert not source_after_heal["index"]["registration_valid"]
         assert not source_after_heal["published"]["ready"]
-        assert _member_incarnation(endpoint, cluster, "source") is None
+        assert _member_owner(endpoint, cluster, "source") is None
         assert _metadata(consumer_manager)["index"]["available"]
         miss = _query_ready(
             consumer_client,
