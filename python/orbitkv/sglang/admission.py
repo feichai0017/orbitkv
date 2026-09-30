@@ -6,7 +6,6 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-from orbitkv import BlockHashes
 from orbitkv.logging_utils import get_connector_logger, trace_transfer
 
 
@@ -14,6 +13,10 @@ def enqueue_request(original: Callable, scheduler: Any, req: Any, *args: Any, **
     result = original(scheduler, req, *args, **kwargs)
     # This hook only prepares requests accepted by the ordinary serving queue.
     if not scheduler.waiting_queue or scheduler.waiting_queue[-1] is not req:
+        return result
+    from sglang.srt.runtime_context import get_memory
+
+    if get_memory().radix_cache_backend != "orbitkv":
         return result
     from .linker import OrbitKVLinker
 
@@ -37,6 +40,8 @@ def enqueue_request(original: Callable, scheduler: Any, req: Any, *args: Any, **
         return result
     from sglang.srt.mem_cache.base_prefix_cache import MatchPrefixParams
     from sglang.srt.mem_cache.radix_cache import RadixKey
+
+    from orbitkv import BlockHashes
 
     tokens = req.origin_input_ids + req.output_ids
     key = RadixKey(
@@ -72,6 +77,10 @@ def enqueue_request(original: Callable, scheduler: Any, req: Any, *args: Any, **
 
 
 def abort_request(original: Callable, scheduler: Any, req: Any) -> Any:
+    from sglang.srt.runtime_context import get_memory
+
+    if get_memory().radix_cache_backend != "orbitkv":
+        return original(scheduler, req)
     from .linker import OrbitKVLinker
 
     wrapper = getattr(scheduler.tree_cache, "linker", None)
@@ -82,6 +91,10 @@ def abort_request(original: Callable, scheduler: Any, req: Any) -> Any:
 
 
 def admit_request(original: Callable, adder: Any, req: Any, *args: Any, **kwargs: Any) -> Any:
+    from sglang.srt.runtime_context import get_memory
+
+    if get_memory().radix_cache_backend != "orbitkv":
+        return original(adder, req, *args, **kwargs)
     from .linker import OrbitKVLinker
 
     wrapper = getattr(adder.tree_cache, "linker", None)

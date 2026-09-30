@@ -21,7 +21,7 @@ def register() -> None:
         observe_decode_ready,
         observe_deferred_release,
     )
-    from .linker import initialize_layer_counter
+    from .events import initialize_layer_counter
     from .pd import install_sglang_tent_backend
 
     install_sglang_tent_backend()

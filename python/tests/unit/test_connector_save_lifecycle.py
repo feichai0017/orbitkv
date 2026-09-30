@@ -12,7 +12,7 @@ install_connector_unit_stubs()
 
 from orbitkv.vllm.config import ConnectorContext  # noqa: E402
 from orbitkv.vllm.metadata import OrbitKVConnectorMetadata, SaveIntent  # noqa: E402
-from orbitkv.vllm.worker import WorkerConnector  # noqa: E402
+from orbitkv.vllm.worker import WorkerAdapter  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -21,7 +21,7 @@ def producer_events():
         yield
 
 
-def make_worker() -> WorkerConnector:
+def make_worker() -> WorkerAdapter:
     context = ConnectorContext(
         instance_id="test",
         namespace="test",
@@ -31,10 +31,9 @@ def make_worker() -> WorkerConnector:
         tp_rank=0,
         device_id=0,
         client=MagicMock(),
-        state_manager=MagicMock(),
     )
     with patch("orbitkv.vllm.worker.threading.Thread.start"):
-        return WorkerConnector(
+        return WorkerAdapter(
             context,
             vllm_config=SimpleNamespace(
                 model_config=SimpleNamespace(get_head_size=lambda: 128), additional_config={}
@@ -43,7 +42,7 @@ def make_worker() -> WorkerConnector:
 
 
 def enqueue_save(
-    worker: WorkerConnector,
+    worker: WorkerAdapter,
     block_id: int = 1,
     block_hash: bytes = b"hash",
 ) -> threading.Event:
@@ -59,12 +58,12 @@ def enqueue_save(
     return worker._save_completion_events["request"]
 
 
-def complete_next_save(worker: WorkerConnector) -> None:
+def complete_next_save(worker: WorkerAdapter) -> None:
     task = worker._save_queue.get_nowait()
     worker._complete_save_requests(task.request_ids)
 
 
-def process_next_save(worker: WorkerConnector) -> None:
+def process_next_save(worker: WorkerAdapter) -> None:
     task = worker._save_queue.get_nowait()
     worker._process_save_batch([task])
 

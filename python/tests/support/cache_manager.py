@@ -198,8 +198,8 @@ class ClientContext:
     Client context that represents a vLLM instance.
 
     This class abstracts a vLLM instance by managing:
-    - GPU KV cache tensors (like WorkerConnector)
-    - Query operations (like SchedulerConnector)
+    - GPU KV cache tensors (like WorkerAdapter)
+    - Query operations (like SchedulerAdapter)
     - Context registration/unregistration
     """
 
@@ -249,7 +249,7 @@ class ClientContext:
         self._registered = False
 
     def register_kv_caches(self) -> None:
-        """Register KV cache tensors with the engine server (like WorkerConnector.register_kv_caches)."""
+        """Register KV cache tensors with the engine server (like WorkerAdapter.register_kv_caches)."""
         from orbitkv.client.gpu import serialize_gpu_buffer
 
         if self._registered:
@@ -326,7 +326,7 @@ class ClientContext:
         self._registered = True
 
     def unregister_context(self) -> None:
-        """Unregister context from server (like WorkerConnector.unregister_context)."""
+        """Unregister context from server (like WorkerAdapter.unregister_context)."""
         if not self._registered:
             return
 

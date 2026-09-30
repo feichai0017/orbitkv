@@ -11,10 +11,14 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def linker():
+def linker(monkeypatch):
     pytest.importorskip("sglang")
     from orbitkv.sglang.linker import OrbitKVLinker
 
+    monkeypatch.setattr(
+        "sglang.srt.runtime_context.get_memory",
+        lambda: SimpleNamespace(radix_cache_backend="orbitkv"),
+    )
     result = object.__new__(OrbitKVLinker)
     from orbitkv import RecoveryContract
 
@@ -126,11 +130,11 @@ def test_enqueue_uses_the_same_salted_storage_keys_without_triggering_a_load(
 
 @pytest.fixture
 def layer_counter(monkeypatch):
-    from orbitkv.sglang.linker import _LayerDoneCounter
+    from orbitkv.sglang.events import _LayerDoneCounter
 
-    monkeypatch.setattr("orbitkv.sglang.linker.torch.cuda.Event", MagicMock())
+    monkeypatch.setattr("torch.cuda.Event", MagicMock())
     stream = SimpleNamespace(cuda_stream=17, wait_event=MagicMock())
-    monkeypatch.setattr("orbitkv.sglang.linker.torch.cuda.current_stream", lambda: stream)
+    monkeypatch.setattr("torch.cuda.current_stream", lambda: stream)
     layout = SimpleNamespace(
         num_layers=2,
         pools={
@@ -148,7 +152,7 @@ def test_first_use_is_observed_once_even_when_the_first_layer_wait_repeats(
 ):
     counter, stream = layer_counter
     trace = MagicMock()
-    monkeypatch.setattr("orbitkv.sglang.linker.trace_transfer", trace)
+    monkeypatch.setattr("orbitkv.sglang.events.trace_transfer", trace)
     index = counter.update_producer()
     counter.request_ids[index] = ["restored"]
     counter.publish_events(index)
@@ -401,7 +405,9 @@ def test_decode_only_promises_resident_pages_and_never_prepares_external_loads(
     linker, monkeypatch, resident_tokens
 ):
     import torch
-    from sglang.srt.disaggregation.decode_hicache_mixin import DecodeHiCachePreallocMixin
+    from sglang.srt.disaggregation.decode_hicache_mixin import (
+        DecodeHiCachePreallocMixin,
+    )
     from sglang.srt.mem_cache.base_prefix_cache import MatchResult
     from sglang.srt.mem_cache.radix_cache import RadixKey
 

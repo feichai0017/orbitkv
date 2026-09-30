@@ -366,7 +366,7 @@ layer hooks. The current contracts live in [transport](transport.md) and
 **Depends on:** S2/S3 for new lifetime behavior; consume S4 when ready. S5.1 may
 start independently. **Owners:** engine adapters, existing native client owners
 and narrowly scoped upstream engine interfaces. Reference released LMCache
-integration contracts from [the adapter guide](adapters.md#lmcache-reference).
+integration contracts from [the adapter guide](adapters.md#lmcache-and-flexkv-reference).
 
 ### S5.1 — Release and interface audit
 
@@ -388,6 +388,26 @@ integration contracts from [the adapter guide](adapters.md#lmcache-reference).
 or a bounded local responsibility for each remaining internal dependency.
 
 ### S5.2 — Minimal official cache backends
+
+**Local adapter cleanup implemented; GPU qualification and independent review open.**
+The public vLLM entry constructs only `SchedulerAdapter` or `WorkerAdapter`,
+closes native connections on initialization failure, and inherits unchanged
+optional callbacks. The unused service availability owner and its health thread
+are removed; restore exceptions still retain destinations until native drain.
+SGLang event ownership lives in `events.py`, and disabled-backend plugin/admission
+paths leave native and GPU modules unloaded. Registration conflicts are explicit.
+Existing request states, save/load threads and all lifecycle Hooks remain owned
+by their previous consumers; no native P/D replacement is claimed.
+
+The source-only gate passes 413 tests. With frozen native artifacts, the pinned
+SGLang 0.5.20 admission/event gate passes 22 tests and the vLLM 0.29.0 native
+recovery-contract gate passes seven. These integration tests use controlled
+completion and CUDA-event doubles, not real GPU DMA. The vLLM gate also corrects
+a pre-existing async-load expectation reproduced on the unchanged baseline: a
+forward-consumed recovery reports a synchronous scheduler hit.
+Both engine GPU correctness gates remain unrun for this candidate. This does not
+accept S5.2, upgrade either engine or claim upstream registration.
+Evidence: `/root/orbitkv-artifacts/adapter-cleanup-20260930/`.
 
 - vLLM: retain `OrbitKVConnector` and distinct scheduler/worker responsibilities.
   Implement released lookup/allocation, registration, load/save and terminal

@@ -20,7 +20,7 @@ from orbitkv.orbitkv import (  # noqa: E402
     QueryReady,
 )
 from orbitkv.vllm.config import ConnectorContext, TpShardTopology  # noqa: E402
-from orbitkv.vllm.scheduler import SchedulerConnector  # noqa: E402
+from orbitkv.vllm.scheduler import SchedulerAdapter  # noqa: E402
 
 from .test_cache_group_layout import (  # noqa: E402
     _config,
@@ -59,7 +59,6 @@ def hybrid(monkeypatch):
             tp_rank=0,
             device_id=0,
             client=current[0],
-            state_manager=MagicMock(),
             tp_shards=topology,
         )
         config = _config(
@@ -67,7 +66,7 @@ def hybrid(monkeypatch):
             _group("attention", _full_attention()),
             *(_group(f"state.{index}", _mamba()) for index in range(1, groups)),
         )
-        scheduler = SchedulerConnector(context, clients=current, kv_cache_config=config)
+        scheduler = SchedulerAdapter(context, clients=current, kv_cache_config=config)
         validator.required_ranges.return_value = [
             (0, 64, 96),
             *((index + 1, 80, 96) for index in range(groups)),

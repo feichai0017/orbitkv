@@ -124,7 +124,7 @@ class _QueryProbe:
         return self.hit_blocks
 
 
-class SchedulerConnector:
+class SchedulerAdapter:
     """Holds scheduler-only state and behaviors."""
 
     _HYBRID_QUERY_WAIT_SECONDS = 5.0
@@ -1403,4 +1403,4 @@ class SchedulerConnector:
         return released
 
 
-__all__ = ["SchedulerConnector"]
+__all__ = ["SchedulerAdapter"]
