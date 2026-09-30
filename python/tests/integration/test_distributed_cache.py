@@ -226,7 +226,6 @@ def test_manager_inventory_stream_faults_preserve_exact_dram_and_ssd(tmp_path, m
                 "1024",
                 "--inventory-stream-coalesce-ms",
                 "2",
-                "--enable-prometheus",
             ]
             if source:
                 manager_args.extend(["--peer-advertise-addr", advertised_source])
