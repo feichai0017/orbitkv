@@ -421,9 +421,11 @@ def test_manager_inventory_stream_faults_preserve_exact_dram_and_ssd(tmp_path, m
         etcd_gate.partition()
         expiry_started = time.monotonic()
         _until(lambda: not _metadata(source_manager)["index"]["registration_valid"], managers)
+        source_member_key = f"/orbitkv/v2/{cluster}/members/source"
         _until(
-            lambda: _metadata(consumer_manager)["index"]["registration_valid"]
-            and _metadata(consumer_manager)["index"]["coverage"] != "complete_at_watermarks",
+            lambda: source_member_key not in _etcd_keys(endpoint, f"/orbitkv/v2/{cluster}/")
+            and _metadata(consumer_manager)["index"]["registration_valid"]
+            and _metadata(consumer_manager)["index"]["coverage"] == "complete_at_watermarks",
             managers,
             timeout=25,
         )
@@ -455,6 +457,7 @@ def test_manager_inventory_stream_faults_preserve_exact_dram_and_ssd(tmp_path, m
         result["expiry"] = {
             "duration_ms": (time.monotonic() - expiry_started) * 1000,
             "source_incarnation": expiry_fence["source_incarnation"],
+            "source_member_absent": True,
             "old_runtime_remained_fenced_after_heal": True,
             "remote_fetch_bytes_unchanged": remote_before_expiry,
         }

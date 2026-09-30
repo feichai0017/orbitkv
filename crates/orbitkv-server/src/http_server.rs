@@ -180,24 +180,24 @@ async fn owner_metadata_handler(
 }
 
 async fn sync_cache_handler(State(state): State<AppState>) -> impl IntoResponse {
-    let Some(inventory) = state.inventory.as_ref() else {
-        return (
-            StatusCode::CONFLICT,
-            "distributed inventory is not configured".into_response(),
-        );
-    };
     match tokio::time::timeout(
         std::time::Duration::from_secs(30),
         state.engine.flush_saves(),
     )
     .await
     {
-        Ok(()) => match inventory.capture_fence() {
-            Ok(fence) => (
+        Ok(()) => match state.inventory.as_ref() {
+            Some(inventory) => match inventory.capture_fence() {
+                Ok(fence) => (
+                    StatusCode::OK,
+                    Json(serde_json::json!({"inventory_fence": fence})).into_response(),
+                ),
+                Err(error) => (StatusCode::SERVICE_UNAVAILABLE, error.into_response()),
+            },
+            None => (
                 StatusCode::OK,
-                Json(serde_json::json!({"inventory_fence": fence})).into_response(),
+                Json(serde_json::json!({"local_flush_complete": true})).into_response(),
             ),
-            Err(error) => (StatusCode::SERVICE_UNAVAILABLE, error.into_response()),
         },
         Err(_) => (
             StatusCode::GATEWAY_TIMEOUT,

@@ -182,6 +182,16 @@ impl InventoryRuntime {
         });
     }
 
+    fn withdraw_for_rebuild(&self, owner: Uuid) {
+        self.shared.index.retire_owner(owner);
+        let index = Arc::clone(&self.shared.index);
+        tokio::spawn(async move {
+            while !index.cleanup_owner(owner, RETIRE_BATCH) {
+                tokio::task::yield_now().await;
+            }
+        });
+    }
+
     fn members(&self) -> BTreeMap<String, Member> {
         self.shared.members.read().members.clone()
     }
@@ -476,6 +486,7 @@ async fn serve_source(
         }
         Ok::<(), String>(())
     });
+    let input_task = AbortOnDrop(Some(input_task));
 
     let mut sender = FrameSender::new(
         runtime.clone(),
@@ -503,7 +514,6 @@ async fn serve_source(
                 sender
                     .reset("source journal history is unavailable")
                     .await?;
-                input_task.abort();
                 return Ok(());
             }
             Err(error) => return Err(format!("inventory resume: {error:?}")),
@@ -581,7 +591,7 @@ async fn serve_source(
             }
         }
     }
-    input_task.abort();
+    drop(input_task);
     Ok(())
 }
 
@@ -693,6 +703,16 @@ struct OutstandingFrame {
     _global: tokio::sync::OwnedSemaphorePermit,
 }
 
+struct AbortOnDrop<T>(Option<JoinHandle<T>>);
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        if let Some(task) = self.0.take() {
+            task.abort();
+        }
+    }
+}
+
 struct FrameSender {
     runtime: InventoryRuntime,
     session_id: Uuid,
@@ -755,14 +775,17 @@ impl FrameSender {
         self.release_acknowledged()?;
         pace_outbound(&self.runtime.shared.outbound_pacer, bytes).await;
         let permits = u32::try_from(bytes).map_err(|_| "inventory frame size overflow")?;
-        let global = self
-            .runtime
-            .shared
-            .outbound_bytes
-            .clone()
-            .acquire_many_owned(permits)
-            .await
-            .map_err(|_| "inventory aggregate byte budget closed")?;
+        let global = tokio::time::timeout(
+            ACK_TIMEOUT,
+            self.runtime
+                .shared
+                .outbound_bytes
+                .clone()
+                .acquire_many_owned(permits),
+        )
+        .await
+        .map_err(|_| "inventory aggregate byte admission timed out")?
+        .map_err(|_| "inventory aggregate byte budget closed")?;
         let queued =
             AGGREGATE_CREDIT_BYTES - self.runtime.shared.outbound_bytes.available_permits();
         self.runtime
@@ -771,9 +794,9 @@ impl FrameSender {
             .outbound_queue_bytes_peak
             .fetch_max(queued as u64, Ordering::Relaxed);
         let frame_id = frame.frame_id;
-        self.output
-            .send(Ok(frame))
+        tokio::time::timeout(ACK_TIMEOUT, self.output.send(Ok(frame)))
             .await
+            .map_err(|_| "inventory response queue timed out")?
             .map_err(|_| "inventory response stream closed")?;
         self.outstanding_bytes += bytes;
         self.outstanding.push_back(OutstandingFrame {
@@ -996,6 +1019,12 @@ async fn follow_source_once(runtime: InventoryRuntime, source: Member) -> Result
         .lock()
         .insert(source.owner.incarnation, (session_id, control.clone()));
     let result = receive_frames(&runtime, &source, session_id, &control, &mut response).await;
+    if result
+        .as_ref()
+        .is_err_and(|error| error.contains("metadata budget"))
+    {
+        runtime.withdraw_for_rebuild(source.owner.incarnation);
+    }
     if runtime
         .shared
         .controls
@@ -1153,12 +1182,11 @@ async fn receive_frames(
                     source.owner.incarnation,
                     session_id,
                     id,
+                    view_id,
                     commit.through_sequence,
                     commit.page_count,
                 )?;
-                if installed != view_id {
-                    return Err("snapshot installed view identity differs".into());
-                }
+                debug_assert_eq!(installed, view_id);
                 runtime
                     .shared
                     .force_bootstrap

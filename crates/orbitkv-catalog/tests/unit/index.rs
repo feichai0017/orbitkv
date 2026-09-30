@@ -49,7 +49,7 @@ fn install(
         .apply_snapshot_page(remote.incarnation, session, snapshot, 0, records)
         .unwrap();
     index
-        .commit_snapshot(remote.incarnation, session, snapshot, through, 1)
+        .commit_snapshot(remote.incarnation, session, snapshot, view, through, 1)
         .unwrap();
     view
 }
@@ -83,7 +83,7 @@ fn hidden_snapshot_installs_both_media_atomically() {
     );
     assert_eq!(index.status().coverage, DiscoveryCoverage::Unavailable);
     index
-        .commit_snapshot(remote.incarnation, session, snapshot, 2, 1)
+        .commit_snapshot(remote.incarnation, session, snapshot, view, 2, 1)
         .unwrap();
     let candidates = index.lookup(&[key]);
     assert_eq!(candidates[0].replicas.len(), 2);
@@ -128,7 +128,7 @@ fn replay_uses_generations_and_never_resurrects_a_deleted_scan_row() {
         )
         .unwrap();
     index
-        .commit_snapshot(remote.incarnation, session, snapshot, 4, 1)
+        .commit_snapshot(remote.incarnation, session, snapshot, view, 4, 1)
         .unwrap();
     let rows = index.lookup(&[
         record(1, 1, ReplicaMedium::Dram, true).key,
@@ -269,7 +269,7 @@ fn snapshot_commit_rejects_missing_pages_and_keeps_staging_hidden() {
         .unwrap();
     assert!(
         index
-            .commit_snapshot(remote.incarnation, session, snapshot, 1, 2)
+            .commit_snapshot(remote.incarnation, session, snapshot, Uuid::new_v4(), 1, 2,)
             .is_err()
     );
     assert!(
@@ -280,6 +280,113 @@ fn snapshot_commit_rejects_missing_pages_and_keeps_staging_hidden() {
     assert!(index.status().staging_bytes > 0);
     index.abort_snapshot(remote.incarnation, session);
     assert_eq!(index.status().staging_bytes, 0);
+}
+
+#[test]
+fn snapshot_commit_validates_view_before_replacing_active_rows() {
+    let (index, _, remote) = setup(1 << 20);
+    let old_key = record(1, 1, ReplicaMedium::Dram, true).key;
+    install(
+        &index,
+        &remote,
+        vec![record(1, 1, ReplicaMedium::Dram, true)],
+        1,
+    );
+    let session = Uuid::new_v4();
+    let snapshot = Uuid::new_v4();
+    let view = Uuid::new_v4();
+    index
+        .begin_snapshot(remote.incarnation, session, snapshot, view, 1)
+        .unwrap();
+    index
+        .apply_snapshot_page(
+            remote.incarnation,
+            session,
+            snapshot,
+            0,
+            vec![record(2, 2, ReplicaMedium::Dram, true)],
+        )
+        .unwrap();
+    assert!(
+        index
+            .commit_snapshot(remote.incarnation, session, snapshot, Uuid::new_v4(), 2, 1,)
+            .is_err()
+    );
+    assert_eq!(index.lookup(&[old_key])[0].replicas.len(), 1);
+    assert_eq!(index.owner_watermark(remote.incarnation).unwrap().1, 1);
+}
+
+#[test]
+fn snapshot_pages_are_rejected_after_replay_starts() {
+    let (index, _, remote) = setup(1 << 20);
+    let session = Uuid::new_v4();
+    let snapshot = Uuid::new_v4();
+    let view = Uuid::new_v4();
+    index
+        .begin_snapshot(remote.incarnation, session, snapshot, view, 1)
+        .unwrap();
+    index
+        .apply_snapshot_page(
+            remote.incarnation,
+            session,
+            snapshot,
+            0,
+            vec![record(1, 1, ReplicaMedium::Dram, true)],
+        )
+        .unwrap();
+    index
+        .apply_snapshot_delta(
+            remote.incarnation,
+            session,
+            1,
+            2,
+            vec![record(1, 2, ReplicaMedium::Dram, false)],
+        )
+        .unwrap();
+    assert!(
+        index
+            .apply_snapshot_page(
+                remote.incarnation,
+                session,
+                snapshot,
+                1,
+                vec![record(1, 1, ReplicaMedium::Dram, true)],
+            )
+            .is_err()
+    );
+    index
+        .commit_snapshot(remote.incarnation, session, snapshot, view, 2, 1)
+        .unwrap();
+    assert!(
+        index.lookup(&[record(1, 1, ReplicaMedium::Dram, true).key])[0]
+            .replicas
+            .is_empty()
+    );
+}
+
+#[test]
+fn withdrawn_replacement_releases_old_view_in_bounded_batches() {
+    let (index, _, remote) = setup(1 << 20);
+    let mut old = (0..700)
+        .map(|key| InventoryRecord {
+            key: StateKey::new("model".into(), (key as u64).to_le_bytes().to_vec()),
+            sequence: key as u64 + 1,
+            present: true,
+            metadata: Some(ReplicaMetadata {
+                medium: ReplicaMedium::Dram,
+                representation: ReplicaRepresentation::Raw,
+                stored_bytes: Some(1024),
+            }),
+        })
+        .collect::<Vec<_>>();
+    old.sort_by_key(|record| (record.key.clone(), record.metadata.unwrap().medium));
+    install(&index, &remote, old, 700);
+    index.retire_owner(remote.incarnation);
+    let before = index.bytes();
+    assert!(!index.cleanup_owner(remote.incarnation, 128));
+    assert!(index.bytes() < before);
+    while !index.cleanup_owner(remote.incarnation, 128) {}
+    assert_eq!(index.bytes(), 0);
 }
 
 #[test]

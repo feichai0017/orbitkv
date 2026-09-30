@@ -69,6 +69,7 @@ struct StagingView {
     start_sequence: u64,
     replay_sequence: u64,
     next_page: u64,
+    replay_started: bool,
     last_residence: Option<Residence>,
     max_record_sequence: u64,
     records: BTreeMap<Residence, InventoryRecord>,
@@ -209,6 +210,7 @@ impl GlobalIndex {
                 start_sequence,
                 replay_sequence: start_sequence,
                 next_page: 0,
+                replay_started: false,
                 last_residence: None,
                 max_record_sequence: 0,
                 records: BTreeMap::new(),
@@ -240,6 +242,9 @@ impl GlobalIndex {
                 .ok_or("missing inventory snapshot")?;
             if staging.session_id != session_id || staging.snapshot_id != snapshot_id {
                 return Err("inventory snapshot identity changed".into());
+            }
+            if staging.replay_started {
+                return Err("inventory snapshot page arrived after replay began".into());
             }
             if staging.next_page != page_number {
                 return Err("inventory snapshot page is not contiguous".into());
@@ -289,6 +294,7 @@ impl GlobalIndex {
             return Err("inventory staging exceeds metadata budget".into());
         }
         let staging = view.staging.get_mut(&owner).expect("validated staging");
+        staging.replay_started = true;
         apply_records(&mut staging.records, updates);
         staging.replay_sequence = through_inclusive;
         staging.bytes = staging
@@ -311,6 +317,7 @@ impl GlobalIndex {
         owner: Uuid,
         session_id: Uuid,
         snapshot_id: Uuid,
+        view_id: Uuid,
         through_sequence: u64,
         page_count: u64,
     ) -> Result<Uuid, String> {
@@ -321,6 +328,7 @@ impl GlobalIndex {
             .ok_or("missing inventory snapshot")?;
         if staging.session_id != session_id
             || staging.snapshot_id != snapshot_id
+            || staging.view_id != view_id
             || staging.replay_sequence != through_sequence
             || staging.next_page != page_count
             || staging.start_sequence > through_sequence
@@ -353,7 +361,7 @@ impl GlobalIndex {
             },
         );
         view.generation = view.generation.saturating_add(1);
-        Ok(staging.view_id)
+        Ok(view_id)
     }
 
     pub fn abort_snapshot(&self, owner: Uuid, session_id: Uuid) {
