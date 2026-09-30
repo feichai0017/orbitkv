@@ -32,7 +32,10 @@ def test_native_payload_batch_completion(monkeypatch, result):
         native.invalidate_segment.assert_called_once_with("peer")
 
 
-@pytest.mark.parametrize("protocol,force_tcp", [("tcp", "0"), ("rdma", "1"), ("unknown", "0")])
+@pytest.mark.parametrize(
+    "protocol,force_tcp",
+    [("tcp", "0"), ("rdma", "1"), ("rdma", "0"), ("rdma", ""), ("unknown", "0")],
+)
 def test_transport_configuration_is_checked_before_native_initialization(
     monkeypatch, protocol, force_tcp
 ):

@@ -575,7 +575,7 @@ dependencies, not obsolete code ready for mechanical deletion.
   same-GPU TCP native vLLM P/D matches all three monolithic outputs; SGLang P/D
   matches initial/continuation output and restores 576 tokens after restart.
   The Mooncake suite passes 156 cases, the SGLang factory suite six, and the
-  exact Rust transfer binary 11. Source-only Python passes 420 cases. Preserve
+  exact Rust transfer binary 11. Source-only Python passes 422 cases. Preserve
   the complete gates, final wheel/source hashes and failed attempts under
   `/root/orbitkv-artifacts/native-pd-tent-20260930/HANDOFF.md`. These results do
   not qualify S3 remote failure or retire the old vLLM P/D owner.

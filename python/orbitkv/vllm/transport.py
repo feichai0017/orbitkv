@@ -15,7 +15,10 @@ class TentTransferEngine:
     def __init__(self, *, hostname: str, protocol: str, device_name: str) -> None:
         if protocol not in {"tcp", "rdma"}:
             raise ValueError("TENT payloads require mooncake_protocol=tcp or rdma")
-        if (protocol == "tcp") != (os.getenv("MC_FORCE_TCP") == "1"):
+        force_tcp = os.getenv("MC_FORCE_TCP")
+        if (protocol == "tcp" and force_tcp != "1") or (
+            protocol == "rdma" and force_tcp is not None
+        ):
             raise ValueError(
                 "mooncake_protocol=tcp requires MC_FORCE_TCP=1; rdma requires it unset"
             )
