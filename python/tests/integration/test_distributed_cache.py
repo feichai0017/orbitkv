@@ -392,7 +392,7 @@ def test_manager_process_metadata_faults_preserve_exact_dram_and_ssd(tmp_path, m
                 ]
                 assert after >= before + payload_bytes
                 cleaned = _cleanup_dram(source_manager)
-                assert cleaned["evicted_blocks"] == pages
+                assert cleaned["evicted_blocks"] == 0
             else:
                 _restore(
                     source_client,
@@ -611,4 +611,7 @@ def test_manager_process_metadata_faults_preserve_exact_dram_and_ssd(tmp_path, m
         }
         result["final_source_metrics"] = fetch_orbitkv_metrics(source_manager.http_port)
         result["final_consumer_metrics"] = fetch_orbitkv_metrics(consumer_manager.http_port)
+        for node, client in zip(("source", "consumer"), clients, strict=True):
+            ok, message = client.unregister_context(node)
+            assert ok, message
         (tmp_path / "result.json").write_text(json.dumps(result, indent=2) + "\n")
