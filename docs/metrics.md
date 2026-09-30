@@ -561,7 +561,7 @@ overshoot; the scheduled intentional deadline is capped at 5 ms. Snapshot traffi
 framing and Watch response bytes are separate and are not included in these
 delta counters. `inventory_flush_through_sequence` is the latest requested flush
 target; it is not a remote-reader visibility watermark.
-`orbitkv_metadata_watch_key_value_bytes_total` counts received event key and
+`orbitkv_metadata_watch_key_value_bytes_bytes_total` counts received event key and
 value lengths, including requested previous values. It excludes protobuf/HTTP2
 framing, response headers and snapshot RPCs; resumed events are counted again.
 This is distinct from etcd's aggregate client gRPC network-byte counters.

@@ -280,7 +280,7 @@ def run(tmp_path: Path, profile: str):
         _wait_source_records(endpoint, cluster, incarnation, expected_records, managers)
 
         source_before = _metadata(source_manager)
-        watch_metric = "orbitkv_metadata_watch_key_value_bytes_total"
+        watch_metric = "orbitkv_metadata_watch_key_value_bytes_bytes_total"
         watch_before = [fetch_orbitkv_metrics(m.http_port).get(watch_metric) for m in managers]
         etcd_before = _etcd_metrics(endpoint)
         revision_before = _etcd_revision(endpoint, f"/orbitkv/v2/{cluster}/")
