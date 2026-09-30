@@ -293,31 +293,35 @@ def test_manager_process_metadata_faults_preserve_exact_dram_and_ssd(tmp_path, m
         clients = []
         tensors = []
         for node in ("source", "consumer"):
+            port = find_available_port()
             http_port = find_available_port()
             source = node == "source"
+            ssd_enabled = source and medium == "ssd"
+            manager_args = [
+                "--etcd-endpoints",
+                gate.endpoint if source else endpoint,
+                "--node-id",
+                node,
+                "--cluster-name",
+                cluster,
+                "--membership-ttl-secs",
+                "12",
+                "--inventory-journal-bytes",
+                "1024",
+            ]
+            if not ssd_enabled:
+                manager_args.append("--enable-prometheus")
             manager = CacheManagerProcess(
-                find_available_port(),
+                port,
                 pool_size="64mb",
                 http_port=http_port,
-                bootstrap_socket=str(tmp_path / f"{node}.sock"),
-                ssd_cache_path=tmp_path / "source-ssd" if source and medium == "ssd" else None,
+                bootstrap_socket=f"/tmp/orbitkv-s25-{port}.sock",
+                ssd_cache_path=tmp_path / "source-ssd" if ssd_enabled else None,
                 ssd_cache_capacity="32kb",
                 ssd_backend="uring",
-                ssd_read_path="uring" if source and medium == "ssd" else None,
+                ssd_read_path="uring" if ssd_enabled else None,
                 log_path=tmp_path / f"{node}-manager.log",
-                extra_args=(
-                    "--etcd-endpoints",
-                    gate.endpoint if source else endpoint,
-                    "--node-id",
-                    node,
-                    "--cluster-name",
-                    cluster,
-                    "--membership-ttl-secs",
-                    "12",
-                    "--inventory-journal-bytes",
-                    "1024",
-                    "--enable-prometheus",
-                ),
+                extra_args=tuple(manager_args),
             )
             stack.callback(manager.stop)
             assert manager.start(), manager.read_logs()
