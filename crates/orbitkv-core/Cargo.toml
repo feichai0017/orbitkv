@@ -51,7 +51,7 @@ mea.workspace = true
 [dev-dependencies]
 criterion.workspace = true
 cudarc.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 tokio-stream = { workspace = true, features = ["net"] }
 tempfile = "3"
 

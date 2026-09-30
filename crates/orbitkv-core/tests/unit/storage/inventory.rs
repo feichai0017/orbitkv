@@ -73,6 +73,64 @@ fn bounded_journal_reports_snapshot_gaps_and_batch_overflow() {
     );
 }
 
+#[test]
+fn coalescing_preserves_contiguous_coverage_and_latest_key_medium_generation() {
+    let inventory = ResidencyInventory::new(4096);
+    let first = key(1);
+    let second = key(2);
+    inventory.change(
+        &first,
+        ReplicaMedium::Dram,
+        Some(metadata(ReplicaMedium::Dram)),
+    );
+    inventory.change(
+        &first,
+        ReplicaMedium::Ssd,
+        Some(metadata(ReplicaMedium::Ssd)),
+    );
+    inventory.change(&first, ReplicaMedium::Dram, None);
+    inventory.change(
+        &second,
+        ReplicaMedium::Dram,
+        Some(metadata(ReplicaMedium::Dram)),
+    );
+    inventory.change(
+        &first,
+        ReplicaMedium::Dram,
+        Some(metadata(ReplicaMedium::Dram)),
+    );
+
+    let delta = inventory.coalesced_changes(0, 5).unwrap();
+    assert_eq!(delta.through, 5);
+    assert_eq!(delta.input_records, 5);
+    assert_eq!(delta.records.len(), 3);
+    assert_eq!(
+        delta
+            .records
+            .iter()
+            .map(|record| (
+                record.key.clone(),
+                record.metadata.unwrap().medium,
+                record.sequence,
+                record.present,
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (first.clone(), ReplicaMedium::Dram, 5, true),
+            (first, ReplicaMedium::Ssd, 2, true),
+            (second, ReplicaMedium::Dram, 4, true),
+        ]
+    );
+
+    inventory.change(&key(2), ReplicaMedium::Dram, None);
+    let deletion = inventory.coalesced_changes(5, 6).unwrap();
+    assert_eq!(deletion.through, 6);
+    assert_eq!(deletion.input_records, 1);
+    assert_eq!(deletion.records.len(), 1);
+    assert!(!deletion.records[0].present);
+    assert_eq!(deletion.records[0].sequence, 6);
+}
+
 #[tokio::test]
 async fn flush_requires_a_complete_published_inventory() {
     let inventory = Arc::new(ResidencyInventory::new(4096));
@@ -92,10 +150,128 @@ async fn flush_requires_a_complete_published_inventory() {
     });
     tokio::task::yield_now().await;
     assert!(!pending.is_finished());
+    assert_eq!(inventory.status().flush_through_sequence, 1);
     inventory.acknowledge(PublishedInventory {
         sequence: 1,
         revision: 5,
         ready: true,
     });
     assert_eq!(pending.await.unwrap().unwrap(), 5);
+}
+
+#[tokio::test(start_paused = true)]
+async fn coalescing_wait_is_bounded_and_flush_bypasses_it() {
+    for window in [0, 2, 5] {
+        let inventory = Arc::new(
+            ResidencyInventory::with_publish_coalescing(1 << 20, Duration::from_millis(window))
+                .unwrap(),
+        );
+        inventory.change(
+            &key(1),
+            ReplicaMedium::Dram,
+            Some(metadata(ReplicaMedium::Dram)),
+        );
+        assert_eq!(
+            inventory.wait_to_publish(0).await,
+            Duration::from_millis(window)
+        );
+        let flushing = tokio::spawn({
+            let inventory = inventory.clone();
+            async move { inventory.flush().await }
+        });
+        tokio::task::yield_now().await;
+        assert_eq!(inventory.wait_to_publish(0).await, Duration::ZERO);
+        assert!(!flushing.is_finished());
+        inventory.acknowledge(PublishedInventory {
+            sequence: 1,
+            revision: 3,
+            ready: true,
+        });
+        assert_eq!(flushing.await.unwrap().unwrap(), 3);
+        // An already fulfilled flush notification cannot skip the next window.
+        inventory.change(
+            &key(2),
+            ReplicaMedium::Dram,
+            Some(metadata(ReplicaMedium::Dram)),
+        );
+        assert_eq!(
+            inventory.wait_to_publish(1).await,
+            Duration::from_millis(window)
+        );
+    }
+    let inventory = Arc::new(
+        ResidencyInventory::with_publish_coalescing(1 << 20, Duration::from_millis(2)).unwrap(),
+    );
+    let writer = tokio::spawn({
+        let inventory = inventory.clone();
+        async move {
+            for id in 0..10 {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                inventory.change(
+                    &key(id),
+                    ReplicaMedium::Dram,
+                    Some(metadata(ReplicaMedium::Dram)),
+                );
+            }
+        }
+    });
+    assert_eq!(inventory.wait_to_publish(0).await, Duration::from_millis(5));
+    writer.await.unwrap();
+    let waiting = tokio::spawn({
+        let inventory = inventory.clone();
+        async move { inventory.wait_to_publish(0).await }
+    });
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_millis(1)).await;
+    let flushing = tokio::spawn({
+        let inventory = inventory.clone();
+        async move { inventory.flush().await }
+    });
+    assert_eq!(waiting.await.unwrap(), Duration::from_millis(1));
+    assert!(!flushing.is_finished());
+    inventory.acknowledge(PublishedInventory {
+        sequence: 10,
+        revision: 4,
+        ready: true,
+    });
+    assert_eq!(flushing.await.unwrap().unwrap(), 4);
+}
+
+#[test]
+fn coalescing_partitions_input_before_deduplication() {
+    let inventory = ResidencyInventory::new(4 << 20);
+    for id in 0..600 {
+        inventory.change(
+            &key(id),
+            ReplicaMedium::Dram,
+            Some(metadata(ReplicaMedium::Dram)),
+        );
+        inventory.change(&key(id), ReplicaMedium::Dram, None);
+    }
+    let first = inventory.coalesced_changes(0, 1200).unwrap();
+    assert_eq!(
+        (first.input_records, first.through, first.records.len()),
+        (1024, 1024, 512)
+    );
+    assert!(first.records.iter().all(|r| !r.present));
+    let second = inventory.coalesced_changes(first.through, 1200).unwrap();
+    assert_eq!(
+        (second.input_records, second.through, second.records.len()),
+        (176, 1200, 88)
+    );
+    let large = ResidencyInventory::new(4 << 20);
+    for id in 0..100 {
+        large.change(
+            &StateKey::new("large".into(), vec![id; 32 * 1024]),
+            ReplicaMedium::Ssd,
+            Some(metadata(ReplicaMedium::Ssd)),
+        );
+    }
+    let delta = large.coalesced_changes(0, 100).unwrap();
+    assert!(delta.input_records < 100);
+    assert!(delta.input_bytes <= INVENTORY_BATCH_BYTES);
+    assert!(
+        delta.input_bytes + large.changes(delta.through, 100).unwrap()[0].estimated_size()
+            > INVENTORY_BATCH_BYTES
+    );
 }

@@ -230,6 +230,10 @@ pub struct Cli {
     #[arg(long, default_value_t = orbitkv_core::DEFAULT_INVENTORY_JOURNAL_BYTES)]
     pub inventory_journal_bytes: usize,
 
+    /// Quiet window for bounded inventory publication coalescing (0 disables).
+    #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u64).range(0..=5))]
+    pub inventory_publish_coalesce_ms: u64,
+
     /// HLL sliding-window list for hit-rate estimation. Comma-separated humantime
     /// durations; each becomes a canonical `window` label in metrics (e.g. `15m,1h,1d`).
     /// Slot duration is derived as `clamp(window/24, 1min, 1h)`.
@@ -634,11 +638,16 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             cli.index_budget,
         ))
     });
-    let inventory = membership_view.as_ref().map(|_| {
-        Arc::new(orbitkv_core::ResidencyInventory::new(
-            cli.inventory_journal_bytes,
-        ))
-    });
+    let inventory = membership_view
+        .as_ref()
+        .map(|_| {
+            orbitkv_core::ResidencyInventory::with_publish_coalescing(
+                cli.inventory_journal_bytes,
+                Duration::from_millis(cli.inventory_publish_coalesce_ms),
+            )
+            .map(Arc::new)
+        })
+        .transpose()?;
     let storage_config = orbitkv_core::EngineConfig {
         query_budget_bytes: cli.query_budget,
         query_instance_budget_bytes: cli.query_instance_budget,

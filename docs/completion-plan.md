@@ -271,6 +271,17 @@ the frozen evidence and accepted the substage with no blocking findings. This
 one-host/one-etcd-member gate cannot close three-host or independent-failure-domain
 qualification.
 
+### S2.7 — Bounded coalescing and frozen comparison baseline
+
+**Implementation partial; qualification pending.** The candidate coalesces at
+most 1,024 records / 512 KiB from a contiguous journal interval, preserves the
+latest key/medium generation and final deletes, and advances the input cursor
+only after every etcd transaction commits. Flush bypasses the bounded wait.
+The [coalescing benchmark](distributed-cache.md#bounded-etcd-publication-coalescing)
+compares frozen S2.6 and candidate 0/2/5 ms profiles with exact byte/generation
+checks, visibility, effective hits and local save/query costs. The default remains
+0 until the predeclared comparisons and independent review pass.
+
 ## S3 — Transfer lifetime and generation-safe ownership
 
 **Depends on:** S2's metadata contracts. **Owners:** core peer/query/storage owners,

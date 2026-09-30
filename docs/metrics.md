@@ -554,6 +554,13 @@ journal bytes, the configured journal byte capacity and observed history gaps.
 The peak is the largest retained journal after enforcing the byte limit; it does
 not include a discarded oversized tail record. History gaps count production
 publisher reads that required complete snapshot reconciliation.
+Completed incremental intervals also report original/coalesced record counts,
+bounded etcd transactions, encoded block-key/value bytes, coalescing windows and
+their total elapsed coalescing wait in microseconds, including timer scheduling
+overshoot; the scheduled intentional deadline is capped at 5 ms. Snapshot traffic, etcd protocol
+framing and Watch response bytes are separate and are not included in these
+delta counters. `inventory_flush_through_sequence` is the latest requested flush
+target; it is not a remote-reader visibility watermark.
 Standalone Managers return JSON `null`. `POST /cache/sync` returns a
 `published_revision`; consumers must apply that revision before a test can assert
 remote visibility. These are background synchronization boundaries, independent

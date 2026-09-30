@@ -67,7 +67,16 @@ fn cli_membership_requires_stable_node_identity() {
     let cli = Cli::try_parse_from(flags.into_iter().chain(["--node-id", "node-a"])).unwrap();
     assert_eq!(cli.node_id.as_deref(), Some("node-a"));
     assert_eq!(cli.membership_ttl_secs, 30);
+    assert_eq!(cli.inventory_publish_coalesce_ms, 0);
     assert!(Cli::try_parse_from(["orbitkv-cache-manager", "--membership-ttl-secs", "0"]).is_err());
+    assert!(
+        Cli::try_parse_from([
+            "orbitkv-cache-manager",
+            "--inventory-publish-coalesce-ms",
+            "6"
+        ])
+        .is_err()
+    );
 }
 
 #[test]

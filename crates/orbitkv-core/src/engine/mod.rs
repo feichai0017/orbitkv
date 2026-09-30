@@ -94,6 +94,14 @@ pub struct MetadataStatus {
     pub inventory_journal_bytes_peak: usize,
     pub inventory_journal_capacity_bytes: usize,
     pub inventory_history_gaps: u64,
+    pub inventory_flush_through_sequence: u64,
+    pub inventory_delta_input_records: u64,
+    pub inventory_delta_input_bytes: u64,
+    pub inventory_delta_output_records: u64,
+    pub inventory_delta_transactions: u64,
+    pub inventory_delta_encoded_bytes: u64,
+    pub inventory_coalescing_windows: u64,
+    pub inventory_coalescing_wait_micros: u64,
 }
 
 impl OrbitKVEngine {
@@ -564,6 +572,14 @@ impl OrbitKVEngine {
             inventory_journal_bytes_peak: inventory_status.journal_bytes_peak,
             inventory_journal_capacity_bytes: inventory_status.journal_capacity_bytes,
             inventory_history_gaps: inventory_status.history_gaps,
+            inventory_flush_through_sequence: inventory_status.flush_through_sequence,
+            inventory_delta_input_records: inventory_status.delta_input_records,
+            inventory_delta_input_bytes: inventory_status.delta_input_bytes,
+            inventory_delta_output_records: inventory_status.delta_output_records,
+            inventory_delta_transactions: inventory_status.delta_transactions,
+            inventory_delta_encoded_bytes: inventory_status.delta_encoded_bytes,
+            inventory_coalescing_windows: inventory_status.coalescing_windows,
+            inventory_coalescing_wait_micros: inventory_status.coalescing_wait_micros,
         })
     }
 

@@ -677,3 +677,53 @@ behavior. Codex independently reran the frozen capacity and Manager gates, check
 the implementation and evidence, and accepted S2.6 at `ab306965`. Its review is
 under the local evidence root's `reviewer/` directory; complete reviewer runtime
 evidence remains in the remote root's `reviewer-run-1/` directory.
+
+## Bounded etcd publication coalescing
+
+S2.7 keeps the current etcd metadata authority while reducing repeated block-key
+mutations before the later inventory-stream cutover. The publisher waits for a
+bounded quiet window only after waking from idle, reads at most the existing
+1,024-record/512 KiB contiguous journal interval and keeps the newest record for
+each exact `(StateKey, medium)` identity. A DRAM delete never removes SSD state,
+and a delete remains an explicit output even when the same interval did not
+contain its preceding put.
+
+The Manager flag `--inventory-publish-coalesce-ms` accepts 0–5 ms and remains at
+a zero waiting window until the frozen 0/2/5 ms evaluation selects a default.
+New changes can extend the quiet period only to the fixed 5 ms maximum.
+`/cache/sync` records its target sequence and wakes the publisher, so a flush
+bypasses intentional waiting without inventing progress.
+
+A coalesced interval may require several 48-record etcd transactions. Intermediate
+transactions retain the previous fully covered input sequence and readiness.
+Only the final transaction publishes the interval's input `through` sequence and
+requested readiness. This keeps the existing member, lease, operation and cursor
+CAS; output key sort order cannot advance the input cursor.
+Restart or ambiguous-reply recovery continues through the existing snapshot and
+exact marker reconciliation paths.
+
+`GET /cache/metadata` reports cumulative input and coalesced records, input and
+encoded output bytes, transaction count, coalescing-window count/wait, and the
+latest requested flush sequence. These counters are process-lifetime diagnostics.
+They do not make publisher acknowledgement a requester-visible barrier.
+
+Use the explicit benchmark with a matching frozen package and test support on
+`PYTHONPATH`, and the frozen `ORBITKV_CACHE_MANAGER_BINARY`, `ETCD_BIN` and
+`ORBITKV_MOONCAKE_LIB_DIR`:
+
+```bash
+python -m benches.metadata --profile 2 --output /var/tmp/orbitkv-evidence/s2-7-2ms-1
+```
+
+The profiles are `legacy` (the frozen S2.6 binary), `0`, `2` and `5`. Each uses
+fresh Managers and etcd, 200 eight-page eviction/reinsert cycles and ten sparse
+publication probes. Raw samples include immediate remote hit rate and time until
+an available observer applies the source's acknowledged inventory target. Exact
+GPU restores and final generation checks accompany the measurements. Inference
+latency is unmeasured in this client workload and is reported as such.
+
+The frozen S2.6 package is the zero-window comparison baseline. The S2.7 A/B gate
+runs the same full Manager correctness path with legacy, explicit 0, 2 and 5 ms
+profiles and keeps raw results outside the checkout. Results and the selected
+default are recorded only after all predeclared comparisons and independent
+review pass. This change does not implement the inventory-stream protocol.

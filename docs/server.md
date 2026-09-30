@@ -124,6 +124,11 @@ See [request preparation](request-preparation.md) for limits and control runs.
 - `--transfer-lock-timeout-secs`: Mark source transfers overdue after this many seconds (default: `120`). Timeout never releases memory still exposed to a remote READ.
 - `--transfer-budget`: Source allocation reservations, defaulting to half the pinned pool. Entire allocations are charged once per session, including overdue sessions. At most 1024 sessions can be retained. New authorizations fail when either limit is exhausted; permanent requester loss still requires safe transport revocation or coordinated teardown.
 - `--inventory-journal-bytes`: Retained residency-change bytes (default: `16777216`, 16 MiB). Lag beyond this history triggers a paginated inventory resnapshot.
+- `--inventory-publish-coalesce-ms`: Quiet window for grouping a bounded
+  contiguous inventory interval before publication (default: `0`, range `0..=5`).
+  `0` preserves immediate publication. An explicit `/cache/sync` request bypasses
+  the wait; all records in a multi-transaction interval commit before its source
+  sequence advances.
 
 ## Distributed metadata
 

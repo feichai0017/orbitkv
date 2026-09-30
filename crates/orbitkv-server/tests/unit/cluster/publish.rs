@@ -6,6 +6,138 @@ use std::time::Instant;
 
 mod capacity;
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires ETCD_BIN; coalesced interval cursor and exact Watch application"]
+async fn coalesced_multi_transaction_interval_commits_one_input_watermark() {
+    let server = Etcd::start(1).await;
+    let reader = view(52992);
+    let (reader_cluster, index, _) =
+        join(&server, "coalesced-interval", "reader", reader.clone(), 60).await;
+    let source = view(52991);
+    let mut client = Client::connect(&server.endpoints, None).await.unwrap();
+    let granted_at = Instant::now();
+    let grant = client.lease_grant(60, None).await.unwrap();
+    assert!(source.renew(granted_at, Duration::from_secs(60)));
+    let cluster = cluster_id(grant.header()).unwrap();
+    let prefix = "/orbitkv/v2/coalesced-interval/";
+    let member = crate::cluster::registration::register(
+        &mut client,
+        prefix,
+        "source",
+        source.owner(),
+        grant.id(),
+        cluster,
+    )
+    .await
+    .unwrap();
+    let mut publisher = Publisher {
+        client: client.clone(),
+        prefix: prefix.into(),
+        member,
+        view: source.clone(),
+        cluster,
+        progress: Progress::default(),
+        previous: None,
+    };
+    wait_for(|| reader.permits(source.owner())).await;
+
+    let initial_revision = publisher.commit(Vec::new(), 100, true).await.unwrap();
+    let marker = format!("{prefix}publishers/{}", source.owner().incarnation);
+    let mut watch = client
+        .watch(
+            marker.clone(),
+            Some(etcd_client::WatchOptions::new().with_start_revision(initial_revision + 1)),
+        )
+        .await
+        .unwrap();
+    let records = (0..97)
+        .map(|key| InventoryRecord {
+            key: StateKey::new(
+                "coalesced-interval".into(),
+                (key as u64).to_be_bytes().into(),
+            ),
+            sequence: 200 - key as u64,
+            present: true,
+            metadata: Some(ReplicaMetadata {
+                medium: if key % 2 == 0 {
+                    ReplicaMedium::Dram
+                } else {
+                    ReplicaMedium::Ssd
+                },
+                representation: ReplicaRepresentation::Raw,
+                stored_bytes: Some(4096),
+            }),
+        })
+        .collect::<Vec<_>>();
+    let published = publisher
+        .interval(
+            InventoryDelta {
+                through: 200,
+                input_records: 100,
+                input_bytes: 100 * 128,
+                records: records.clone(),
+            },
+            true,
+        )
+        .await
+        .unwrap();
+    assert_eq!(published.transactions, 3);
+    let mut observed = Vec::new();
+    while observed.len() < 3 {
+        let response = tokio::time::timeout(Duration::from_secs(5), watch.message())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        for event in response.events() {
+            let kv = event.kv().unwrap();
+            let progress: Progress = serde_json::from_slice(kv.value()).unwrap();
+            let count = client
+                .get(
+                    format!("{prefix}blocks/"),
+                    Some(
+                        etcd_client::GetOptions::new()
+                            .with_prefix()
+                            .with_revision(kv.mod_revision())
+                            .with_count_only(),
+                    ),
+                )
+                .await
+                .unwrap()
+                .count();
+            observed.push((progress.sequence, progress.ready, count));
+        }
+    }
+    assert_eq!(
+        observed,
+        vec![(100, true, 48), (100, true, 96), (200, true, 97)]
+    );
+    assert_eq!(publisher.progress.sequence, 200);
+    assert!(publisher.progress.ready);
+    wait_for(|| {
+        index
+            .revision()
+            .is_some_and(|revision| revision >= published.revision)
+    })
+    .await;
+
+    for (expected, row) in records.iter().zip(
+        index.lookup(
+            &records
+                .iter()
+                .map(|record| record.key.clone())
+                .collect::<Vec<_>>(),
+        ),
+    ) {
+        assert_eq!(row.replicas.len(), 1);
+        assert_eq!(row.replicas[0].owner, *source.owner());
+        assert_eq!(row.replicas[0].sequence, expected.sequence);
+        assert_eq!(row.replicas[0].metadata, expected.metadata.unwrap());
+    }
+    client.lease_revoke(grant.id()).await.unwrap();
+    reader_cluster.shutdown().await;
+}
+
 fn record(sequence: u64, medium: ReplicaMedium, present: bool) -> InventoryRecord {
     InventoryRecord {
         key: StateKey::new("publication-test".into(), vec![1; 32]),

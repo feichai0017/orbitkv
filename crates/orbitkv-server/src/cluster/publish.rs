@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use etcd_client::{Client, Compare, CompareOp, DeleteOptions, PutOptions, Txn, TxnOp};
 use orbitkv_catalog::MembershipView;
-use orbitkv_core::{PublishedInventory, ResidencyInventory};
+use orbitkv_core::{InventoryDelta, PublishedInventory, ResidencyInventory};
 use orbitkv_state::{InventoryRecord, ReplicaMedium};
 use prost::Message;
 use serde::{Deserialize, Serialize};
@@ -51,6 +51,7 @@ pub(super) async fn run(
         previous: None,
     };
     let changed = inventory.changed();
+    let mut was_idle = true;
     while publisher.view.registration_valid() {
         inventory.acknowledge(PublishedInventory::default());
         match publisher.rebuild(&inventory).await {
@@ -74,11 +75,18 @@ pub(super) async fn run(
                 return;
             }
             if publisher.progress.sequence == through {
+                was_idle = true;
                 tokio::select! { _ = notified => {}, _ = tokio::time::sleep(Duration::from_secs(1)) => {} }
                 continue;
             }
-            let records = match inventory.changes(publisher.progress.sequence, through) {
-                Ok(records) => records,
+            let coalescing_wait = if was_idle {
+                inventory.wait_to_publish(publisher.progress.sequence).await
+            } else {
+                Duration::ZERO
+            };
+            let through = inventory.sequence();
+            let delta = match inventory.coalesced_changes(publisher.progress.sequence, through) {
+                Ok(delta) => delta,
                 Err(error) => {
                     log::warn!(
                         "Inventory publication history unavailable; rebuilding complete snapshot: {error:?}"
@@ -86,21 +94,31 @@ pub(super) async fn run(
                     break;
                 }
             };
-            for batch in records.chunks(MAX_BATCH_RECORDS) {
-                let sequence = batch
-                    .last()
-                    .map_or(publisher.progress.sequence, |record| record.sequence);
-                match publisher.records(batch, sequence, true).await {
-                    Ok(revision) => inventory.acknowledge(PublishedInventory {
+            let input_records = delta.input_records;
+            let input_bytes = delta.input_bytes;
+            let output_records = delta.records.len();
+            let sequence = delta.through;
+            match publisher.interval(delta, true).await {
+                Ok(published) => {
+                    inventory.record_delta_publication(
+                        input_records,
+                        input_bytes,
+                        output_records,
+                        published.transactions,
+                        published.encoded_bytes,
+                        coalescing_wait,
+                    );
+                    inventory.acknowledge(PublishedInventory {
                         sequence,
-                        revision,
+                        revision: published.revision,
                         ready: true,
-                    }),
-                    Err(error) => {
-                        log::warn!("Inventory publication stopped: {error}");
-                        inventory.acknowledge(PublishedInventory::default());
-                        return;
-                    }
+                    });
+                    was_idle = false;
+                }
+                Err(error) => {
+                    log::warn!("Inventory publication stopped: {error}");
+                    inventory.acknowledge(PublishedInventory::default());
+                    return;
                 }
             }
         }
@@ -141,19 +159,54 @@ impl Publisher {
         let end = inventory.sequence();
         let mut after = start;
         while after < end {
-            let records = inventory
-                .changes(after, end)
+            let delta = inventory
+                .coalesced_changes(after, end)
                 .map_err(|_| "inventory changed beyond retained snapshot history")?;
-            if records.is_empty() {
+            if delta.records.is_empty() {
                 return Err("incomplete inventory replay".into());
             }
-            for batch in records.chunks(MAX_BATCH_RECORDS) {
-                let sequence = batch.last().ok_or("empty inventory batch")?.sequence;
-                self.records(batch, sequence, false).await?;
-                after = sequence;
-            }
+            after = delta.through;
+            self.interval(delta, false).await?;
         }
         self.commit(Vec::new(), end, true).await
+    }
+
+    async fn interval(
+        &mut self,
+        delta: InventoryDelta,
+        ready: bool,
+    ) -> Result<PublishedInterval, String> {
+        if delta.records.is_empty() {
+            return self
+                .commit(Vec::new(), delta.through, ready)
+                .await
+                .map(|revision| PublishedInterval {
+                    revision,
+                    transactions: 1,
+                    encoded_bytes: 0,
+                });
+        }
+        let previous_sequence = self.progress.sequence;
+        let previous_ready = self.progress.ready;
+        let transactions = delta.records.len().div_ceil(MAX_BATCH_RECORDS);
+        let mut revision = 0;
+        let mut encoded_bytes = 0;
+        for (position, batch) in delta.records.chunks(MAX_BATCH_RECORDS).enumerate() {
+            let final_batch = position + 1 == transactions;
+            let sequence = if final_batch {
+                delta.through
+            } else {
+                previous_sequence
+            };
+            let batch_ready = if final_batch { ready } else { previous_ready };
+            revision = self.records(batch, sequence, batch_ready).await?;
+            encoded_bytes += self.encoded_bytes(batch)?;
+        }
+        Ok(PublishedInterval {
+            revision,
+            transactions,
+            encoded_bytes,
+        })
     }
 
     async fn records(
@@ -189,6 +242,20 @@ impl Publisher {
         }
         self.commit(changes.into_values().collect(), sequence, ready)
             .await
+    }
+
+    fn encoded_bytes(&self, records: &[InventoryRecord]) -> Result<usize, String> {
+        records.iter().try_fold(0usize, |bytes, record| {
+            let key = record_key(&self.prefix, self.member.owner.incarnation, record)?;
+            let value = if record.present {
+                orbitkv_proto::proto::engine::InventoryRecord::from(record.clone()).encoded_len()
+            } else {
+                0
+            };
+            bytes
+                .checked_add(key.len() + value)
+                .ok_or_else(|| "inventory transaction byte count overflow".into())
+        })
     }
 
     async fn commit(
@@ -280,6 +347,12 @@ impl Publisher {
             delay = (delay * 2).min(Duration::from_secs(3));
         }
     }
+}
+
+struct PublishedInterval {
+    revision: i64,
+    transactions: usize,
+    encoded_bytes: usize,
 }
 
 pub(super) fn record_key(
