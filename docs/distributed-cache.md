@@ -759,4 +759,8 @@ The A100 `matrix-d4ac16b5/` directory contains the final comparison, selected-
 default regressions, exact commands, hashes and cleanup proof. The successful
 intermediate `matrix-430f7578/`, its earlier failed immediate-query run, and the
 failed pre-fix Watch-metric run under `candidate-ba5c166b/` remain retained.
-Independent acceptance is pending.
+Codex independently reconciled every raw sample and threshold, reran the exact
+real-etcd cursor and capacity gates plus both full-Manager media cases, verified
+the frozen hashes and accepted same-host S2.7 at `afa72863`. Its detailed report
+is in the final matrix's `reviewer-codex-2/` directory. This does not qualify any
+cross-host or serving cell.
