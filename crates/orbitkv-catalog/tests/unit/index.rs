@@ -385,7 +385,7 @@ fn membership_refresh_does_not_revive_budget_withdrawal() {
     let before = index.bytes();
     assert!(!index.cleanup_owner(remote.incarnation, 128));
     assert!(index.bytes() < before);
-    index.set_expected_owners(2, [membership.owner().incarnation, remote.incarnation]);
+    index.set_expected_owners(11, [membership.owner().incarnation, remote.incarnation]);
     assert_eq!(index.owner_watermark(remote.incarnation), None);
     assert_eq!(index.status().coverage, DiscoveryCoverage::Unavailable);
     while !index.cleanup_owner(remote.incarnation, 128) {}
