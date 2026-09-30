@@ -4,6 +4,10 @@ This S5.1 audit fixes the upstream comparison at the official, non-prerelease
 releases checked on 2026-09-29. It is a source and interface audit, not an
 OrbitKV engine upgrade or a serving qualification.
 
+The subsequent 2026-09-30 adapter upgrade selects 0.30.0 and consumes its native
+transfer-result API. See [S5.1's current delivery and qualification status](completion-plan.md#s51--release-and-interface-audit);
+the audit table and conclusions below retain the earlier reviewed baseline.
+
 | Project | Release | Commit | OrbitKV status |
 | --- | --- | --- | --- |
 | vLLM | [`v0.30.0`](https://github.com/vllm-project/vllm/releases/tag/v0.30.0) | [`ced6857a`](https://github.com/vllm-project/vllm/tree/ced6857afa0ea7b2e3f0846a62e1394e90f15607) | Upgrade target; the package pin, submodule and serving support remain `0.29.0` |

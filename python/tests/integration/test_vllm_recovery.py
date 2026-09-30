@@ -143,7 +143,7 @@ def test_window_and_checkpoint_restore_only_required_destinations(channel_server
             response.raise_for_status()
             assert response.json()["evicted_blocks"] == 6 + with_checkpoint
         req, result = lookup("restore-window")
-        assert result == (64, True)
+        assert result == (64, False)
         destinations = [
             [0, 0, 12, 13],
             [8, 9, 10, 11],
@@ -160,12 +160,10 @@ def test_window_and_checkpoint_restore_only_required_destinations(channel_server
         torch.cuda.synchronize()
         worker.start_load_kv(
             OrbitKVConnectorMetadata(load_intents=scheduler._pending_load_intents),
-            SimpleNamespace(no_compile_layers={}),
         )
-        deadline = time.monotonic() + 15
-        while worker.get_finished(set())[1] != {req.request_id}:
-            assert time.monotonic() < deadline
-            time.sleep(0.01)
+        worker.wait_for_all_layers()
+        worker.wait_for_save()
+        assert not worker.get_transfer_results(set()).finished_recving
         torch.cuda.synchronize()
         assert torch.equal(kv[8:12], expected[0][1:5])
         assert torch.equal(swa[12:14], expected[1][3:5])
@@ -234,7 +232,7 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(channel
         assert submitted.wait(10), "the save worker never submitted Publish"
         worker._save_queue.join()
         assert overlapped == [True], "Publish waited for unrelated GPU work"
-        assert worker.get_finished({"save"})[0] == {"save"}
+        assert worker.get_transfer_results({"save"}).finished_sending == {"save"}
         deadline = time.monotonic() + 10
         while True:
             ready = client.query_prefetch(identity, hashes, "restore")
@@ -424,7 +422,7 @@ def test_complete_checkpoint_restores_through_vllm_worker(channel_server):
         while (result := scheduler.get_num_new_matched_tokens(req, 64))[0] is None:
             assert time.monotonic() < deadline
             time.sleep(0.01)
-        assert result == (32, True)
+        assert result == (32, False)
         probe = scheduler._pending_query_probes["restore"]
         assert probe.selected_boundary == 96
         assert probe.leased_blocks == 2
@@ -443,17 +441,16 @@ def test_complete_checkpoint_restores_through_vllm_worker(channel_server):
         torch.cuda.synchronize()
         worker.start_load_kv(
             OrbitKVConnectorMetadata(load_intents=scheduler._pending_load_intents),
-            SimpleNamespace(no_compile_layers={}),
         )
-        while worker.get_finished(set())[1] != {"restore"}:
-            assert time.monotonic() < deadline
-            time.sleep(0.01)
+        worker.wait_for_all_layers()
+        worker.wait_for_save()
+        assert not worker.get_transfer_results(set()).finished_recving
         torch.cuda.synchronize()
         assert torch.equal(kv[8:10], expected_kv[1:3])
         assert torch.equal(state[9], expected_state[1])  # Both conv and temporal tensors.
         assert (kv[10:12] == -1).all()  # Extra leased pages have no destination.
         assert (state[[8, 10, 11]] == -1).all()
-        assert not worker._pending_loads
+        assert worker._restore is None
         metrics = fetch_orbitkv_metrics(channel_server.http_port)
         assert metrics["orbitkv_cache_candidate_hits_total"] == 6
         assert metrics["orbitkv_cache_candidate_misses_total"] == 10

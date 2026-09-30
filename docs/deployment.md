@@ -211,7 +211,8 @@ Deployment profiles follow LMCache's independent service, P2P sharing and
 The engine, cache tier and request-handoff role are separate choices. An upstream
 mode is a reference topology, not proof that OrbitKV supports its engines,
 parallelism, isolation or failure recovery. Keep those claims tied to the
-qualification table above and the pinned vLLM 0.29.0 / SGLang 0.5.20 contracts.
+qualification table above and the pinned vLLM 0.30.0 / SGLang 0.5.20 contracts.
+Historical 0.29.0 topology evidence requires requalification after the upgrade.
 
 
 P/D moves KV for the same request from prefill to decode. Remote caching finds
@@ -221,7 +222,7 @@ reusable KV from an earlier request. These are independent paths; see
 OrbitKV's vLLM `PdPrefillConnector` and `PdDecodeConnector` push KV through
 Mooncake TENT directly between GPU workers. Try the
 [local P/D example](../scripts/run_pd_local.sh) for that path.
-vLLM `0.29.0` also includes its own NIXL connector; the
+vLLM `0.30.0` also includes its own NIXL connector; the
 [NIXL comparison example](../scripts/run_nixl_local.sh) uses vLLM's code.
 OrbitKV does not ship a NIXL connector. Its SGLang adapter supports the native
 SGLang P/D control plane over OrbitKV TENT and an opt-in composition with the

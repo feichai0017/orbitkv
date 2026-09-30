@@ -243,7 +243,9 @@ def test_p_worker_skips_non_representative_mla_prefill_rank() -> None:
     )
 
     assert "prefill-r3" not in worker.transfer.peer_handshakes
-    assert worker.get_finished({"prefill-r3"}) == ({"prefill-r3"}, None)
+    assert worker.get_transfer_results({"prefill-r3"}) == KVConnectorTransferResults(
+        finished_sending={"prefill-r3"}
+    )
 
 
 def test_layout_mapping_homogeneous_tp_reads_same_remote_rank() -> None:

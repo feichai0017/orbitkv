@@ -94,7 +94,7 @@ complexity measurements. SGLang's adapter delegates its control lifecycle to
 the pinned upstream engine; it has not eliminated that lifecycle. Completion
 observation and plugin installation also live outside `sglang/pd.py`.
 
-vLLM 0.29.0 does include its own Mooncake connector. OrbitKV chose a separate
+vLLM 0.30.0 does include its own Mooncake connector. OrbitKV chose a separate
 split push protocol and native lifetime owner, so the extra code is not forced
 by a lack of upstream P/D support. Before replacing it with a thinner adapter,
 check the actual upstream transport contract, cancellation/drain behavior,

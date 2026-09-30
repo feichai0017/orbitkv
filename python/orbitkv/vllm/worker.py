@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import torch
+from vllm.distributed.kv_transfer.kv_connector.v1.base import KVConnectorTransferResults
 
 from orbitkv import RestoreHandle
 from orbitkv.client.gpu import serialize_gpu_buffer
@@ -497,8 +498,8 @@ class WorkerAdapter:
             self._cross_layer_key = _CROSS_LAYER_KEY
         self.register_kv_caches({self._cross_layer_key: kv_cache})
 
-    def get_finished(self, finished_req_ids: set[str]) -> tuple[set[str] | None, set[str] | None]:
-        finished_sending: set[str] | None = None
+    def get_transfer_results(self, finished_req_ids: set[str]) -> KVConnectorTransferResults:
+        finished_sending: set[str] = set()
 
         with self._save_completion_lock:
             self._finished_requests.update(
@@ -512,7 +513,7 @@ class WorkerAdapter:
                 self._finished_requests -= done_saves
                 finished_sending = done_saves
 
-        return (finished_sending, None)
+        return KVConnectorTransferResults(finished_sending=finished_sending)
 
     def start_load_kv(self, metadata: OrbitKVConnectorMetadata) -> None:
         if self._current_metadata is metadata:

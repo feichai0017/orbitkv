@@ -527,7 +527,7 @@ def test_pd_worker_stats_record_decode_wait_completion() -> None:
         None,
     )
     worker._state.record_transfer_done("req-1")
-    worker.get_finished(set())
+    worker.get_transfer_results(set())
 
     stats = worker.metrics.get_stats()
 
@@ -677,9 +677,11 @@ def test_pd_worker_pushes_packed_bhnc_blocks() -> None:
     assert len(first_layer_blocks) == 2
     assert first_layer_blocks[0].regions[0].block_id == 1
     assert first_layer_blocks[0].regions[0].bytes == tensor.element_size() * 16 * 4 * 32 * 2
-    finished_sending, finished_recving = worker.get_finished({"req-1"})
+    results = worker.get_transfer_results({"req-1"})
+    finished_sending = results.finished_sending
+    finished_recving = results.finished_recving
     assert finished_sending == {"req-1"}
-    assert finished_recving is None
+    assert not finished_recving
     assert "req-1" not in worker.transfer.registered
 
 
@@ -717,11 +719,13 @@ def test_p_worker_closes_single_target_push_once_when_finished() -> None:
 
     worker.save_kv_layer("layer.0", tensor, SimpleNamespace())
     drain_pd_pushes(worker)
-    assert worker.get_finished({"req-1"}) == ({"req-1"}, None)
+    assert worker.get_transfer_results({"req-1"}) == KVConnectorTransferResults(
+        finished_sending={"req-1"}
+    )
     assert transfer.closed_reqs == ["req-1"]
 
 
-def test_pd_worker_get_finished_does_not_poll_wait_reqs() -> None:
+def test_pd_worker_transfer_results_do_not_poll_wait_reqs() -> None:
     transfer = MockMooncakePort()
     worker = DecodeWorker(
         SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="")), transfer=transfer
@@ -739,7 +743,9 @@ def test_pd_worker_get_finished_does_not_poll_wait_reqs() -> None:
 
     worker._state.record_transfer_done("req-1")
 
-    assert worker.get_finished(set()) == (None, {"req-1"})
+    assert worker.get_transfer_results(set()) == KVConnectorTransferResults(
+        finished_recving={"req-1"}
+    )
 
 
 def test_p_worker_save_kv_layer_noops_without_push_reqs() -> None:
@@ -874,13 +880,14 @@ def test_d_worker_release_waits_for_abort_ack_before_finishing() -> None:
     assert "req-1" in worker._state.wait_reqs
     assert "req-1" in transfer.registered
     assert transfer.closed_reqs == []
-    assert worker.get_finished(set()) == (None, None)
+    assert worker.get_transfer_results(set()) == KVConnectorTransferResults()
 
     transfer.wait_can_return.set()
     deadline = time.time() + 2
     finished = None
     while time.time() < deadline:
-        _, finished = worker.get_finished(set())
+        results = worker.get_transfer_results(set())
+        finished = results.finished_recving
         if finished:
             break
         time.sleep(0.01)
@@ -926,7 +933,7 @@ def test_d_worker_release_ack_does_not_record_successful_load() -> None:
         None,
     )
     worker._state.record_transfer_done("req-1")
-    worker.get_finished(set())
+    worker.get_transfer_results(set())
     stats = worker.metrics.get_stats()
 
     assert stats.data["pd_decode_abort_count"] == 1
@@ -1311,7 +1318,8 @@ def test_d_worker_prefill_failure_reports_load_error(monkeypatch) -> None:
     deadline = time.time() + 2
     finished_recving = None
     while time.time() < deadline:
-        _, finished_recving = worker.get_finished(set())
+        results = worker.get_transfer_results(set())
+        finished_recving = results.finished_recving
         if finished_recving:
             break
         time.sleep(0.01)
@@ -1354,16 +1362,16 @@ def test_d_worker_transfer_wait_failure_reports_load_error() -> None:
     deadline = time.time() + 2
     finished_recving = None
     while time.time() < deadline:
-        _, finished_recving = worker.get_finished(set())
+        results = worker.get_transfer_results(set())
+        finished_recving = results.finished_recving
         if finished_recving:
             break
         time.sleep(0.01)
 
     assert finished_recving == {"decode-1"}
     assert worker.get_block_ids_with_load_errors() == {5}
-    meta = worker.build_connector_worker_meta()
-    assert meta is not None
-    assert meta.failed_recving == {"decode-1"}
+    assert results.failed_recving == {"decode-1"}
+    assert worker.get_transfer_results(set()) == KVConnectorTransferResults()
     worker.shutdown()
 
 
@@ -1408,7 +1416,8 @@ def test_d_worker_reports_background_transfer_wait_completion_without_native_pol
     deadline = time.time() + 2
     finished_recving = None
     while time.time() < deadline:
-        _, finished_recving = worker.get_finished(set())
+        results = worker.get_transfer_results(set())
+        finished_recving = results.finished_recving
         if finished_recving:
             break
         time.sleep(0.01)
@@ -1429,7 +1438,9 @@ def test_d_worker_finished_transfer_wait_prevents_idle_fast_path() -> None:
     worker.register_kv_caches({"layer.0": tensor})
     worker._state.finished_transfer_waits.add("decode-1")
 
-    _, finished_recving = worker.get_finished(set())
+    results = worker.get_transfer_results(set())
+
+    finished_recving = results.finished_recving
 
     assert finished_recving == {"decode-1"}
     worker.shutdown()
@@ -1492,7 +1503,8 @@ def test_d_worker_reregister_keeps_new_transfer_wait_after_old_wait_exits() -> N
     deadline = time.time() + 2
     finished = None
     while time.time() < deadline:
-        _, finished = worker.get_finished(set())
+        results = worker.get_transfer_results(set())
+        finished = results.finished_recving
         if finished:
             break
         time.sleep(0.01)
@@ -1673,7 +1685,7 @@ def test_p_worker_completion_clears_physical_remote_block_offsets() -> None:
     )
 
     worker._completed_pushes.add("prefill-r1")
-    assert worker.get_finished({"prefill-r1"})[0] == {"prefill-r1"}
+    assert worker.get_transfer_results({"prefill-r1"}).finished_sending == {"prefill-r1"}
 
     assert worker._remote_block_offsets == {
         "prefill-r10#d2#l0": 1,
@@ -1723,7 +1735,7 @@ def test_p_worker_preemption_cancels_push_without_waiting_for_done() -> None:
     assert transfer.failed_reqs == ["prefill-1"]
     assert transfer.closed_reqs == ["prefill-1"]
     assert transfer.registered == set()
-    assert worker.get_finished({"prefill-1"}) == (None, None)
+    assert worker.get_transfer_results({"prefill-1"}) == KVConnectorTransferResults()
 
 
 def test_p_worker_uses_scheduler_blocks_without_slot_mapping_cpu_sync() -> None:
@@ -1871,7 +1883,7 @@ def test_pd_worker_publishes_wait_handshake_and_delays_done_until_all_blocks() -
     )
     push_worker.wait_for_save()
     drain_pd_pushes(push_worker)
-    assert push_worker.get_finished(set()) == (None, None)
+    assert push_worker.get_transfer_results(set()) == KVConnectorTransferResults()
 
     push_worker.prepare_pushes(
         PdConnectorMetadata(
@@ -1892,7 +1904,9 @@ def test_pd_worker_publishes_wait_handshake_and_delays_done_until_all_blocks() -
     )
     push_worker.wait_for_save()
     drain_pd_pushes(push_worker)
-    assert push_worker.get_finished({"req-1"}) == ({"req-1"}, None)
+    assert push_worker.get_transfer_results({"req-1"}) == KVConnectorTransferResults(
+        finished_sending={"req-1"}
+    )
 
 
 def test_d_worker_wait_handshake_uses_layer_kv_cache_group_blocks_for_mtp() -> None:
@@ -2328,7 +2342,7 @@ def test_scheduler_registers_remote_wait_once_until_done() -> None:
 
     # After finished_recving, _completed_waits prevents re-registration (preemption safety)
     scheduler.update_connector_output(
-        SimpleNamespace(finished_sending=None, finished_recving={"req-1"})
+        SimpleNamespace(finished_sending=None, finished_recving={"req-1"}, failed_recving=set())
     )
     scheduler.update_state_after_alloc(request, ([1],), num_external_tokens=3)
     third = scheduler.build_connector_meta(SimpleNamespace())
@@ -2362,7 +2376,7 @@ def test_scheduler_failed_recv_allows_remote_wait_retry() -> None:
         SimpleNamespace(
             finished_sending=None,
             finished_recving={"req-1"},
-            kv_connector_worker_meta=PdWorkerMetadata(failed_recving={"req-1"}),
+            failed_recving={"req-1"},
         )
     )
     scheduler.update_state_after_alloc(request, ([2],), num_external_tokens=3)
@@ -2406,7 +2420,8 @@ def test_d_failed_load_retry_dispatches_prefill_again() -> None:
     assert [task.request_id for task in prefill_sender.tasks] == ["prefill-1"]
 
     worker._mark_wait_failed("decode-1", RuntimeError("p preempted"))
-    _, finished_recving = worker.get_finished(set())
+    results = worker.get_transfer_results(set())
+    finished_recving = results.finished_recving
     assert finished_recving == {"decode-1"}
     failed_blocks = worker.get_block_ids_with_load_errors()
     assert failed_blocks == {1}
@@ -2415,7 +2430,7 @@ def test_d_failed_load_retry_dispatches_prefill_again() -> None:
             finished_sending=None,
             finished_recving=finished_recving,
             invalid_block_ids=failed_blocks,
-            kv_connector_worker_meta=worker.build_connector_worker_meta(),
+            failed_recving=results.failed_recving,
         )
     )
 
@@ -2891,7 +2906,7 @@ def test_p_worker_pushes_registered_blocks_from_save_kv_layer() -> None:
     drain_pd_pushes(worker)
 
     assert {layer_idx for layer_idx, _ in transfer.pushed_layers["prefill-r0"]} == {0, 1}
-    assert worker.get_finished({"prefill-r0"})[0] == {"prefill-r0"}
+    assert worker.get_transfer_results({"prefill-r0"}).finished_sending == {"prefill-r0"}
 
 
 def test_p_worker_pushes_to_multiple_decode_ranks_when_decode_tp_is_larger() -> None:
@@ -2952,7 +2967,7 @@ def test_p_worker_pushes_to_multiple_decode_ranks_when_decode_tp_is_larger() -> 
         src_offset_bytes=(3 * 4 * 16 * 64 + 2 * 16 * 64) * 2,
         bytes=2 * 16 * 64 * 2,
     )
-    assert worker.get_finished({"prefill-r1"})[0] == {"prefill-r1"}
+    assert worker.get_transfer_results({"prefill-r1"}).finished_sending == {"prefill-r1"}
     assert "prefill-r1#d2" not in transfer.registered
     assert "prefill-r1#d3" not in transfer.registered
 
@@ -3187,7 +3202,7 @@ def test_p_worker_advances_remote_blocks_across_chunk_prefill(monkeypatch, overl
         assert len(queued) == 1
         assert "prefill-r0" not in transfer.pushed_layers
 
-    assert worker.get_finished(set())[0] is None
+    assert worker.get_transfer_results(set()).finished_sending == set()
 
     worker.prepare_pushes(
         PdConnectorMetadata(
@@ -3220,7 +3235,7 @@ def test_p_worker_advances_remote_blocks_across_chunk_prefill(monkeypatch, overl
         70,
         71,
     ]
-    assert worker.get_finished({"prefill-r0"})[0] == {"prefill-r0"}
+    assert worker.get_transfer_results({"prefill-r0"}).finished_sending == {"prefill-r0"}
 
 
 def test_p_worker_trims_extra_prefill_blocks_beyond_decode_handshake() -> None:
@@ -3270,7 +3285,7 @@ def test_p_worker_trims_extra_prefill_blocks_beyond_decode_handshake() -> None:
     worker.wait_for_save()
     drain_pd_pushes(worker)
 
-    assert worker.get_finished(set())[0] is None
+    assert worker.get_transfer_results(set()).finished_sending == set()
 
     worker.prepare_pushes(
         PdConnectorMetadata(
@@ -3294,7 +3309,7 @@ def test_p_worker_trims_extra_prefill_blocks_beyond_decode_handshake() -> None:
     second_push = transfer.pushed_layers["prefill-r0"][1][1]
     assert [block.regions[0].block_id for block in second_push] == list(range(76, 96))
     assert block_slices_bytes(second_push) == tensor.stride()[0] * tensor.element_size() * 20
-    assert worker.get_finished({"prefill-r0"})[0] == {"prefill-r0"}
+    assert worker.get_transfer_results({"prefill-r0"}).finished_sending == {"prefill-r0"}
 
 
 def test_pd_proxy_only_sends_decode_request_with_prefill_hint() -> None:
@@ -3530,7 +3545,7 @@ def test_prefill_binds_send_ownership_before_forward_and_does_not_requeue_after(
         drain_pd_pushes(worker)
         assert len(transfer.pushed_layers["prefill"]) == 1
         assert block_slices_bytes(transfer.pushed_layers["prefill"][0][1]) == 16384
-        assert connector.get_finished({"prefill"})[0] == {"prefill"}
+        assert connector.get_transfer_results({"prefill"}).finished_sending == {"prefill"}
         connector.clear_connector_metadata()
         connector.bind_connector_metadata(PdConnectorMetadata())
         assert not worker.has_state()
@@ -3574,17 +3589,17 @@ def test_decode_does_not_publish_completion_before_its_owner_callback(monkeypatc
             None,
         )
         assert entered.wait(timeout=5)
-        assert worker.get_finished(set()) == (None, None)
+        assert worker.get_transfer_results(set()) == KVConnectorTransferResults()
         assert "decode" in worker._state.wait_reqs
         release.set()
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
-            completed = worker.get_finished(set())
-            if completed[1]:
+            completed = worker.get_transfer_results(set())
+            if completed.finished_recving:
                 break
             time.sleep(0.01)
-        assert completed == (None, {"decode"})
-        assert worker.get_finished(set()) == (None, None)
+        assert completed == KVConnectorTransferResults(finished_recving={"decode"})
+        assert worker.get_transfer_results(set()) == KVConnectorTransferResults()
         assert worker.metrics.get_stats().data["pd_load_success_count"] == 1
     finally:
         release.set()

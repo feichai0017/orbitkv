@@ -7,6 +7,8 @@ import time
 from dataclasses import dataclass, replace
 from typing import Any
 
+from vllm.distributed.kv_transfer.kv_connector.v1.base import KVConnectorTransferResults
+
 from orbitkv.logging_utils import get_connector_logger
 from orbitkv.vllm.pd.chunk_tracker import ChunkTracker
 from orbitkv.vllm.pd.layout import (
@@ -162,11 +164,11 @@ class PrefillWorker(PdWorkerBase):
             elif reason != RELEASE_CONSUMER_ABORT:
                 self.transfer.close_request(req_id)
 
-    def get_finished(self, finished_req_ids: set[str]) -> tuple[set[str] | None, set[str] | None]:
+    def get_transfer_results(self, finished_req_ids: set[str]) -> KVConnectorTransferResults:
         if not finished_req_ids and not self.has_state():
-            return None, None
+            return KVConnectorTransferResults()
         releasable_sending = self.get_finished_sending(finished_req_ids)
-        return releasable_sending or None, None
+        return KVConnectorTransferResults(finished_sending=releasable_sending)
 
     def process_push_reqs(self, reqs_to_push: dict[str, PushReqMeta]) -> None:
         for req_id, req in reqs_to_push.items():

@@ -7,7 +7,6 @@ from typing import Any
 
 from vllm.distributed.kv_transfer.kv_connector.v1.base import (
     KVConnectorMetadata,
-    KVConnectorWorkerMetadata,
 )
 
 BlockIds = tuple[list[int], ...]
@@ -275,16 +274,6 @@ class PdConnectorMetadata(KVConnectorMetadata):
         self.reqs_to_release = reqs_to_release or set()
         self.release_reasons = release_reasons or {}
         self.preempted_req_ids = preempted_req_ids or set()
-
-
-@dataclass
-class PdWorkerMetadata(KVConnectorWorkerMetadata):
-    failed_recving: set[str] = field(default_factory=set)
-
-    def aggregate(self, other: KVConnectorWorkerMetadata) -> KVConnectorWorkerMetadata:
-        assert isinstance(other, PdWorkerMetadata)
-        self.failed_recving.update(other.failed_recving)
-        return self
 
 
 @dataclass

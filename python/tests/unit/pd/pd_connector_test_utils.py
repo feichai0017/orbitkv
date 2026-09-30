@@ -15,6 +15,7 @@ install_connector_unit_stubs()
 
 from vllm.distributed.kv_transfer.kv_connector.v1.base import (  # noqa: E402
     KVConnectorRole,
+    KVConnectorTransferResults,
 )
 from vllm.distributed.kv_transfer.kv_connector.v1.metrics import (  # noqa: E402
     PromMetric,
@@ -46,7 +47,6 @@ from orbitkv.vllm.pd.metadata import (  # noqa: E402
     LayerRemoteLayout,
     PdConnectorMetadata,
     PdHandshake,
-    PdWorkerMetadata,
     PushReqMeta,
     TransferRegionLayout,
     WaitReqMeta,

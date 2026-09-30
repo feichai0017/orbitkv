@@ -37,7 +37,7 @@ Repository = "https://github.com/feichai0017/orbitkv"
 Issues = "https://github.com/feichai0017/orbitkv/issues"
 
 [project.optional-dependencies]
-vllm = ["vllm==0.29.0"]
+vllm = ["vllm==0.30.0"]
 sglang = ["sglang==0.5.20"]
 
 [tool.uv]

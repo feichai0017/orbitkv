@@ -7,11 +7,11 @@ the reviewer independently checks its consumed path, tests and evidence.
 
 ## Release baseline and reference policy
 
-Official latest non-prerelease versions were checked on **2026-09-29**:
+Official latest non-prerelease versions were checked on **2026-09-30**:
 
 | Project | Reference release / commit | OrbitKV qualification |
 | --- | --- | --- |
-| [vLLM](https://github.com/vllm-project/vllm/releases/tag/v0.30.0) | `v0.30.0` / `ced6857afa0ea7b2e3f0846a62e1394e90f15607` | Upgrade target. Current dependency/submodule and recorded serving gates remain **0.29.0** until S5.1 passes. |
+| [vLLM](https://github.com/vllm-project/vllm/releases/tag/v0.30.0) | `v0.30.0` / `ced6857afa0ea7b2e3f0846a62e1394e90f15607` | Dependency/submodule upgraded. A100 Qwen3-8B DRAM/SSD and eager/graph gates pass locally; independent upgrade acceptance and broader model/topology qualification remain open. |
 | [SGLang](https://github.com/sgl-project/sglang/releases/tag/v0.5.20) | `v0.5.20` / `94602c9c2b7cbdb8efd5c52802dac6a1c180089e` | Current dependency/submodule and recorded serving baseline. |
 | [LMCache](https://github.com/LMCache/LMCache/releases/tag/v0.5.5) | `v0.5.5` / `05a013b29da78cf2321b9b46ec5039dde2fb0bb0` | Integration and matched-comparison reference, not evidence of OrbitKV support. |
 
@@ -39,7 +39,7 @@ record submitted, merged and released as different states.
 | S2 | Partial: S2.1–S2.7 are independently accepted; bounded publication coalescing keeps a zero-wait default with a qualified 2 ms opt-in. S2.8 owner inventory streams are next. Three-host metadata remains blocked by CPU-node SSH authorization and mutually unreachable A/B container data addresses; live-store soak and separate-host cells remain open under S2.10. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
-| S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`. vLLM 0.30.0 remains an unqualified upgrade target, and public lifecycle/deployment gates remain open. |
+| S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.30.0 adapter upgrade consumes native transfer results and is under local qualification. Independent upgrade acceptance and public lifecycle/deployment gates remain open. |
 | S6 | Partial: observations/limited choices exist; unified executed decisions remain open. |
 | S7 | Open: consumed retention/checkpoint compiler beyond recovery validation. |
 | S8 | Partial: existing wheel workflow; final images, artifact gates and publication remain open. |
@@ -59,7 +59,7 @@ independent work. Use **implementation open**, **implementation partial**,
 | Compute overlap | Qualified raw single-part layer/group readiness; coarse dependencies where required | SSD/codec pipelines and legal multipart overlap |
 | Distributed discovery | Complete local indexes, fenced etcd publication, snapshot/Watch; no Catalog directory RPCs | Sustainable churn/capacity, quota recovery and separate host-failure domains |
 | Remote recovery | Source authorization, TENT READ, release reconciliation, peer DRAM/SSD | Permanent requester loss and transfer/partition fault qualification |
-| Engine support | vLLM 0.29.0 and SGLang 0.5.20 local recovery and TP=1 replica sharing | Explicit multi-instance, container, P/D and TP/PP qualification cells |
+| Engine support | vLLM 0.30.0 local recovery under qualification; SGLang 0.5.20 unchanged; historical 0.29.0 local recovery and replica-sharing evidence retained | New-release model/topology requalification; multi-instance, container, P/D and TP/PP cells |
 | Cost decisions | Resource-scoped observations, shadow estimates and guarded experimental peer choices | One consumed planner for complete routes, legal boundaries and P/D authority |
 | Hybrid semantics | Declared recovery contracts and compiled page demands | General read-set/retention IR, checkpoint placement and semantic reclamation |
 | Packaging | Wheel construction and installed-artifact gates already exist | New final artifact requalification, independent service images and publication |
@@ -375,6 +375,24 @@ integration contracts from [the adapter guide](adapters.md#lmcache-and-flexkv-re
 
 ### S5.1 — Release and interface audit
 
+**vLLM 0.30.0 implementation delivered; qualification in progress, independent
+review open.** Dependency and submodule use the exact release above. Cache and
+P/D workers return native `KVConnectorTransferResults`; failed receive and
+finished receive share one snapshot, replacing `PdWorkerMetadata` and its
+duplicate queue. Best-effort cache publication explicitly returns false for
+`requires_kv_delivery`. The native MultiConnector consumer is covered by a
+released-engine test. No 0.29/0.30 compatibility alias remains.
+
+The complete CUDA 13 wheel passes build/repair/isolated import. Its installed
+production package passes A100 Qwen3-8B DRAM eager, DRAM graph and forced-io_uring
+SSD eager gates; P/D, composition and hybrid checks are recorded separately.
+Source-only Python passes 413 tests, with one skip and 160 deselected. The
+generated `python/uv.lock` is ignored by repository policy; its resolved 0.30.0
+snapshot is archived with the wheel rather than force-added.
+Evidence: `/root/orbitkv-artifacts/engine-native-lifecycle-20260930/vllm-0.30/`.
+Previous 0.29.0 model, topology and performance measurements remain historical.
+This delivery does not close S5.3/S5.4 or establish a performance advantage.
+
 - Audit vLLM 0.30.0 and SGLang 0.5.20 by exact release commits above, and LMCache
   0.5.5 against those interfaces. Check recipe prerequisites in release source;
   do not assume a documented upstream PR is included in either engine release.
@@ -475,6 +493,14 @@ status is reported separately from local adapter qualification.
 
 ### S5.3 — Public lifecycle and hybrid-state contracts
 
+The 2026-09-30 source check confirms that released 0.30.0 and current vLLM main
+still invoke preemption drain after page initialization, and synchronous restore
+after recurrent preprocessing. A separate generic preemption-ordering patch is
+being prepared; moving only that fence does not remove `runtime.py`'s restore
+boundary. SGLang PR #40595 (external-linker construction) and #40896 (load-failure
+lifecycle) are open; #40759 (Mamba lifecycle proof of concept) is closed unmerged.
+Do not delete consumed safety behavior based on these proposals.
+
 - vLLM: replace the `runtime.py` runner patch only after the released interface
   guarantees preemption/save drain before page reuse and restore after page
   initialization/COW but before recurrent state preprocessing. Prefer a generic
@@ -501,6 +527,13 @@ profile; all-state readiness, GPU ownership and resident-prefix behavior pass.
 Unreleased required fixes keep only their dependent profiles experimental.
 
 ### S5.4 — Native P/D lifecycle with TENT payloads
+
+The 0.30.0 Mooncake receive timeout/error path reports completion without a
+remote-write drain acknowledgement; its thread-pool shutdown is nonblocking.
+An explicit TENT constructor is insufficient by itself. Native replacement must
+first consume destination generation, write authorization/revocation and final
+drain evidence from S3. Existing custom owners therefore remain implementation
+dependencies, not obsolete code ready for mechanical deletion.
 
 - Keep cache offload/reuse and live P/D handoff independently selectable. Prefer
   native engine bootstrap, request states and DecodeReady authority; add a

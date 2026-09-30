@@ -8,6 +8,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from typing import Any
 
+from vllm.distributed.kv_transfer.kv_connector.v1.base import KVConnectorTransferResults
+
 from orbitkv.logging_utils import get_connector_logger
 from orbitkv.vllm.pd.layout import KvCacheLayout
 from orbitkv.vllm.pd.layout_mapping import (
@@ -19,7 +21,6 @@ from orbitkv.vllm.pd.metadata import (
     LayerRemoteLayout,
     PdConnectorMetadata,
     PdHandshake,
-    PdWorkerMetadata,
     WaitReqMeta,
     flatten_block_ids,
     layer_layout_to_compact_dict,
@@ -33,17 +34,7 @@ logger = get_connector_logger()
 
 
 class _DecodeWaitState:
-    """Thread-safe bookkeeping for in-flight decode receives.
-
-    Groups the seven request-tracking collections that the Mooncake waiter and
-    prefill-sender callbacks mutate concurrently with the vLLM forward thread,
-    behind a single lock.
-
-    Failure marking writes the three failure channels together, but they are
-    drained by *different* vLLM callbacks (``get_finished`` /
-    ``build_connector_worker_meta`` / ``get_block_ids_with_load_errors``), so
-    they remain separate collections rather than one merged set.
-    """
+    """Own in-flight receives and atomically report their completion snapshot."""
 
     def __init__(self, metrics: Any) -> None:
         self._metrics = metrics
@@ -51,7 +42,6 @@ class _DecodeWaitState:
         self.wait_reqs: dict[str, WaitReqMeta] = {}
         self.aborted_waits: set[str] = set()
         self.failed_recving: set[str] = set()
-        self.failed_recving_for_meta: set[str] = set()
         self.failed_block_ids: set[int] = set()
         self.finished_aborted_recving: set[str] = set()
         self.finished_transfer_waits: set[str] = set()
@@ -96,7 +86,6 @@ class _DecodeWaitState:
     def _mark_failed_unlocked(self, req_id: str, req: WaitReqMeta) -> set[int]:
         failed_blocks = flatten_block_ids(req.local_block_ids)
         self.failed_recving.add(req_id)
-        self.failed_recving_for_meta.add(req_id)
         self.failed_block_ids.update(failed_blocks)
         self.aborted_waits.discard(req_id)
         self.finished_transfer_waits.discard(req_id)
@@ -134,29 +123,20 @@ class _DecodeWaitState:
 
     # -- drains (one per consuming vLLM callback) --------------------------
 
-    def drain_finished_aborted_recving(self) -> set[str]:
+    def drain_transfer_results(self) -> KVConnectorTransferResults:
         with self._lock:
-            finished = self.finished_aborted_recving
-            self.finished_aborted_recving = set()
-            return finished
-
-    def drain_finished_transfer_waits(self) -> set[str]:
-        with self._lock:
-            finished = self.finished_transfer_waits
+            results = KVConnectorTransferResults(
+                finished_recving=(
+                    self.finished_transfer_waits
+                    | self.finished_aborted_recving
+                    | self.failed_recving
+                ),
+                failed_recving=self.failed_recving,
+            )
             self.finished_transfer_waits = set()
-            return finished
-
-    def drain_failed_recving(self) -> set[str]:
-        with self._lock:
-            failed = self.failed_recving
+            self.finished_aborted_recving = set()
             self.failed_recving = set()
-            return failed
-
-    def drain_failed_recving_for_meta(self) -> set[str]:
-        with self._lock:
-            failed = self.failed_recving_for_meta
-            self.failed_recving_for_meta = set()
-            return failed
+            return results
 
     def drain_failed_block_ids(self) -> set[int]:
         with self._lock:
@@ -180,7 +160,6 @@ class _DecodeWaitState:
         with self._lock:
             self.wait_reqs.clear()
             self.failed_recving.clear()
-            self.failed_recving_for_meta.clear()
             self.failed_block_ids.clear()
             self.aborted_waits.clear()
             self.finished_aborted_recving.clear()
@@ -436,13 +415,12 @@ class DecodeWorker(PdWorkerBase):
             f"PdConnector saw unknown layer {layer_name}; registered={list(self.layouts)}"
         )
 
-    def get_finished(self, finished_req_ids: set[str]) -> tuple[set[str] | None, set[str] | None]:
+    def get_transfer_results(self, finished_req_ids: set[str]) -> KVConnectorTransferResults:
         if not finished_req_ids and self.is_idle():
-            return None, None
+            return KVConnectorTransferResults()
         assert self.transfer is not None, "PdConnector Mooncake port is not initialized"
-        finished_recving = self._state.drain_finished_transfer_waits()
-        finished_recving.update(self._state.drain_finished_aborted_recving())
-        finished_recving.update(self._state.drain_failed_recving())
+        results = self._state.drain_transfer_results()
+        finished_recving = results.finished_recving
         if finished_recving:
             logger.info(
                 "[PdConnector] D worker finished_recving reqs=%s count=%d "
@@ -453,13 +431,7 @@ class DecodeWorker(PdWorkerBase):
                 time.time_ns(),
             )
         self.finish_recving(finished_recving)
-        return None, finished_recving or None
-
-    def build_connector_worker_meta(self) -> PdWorkerMetadata | None:
-        failed_recving = self._state.drain_failed_recving_for_meta()
-        if not failed_recving:
-            return None
-        return PdWorkerMetadata(failed_recving=failed_recving)
+        return results
 
     def _observe_handoff_completion(self, evidence: Any, outcome: str) -> None:
         client = self._completion_client
