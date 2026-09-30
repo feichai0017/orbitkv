@@ -379,20 +379,12 @@ def run(tmp_path: Path, profile: str):
             immediate_remote_hits.append(immediate.num_hit_blocks)
             if immediate.lease:
                 observer_client.release(immediate.lease)
-            _until(
-                lambda target_sequence=target_sequence: (
-                    status
-                    if (
-                        status := _owner_status(
-                            observer_manager, initial_fence["source_incarnation"]
-                        )
-                    )
-                    and status["fresh"]
-                    and status["applied_sequence"] >= target_sequence
-                    else None
-                ),
-                managers,
-            )
+            while True:
+                status = _owner_status(observer_manager, initial_fence["source_incarnation"])
+                if status and status["fresh"] and status["applied_sequence"] >= target_sequence:
+                    break
+                assert time.monotonic() < deadline, [manager.read_logs() for manager in managers]
+                time.sleep(0.0005)
             low_visibility_ms.append((time.monotonic() - started) * 1000)
             ready = _query_ready(
                 observer_client,
