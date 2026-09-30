@@ -41,8 +41,9 @@ orbitkv-cache-manager
   owner view IDs, applied source sequences, freshness, receipt age and record
   counts. This diagnostic does not query a source or authorize payload access.
 - `POST /cache/sync`: Wait for already submitted saves and return a source
-  `inventory_fence`. It does not wait for a requester or make SSD payloads
-  restart-durable.
+  `inventory_fence` in distributed mode. Standalone mode returns
+  `{"local_flush_complete":true}` after the same local save barrier without
+  inventing a distributed fence. Neither result makes SSD payloads restart-durable.
 - `POST /cache/metadata/await`: Controlled-test/operation barrier. Supply an
   `inventory_fence`, this requester's exact `scope_digest`, and `timeout_ms` no
   greater than 30,000. Success means the matching owner view is installed through

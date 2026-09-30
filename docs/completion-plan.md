@@ -359,15 +359,26 @@ inventory fence; `/cache/metadata/await` accepts only an installed matching owne
 view. The offline migration tool performs a dry-run/archive and exact CAS in
 both directions without restoring live leases or old cursors.
 
-Frozen A100 evidence at native `f9383365` and harness `53314d52` passes the
+The first independent review at `6f3d37c7` found that a mismatched view ID was
+checked after installation, replay did not close the snapshot-page phase, a
+replacement that fit only after withdrawing its old view could retry forever,
+idle reconnect did not restore freshness, standalone sync returned 409, and the
+Manager gate stopped before the real lease key expired. Candidate `46f23928`
+validates view/page phase before commit, performs bounded owner withdrawal for a
+budgeted rebuild, refreshes only equal installed progress, retains a local-only
+sync result, waits for exact lease removal, aborts abandoned source input tasks,
+and bounds aggregate-credit and response-queue waits. The rejected report,
+environment failures and corrected probes remain with the evidence.
+
+Frozen A100 evidence at native `46f23928` and harness `53314d52` passes the
 real-etcd stream reset/overflow gate, membership/leader/quorum gates, a 60-second
 16-owner all-to-all run, full-Manager DRAM/io_uring faults, live DRAM overflow and
 the 260-block TCP P2P restore. The capacity run sustains 245,760 changes at
-4,083.76 changes/s with 29.64 ms visibility p99, a 7,929,600-byte index,
-719,456-byte queue peak and zero etcd DB growth during churn. Five-run 0/2 ms
+4,083.19 changes/s with 29.67 ms visibility p99, a 7,929,600-byte index,
+652,262-byte queue peak and zero etcd DB growth during churn. Five-run 0/2 ms
 Manager comparisons retain exact GPU restores and zero etcd revisions; 2 ms
-reduces median stream bytes by 84.3% while visibility p95 rises from 1.56 to
-5.14 ms. Default waiting remains 0. Scope filtering, physical cross-host and
+reduces median stream bytes by 84.24% while visibility p95 rises from 2.15 to
+5.09 ms. Default waiting remains 0. Scope filtering, physical cross-host and
 serving gates remain open. Independent review is required before S2.9.
 
 ### S2.9 — Scoped discovery and explicit coverage

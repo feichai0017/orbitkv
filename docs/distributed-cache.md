@@ -68,6 +68,8 @@ It does not wait for any requester. A controlled requester calls
 of at most 30 seconds. Success requires a committed matching owner view at the
 target sequence and still-valid membership. Ordinary queries remain local and
 never issue this HTTP barrier or an on-demand directory RPC.
+Standalone `/cache/sync` still drains submitted local saves and returns
+`local_flush_complete`; it never fabricates an inventory fence.
 
 `GET /cache/metadata` reports membership revision/validity, explicit coverage,
 active/staging/accounted index bytes, expected and installed owner-view counts,
@@ -75,12 +77,12 @@ local journal state, stream bytes/frames, session counts, queue high-water marks
 cluster identity and the all-namespace scope digest. Etcd traffic no longer grows
 with block churn; inspect stream diagnostics separately from membership traffic.
 
-The frozen same-host A100 candidate uses native commit `f9383365` and benchmark
+The frozen same-host A100 candidate uses native commit `46f23928` and benchmark
 harness `53314d52`. A 16-owner, 60-second all-to-all run applies 245,760 changes
-at 4,083.76 changes/s, with 29.64 ms installed-visibility p99, a 7,929,600-byte
-index, 719,456-byte aggregate queue peak and zero etcd database growth during
+at 4,083.19 changes/s, with 29.67 ms installed-visibility p99, a 7,929,600-byte
+index, 652,262-byte aggregate queue peak and zero etcd database growth during
 churn. Five independent full-Manager runs each at 0 and 2 ms show median stream
-bytes of 500,172 and 78,732 (84.3% lower) and visibility p95 of 1.56 and 5.14 ms.
+bytes of 499,634 and 78,762 (84.24% lower) and visibility p95 of 2.15 and 5.09 ms.
 Both profiles have zero etcd revision change during block churn and 100% exact
 post-visibility GPU restores; model inference latency is not measured.
 
