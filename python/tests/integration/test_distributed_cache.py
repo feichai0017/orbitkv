@@ -614,4 +614,8 @@ def test_manager_process_metadata_faults_preserve_exact_dram_and_ssd(tmp_path, m
         for node, client in zip(("source", "consumer"), clients, strict=True):
             ok, message = client.unregister_context(node)
             assert ok, message
+        tensors.clear()
+        source_tensor = consumer_tensor = tensor = None
+        torch.cuda.synchronize()
+        torch.cuda.ipc_collect()
         (tmp_path / "result.json").write_text(json.dumps(result, indent=2) + "\n")
