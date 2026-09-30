@@ -241,6 +241,11 @@ pub(super) async fn follow(
     members: &mut BTreeMap<String, Member>,
     applied: &mut i64,
 ) -> Result<(), FollowError> {
+    let watch_bytes = opentelemetry::global::meter("orbitkv-metadata")
+        .u64_counter("orbitkv_metadata_watch_key_value_bytes")
+        .with_description("Received Watch event key/value payload bytes including previous values; excludes protocol framing and snapshots")
+        .with_unit("By")
+        .build();
     // No fragmentation: etcd preserves transaction atomicity. Oversized responses
     // fail the bounded gRPC decoder and are repaired through paginated bootstrap.
     let mut stream = follow_rpc(
@@ -267,6 +272,14 @@ pub(super) async fn follow(
             }
         }
         .ok_or_else(|| FollowError::Disconnected("metadata Watch closed".into()))?;
+        let received_bytes = response
+            .events()
+            .iter()
+            .flat_map(|event| [event.kv(), event.prev_kv()])
+            .flatten()
+            .map(|kv| (kv.key().len() + kv.value().len()) as u64)
+            .sum::<u64>();
+        watch_bytes.add(received_bytes, &[]);
         if cluster_id(response.header()).map_err(FollowError::Rebuild)? != expected_cluster {
             view.fence();
             return Ok(());

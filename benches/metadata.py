@@ -23,6 +23,7 @@ import requests
 from tests.integration.test_distributed_cache import (
     _cleanup_dram,
     _expected_records,
+    _group_hash,
     _member_owner,
     _metadata,
     _payload,
@@ -37,6 +38,7 @@ from tests.integration.test_distributed_cache import (
 )
 from tests.support.cache_manager import CacheManagerProcess, find_available_port
 from tests.support.cluster import etcd_server
+from tests.support.metrics import fetch_orbitkv_metrics
 
 from .artifacts import external_path
 
@@ -278,6 +280,8 @@ def run(tmp_path: Path, profile: str):
         _wait_source_records(endpoint, cluster, incarnation, expected_records, managers)
 
         source_before = _metadata(source_manager)
+        watch_metric = "orbitkv_metadata_watch_key_value_bytes_total"
+        watch_before = [fetch_orbitkv_metrics(m.http_port).get(watch_metric) for m in managers]
         etcd_before = _etcd_metrics(endpoint)
         revision_before = _etcd_revision(endpoint, f"/orbitkv/v2/{cluster}/")
         manager_before = _process_sample(manager.process.pid for manager in managers)
@@ -409,6 +413,11 @@ def run(tmp_path: Path, profile: str):
             assert {record["sequence"] for record in records.values()} == set(
                 range(target_sequence - pages + 1, target_sequence + 1)
             )
+            for block, block_hash in enumerate(hashes):
+                assert (
+                    records[(_group_hash(block_hash), "dram")]["sequence"]
+                    == target_sequence - pages + block + 1
+                )
             _restore(
                 observer_client,
                 "observer",
@@ -425,6 +434,10 @@ def run(tmp_path: Path, profile: str):
                         "sample": sample,
                         "visibility_ms": low_visibility_ms[-1],
                         "target_sequence": target_sequence,
+                        "key_generations": {
+                            identity[0].hex(): record["sequence"]
+                            for identity, record in records.items()
+                        },
                         "source_published": progress,
                         "observer_index": observed,
                         "immediate_remote_hits": immediate_remote_hits[-1],
@@ -442,6 +455,7 @@ def run(tmp_path: Path, profile: str):
         assert _member_owner(endpoint, cluster, "source") == owner
         assert all(record["stored_bytes"] == block_bytes for record in final_records.values())
         source_after = _metadata(source_manager)
+        watch_after = [fetch_orbitkv_metrics(m.http_port).get(watch_metric) for m in managers]
         observer_after = _metadata(observer_manager)
         etcd_after = _etcd_metrics(endpoint)
         revision_after = _etcd_revision(endpoint, f"/orbitkv/v2/{cluster}/")
@@ -486,6 +500,10 @@ def run(tmp_path: Path, profile: str):
                 "final_revision": final_revision,
                 "observer_revision": observer_after["index"]["revision"],
                 "publisher_counters": counters,
+                "watch_key_value_bytes": [
+                    None if before is None else after - before
+                    for before, after in zip(watch_before, watch_after, strict=True)
+                ],
                 "etcd_metrics_delta": {
                     name: etcd_after[name] - etcd_before[name] for name in etcd_before
                 },
@@ -499,6 +517,7 @@ def run(tmp_path: Path, profile: str):
             }
         )
         if profile != "legacy":
+            assert all(value is not None and value > 0 for value in result["watch_key_value_bytes"])
             assert counters["inventory_delta_input_records"] == result["expected_input_mutations"]
             assert (
                 counters["inventory_delta_output_records"]
