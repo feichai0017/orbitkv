@@ -36,7 +36,7 @@ record submitted, merged and released as different states.
 | --- | --- |
 | S0 | Agent handoff and Codex skill migration merged in PR #190. |
 | S1 | Evidence separation independently verified at `ec3add9b`; this delivery consolidates plans and release-based integration guidance. Acceptance covers S1 only; native CUDA qualification remains blocked on this host. |
-| S2 | Partial: S2.1–S2.7 are independently accepted. S2.8 owner inventory streams are implemented and pass the frozen same-host gates, pending independent review. Three-host metadata remains blocked by CPU-node SSH authorization and mutually unreachable A/B container data addresses; scoped streams, live-store soak and separate-host cells remain open under S2.9/S2.10. |
+| S2 | Partial: S2.1–S2.8 are independently accepted. Three-host metadata remains blocked by CPU-node SSH authorization and mutually unreachable A/B container data addresses; scoped streams, live-store soak and separate-host cells remain open under S2.9/S2.10. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
 | S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`. vLLM 0.30.0 remains an unqualified upgrade target, and public lifecycle/deployment gates remain open. |
@@ -321,7 +321,7 @@ substage without blocking findings. Cross-host and serving cells remain open.
 
 ### S2.8 — Owner inventory streams and coordinated protocol cutover
 
-**Implementation complete; independent qualification pending. Depends on:** accepted S2.7. Implements the
+**Independently accepted at `ad5bb8e6`. Depends on:** accepted S2.7. Implements the
 [background protocol](distributed-design.md#background-inventory-protocol),
 [barrier replacement](distributed-design.md#synchronization-api-cutover) and
 [cutover contract](distributed-design.md#cutover-rollback-and-handoff).
@@ -388,7 +388,10 @@ the 260-block TCP P2P restore. The capacity run sustains 245,760 changes at
 Manager comparisons retain exact GPU restores and zero etcd revisions; 2 ms
 reduces median stream bytes by 83.57% while visibility p95 rises from 1.68 to
 5.17 ms. Default waiting remains 0. Scope filtering, physical cross-host and
-serving gates remain open. Independent review is required before S2.9.
+serving gates remain open. Codex independently reran the frozen runtime gates and
+the 120,000-record withdrawal/membership-refresh race, then verified that the
+targeted regression passes on the fix and fails after restoring the historical
+unsafe assignment. It accepted the complete S2.8 delivery at `ad5bb8e6`.
 
 ### S2.9 — Scoped discovery and explicit coverage
 

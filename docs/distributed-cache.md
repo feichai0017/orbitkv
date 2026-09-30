@@ -14,10 +14,10 @@ Manager and use `scripts/migrate-metadata-format.py` to dry-run, archive and CAS
 the namespace before switching or rolling back. Mixed-version operation and a
 second production metadata path are not supported.
 
-The implementation is pending independent S2.8 acceptance. Its current evidence
-is same-host TCP and synthetic all-to-all stream capacity; physical cross-host,
-independent failure domains, native engine serving, RDMA, native GDS and S2.10
-long live-store/soak cells remain open.
+The all-namespace implementation is independently accepted at `ad5bb8e6`. Its
+evidence is same-host TCP and synthetic all-to-all stream capacity; physical
+cross-host, independent failure domains, native engine serving, RDMA, native GDS
+and S2.10 long live-store/soak cells remain open.
 
 ## Current owner inventory-stream protocol
 
@@ -93,7 +93,8 @@ tool's dry-run/apply/rollback retains epoch keys and removes retired block/curso
 keys. Evidence and failed development controls are under
 `/root/orbitkv-artifacts/s2-s51-20260930/s2-8-inventory-streams/` and the matching
 A100 path `/workspace/orbitkv-three-host-20260930/s2-8-inventory-streams/`.
-Independent review is pending; no cross-host or serving result is inferred.
+Independent review accepted the S2.8 scope at `ad5bb8e6`; no cross-host or
+serving result is inferred.
 
 ## Historical S2.1–S2.7 etcd-block path
 
