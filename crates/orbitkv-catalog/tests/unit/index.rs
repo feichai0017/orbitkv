@@ -296,4 +296,12 @@ fn interrupted_owner_view_is_a_partial_positive_hint() {
     let row = &index.lookup(&[key])[0];
     assert_eq!(row.coverage, DiscoveryCoverage::PartialHints);
     assert_eq!(row.replicas.len(), 1);
+    let (view, sequence) = index.owner_watermark(remote.incarnation).unwrap();
+    index
+        .confirm_progress(remote.incarnation, view, sequence)
+        .unwrap();
+    assert_eq!(
+        index.lookup(&[record(1, 1, ReplicaMedium::Dram, true).key])[0].coverage,
+        DiscoveryCoverage::CompleteAtWatermarks
+    );
 }

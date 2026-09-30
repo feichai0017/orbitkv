@@ -133,7 +133,12 @@ impl InventoryRuntime {
                 served_snapshots: Arc::new(Semaphore::new(SNAPSHOT_SESSIONS)),
                 received_snapshots: Arc::new(Semaphore::new(SNAPSHOT_SESSIONS)),
                 outbound_bytes: Arc::new(Semaphore::new(AGGREGATE_CREDIT_BYTES)),
-                outbound_pacer: Arc::new(tokio::sync::Mutex::new(tokio::time::Instant::now())),
+                outbound_pacer: Arc::new(tokio::sync::Mutex::new(
+                    tokio::time::Instant::now()
+                        - Duration::from_secs_f64(
+                            OUTBOUND_BURST_BYTES as f64 / OUTBOUND_BYTES_PER_SECOND as f64,
+                        ),
+                )),
                 awaiters: Arc::new(Semaphore::new(64)),
                 counters: Counters::default(),
             }),
@@ -260,8 +265,10 @@ impl InventoryRuntime {
                 if self
                     .shared
                     .index
-                    .owner_watermark(source.owner.incarnation)
-                    .is_some_and(|(_, sequence)| sequence >= fence.inventory_sequence)
+                    .owner_status(source.owner.incarnation)
+                    .is_some_and(|status| {
+                        status.fresh && status.applied_sequence >= fence.inventory_sequence
+                    })
                 {
                     return Ok(());
                 }
@@ -1164,6 +1171,9 @@ async fn receive_frames(
                 if snapshot_id.is_some() {
                     return Err("progress cannot commit a partial snapshot".into());
                 }
+                if progress.source_head_sequence < progress.through_sequence {
+                    return Err("inventory source head precedes covered progress".into());
+                }
                 if let Some((view_id, applied)) = runtime
                     .shared
                     .index
@@ -1184,6 +1194,19 @@ async fn receive_frames(
                             );
                         }
                     }
+                }
+                if progress.source_head_sequence == progress.through_sequence
+                    && let Some((view_id, applied)) = runtime
+                        .shared
+                        .index
+                        .owner_watermark(source.owner.incarnation)
+                    && applied == progress.through_sequence
+                {
+                    runtime.shared.index.confirm_progress(
+                        source.owner.incarnation,
+                        view_id,
+                        applied,
+                    )?;
                 }
             }
             inventory_server_frame::Body::ResetRequired(reset) => {

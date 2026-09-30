@@ -151,6 +151,29 @@ impl GlobalIndex {
         self.mark_syncing(owner);
     }
 
+    pub fn confirm_progress(
+        &self,
+        owner: Uuid,
+        view_id: Uuid,
+        applied_sequence: u64,
+    ) -> Result<(), String> {
+        let mut view = self.view.write();
+        let owner_view = view
+            .owners
+            .get_mut(&owner)
+            .ok_or("owner view is not installed")?;
+        if owner_view.retired
+            || owner_view.view_id != view_id
+            || owner_view.applied_sequence != applied_sequence
+        {
+            return Err("owner progress does not match the installed view".into());
+        }
+        owner_view.fresh = true;
+        owner_view.received_at = Instant::now();
+        view.generation = view.generation.saturating_add(1);
+        Ok(())
+    }
+
     #[allow(
         clippy::too_many_arguments,
         reason = "snapshot identity is deliberately explicit at the catalog boundary"
