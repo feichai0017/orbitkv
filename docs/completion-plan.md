@@ -36,7 +36,7 @@ record submitted, merged and released as different states.
 | --- | --- |
 | S0 | Agent handoff and Codex skill migration merged in PR #190. |
 | S1 | Evidence separation independently verified at `ec3add9b`; this delivery consolidates plans and release-based integration guidance. Acceptance covers S1 only; native CUDA qualification remains blocked on this host. |
-| S2 | Partial: S2.1–S2.5 are independently accepted; the full-Manager DRAM/io_uring SSD metadata-fault gate was accepted at `f3a44ce1`. Three-host metadata is blocked by CPU-node SSH authorization and mutually unreachable A/B container data addresses; sustained capacity and separate-host cells remain open. |
+| S2 | Partial: S2.1–S2.6 are independently accepted; sustained synthetic metadata capacity and bounded full-Manager DRAM/io_uring faults pass. S2.7 bounded coalescing is next. Three-host metadata remains blocked by CPU-node SSH authorization and mutually unreachable A/B container data addresses; live-store soak and separate-host cells remain open under S2.10. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
 | S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`. vLLM 0.30.0 remains an unqualified upgrade target, and public lifecycle/deployment gates remain open. |
@@ -246,8 +246,7 @@ large sustained-capacity envelope or an engine-serving qualification. See the
 
 ### S2.6 — Sustained metadata churn and capacity
 
-**Implementation qualification passed; independent review pending.** A 60-second
-ignored release gate uses
+**Independently accepted at `ab306965`.** A 60-second ignored release gate uses
 16 registered production Publishers and real etcd to rotate 24,576 active DRAM/
 SSD metadata records through 245,760 changes. It starts fresh complete-index
 readers during eviction rounds, checks every final key, source incarnation,
@@ -266,9 +265,11 @@ A100 host. All A100 runs sustain 4,032 changes/second; publication p95 is
 374 ms, and target convergence finishes within 454 ms. The exact final 24,576
 records, 7,015,680-byte index peak and every predeclared resource bound pass.
 The same frozen Manager/wheel also reruns the S2.5 DRAM/io_uring gate successfully
-with the new journal diagnostics. Independent review is still required. This
-one-host/one-etcd-member gate cannot close three-host or independent-failure-
-domain qualification.
+with the new journal diagnostics. Codex independently repeated the capacity gate
+at 4,032.52 changes/second and both Manager media cases in 38.34 seconds, verified
+the frozen evidence and accepted the substage with no blocking findings. This
+one-host/one-etcd-member gate cannot close three-host or independent-failure-domain
+qualification.
 
 ## S3 — Transfer lifetime and generation-safe ownership
 

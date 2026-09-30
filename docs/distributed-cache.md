@@ -655,8 +655,8 @@ A100 host. Across the three A100 runs, throughput is 4,032 changes/second,
 publication p95 is 1.02–1.04 ms, Watch p95 is 3.46–3.47 ms, fresh-reader snapshot
 max is 350–374 ms and convergence max is 443–454 ms. Every run finishes with
 24,576 exact raw etcd block records and a 7,015,680-byte index peak. Etcd grows
-69.53–69.55 MB; test-process average CPU is 0.056 cores with 16.6–20.0 MiB
-high-water growth, while etcd averages 0.38–0.53 cores with 188–191 MiB growth.
+69.53–69.55 MB; test-process average CPU is 0.056 cores with 16.2–19.6 MiB
+high-water growth, while etcd averages 0.38–0.53 cores with 184.1–186.6 MiB growth.
 All predeclared thresholds pass. The same frozen Manager and wheel rerun both
 S2.5 DRAM/io_uring cases in 38.26 seconds and observe bounded journal bytes plus
 at least one production history gap.
@@ -673,4 +673,7 @@ that confounder; S2.2 remains the delayed/partitioned Watch gate.
 
 This is a tested single-host sustained envelope, not a maximum or a multi-host
 availability result. It does not qualify three-host or independent-failure-domain
-behavior, and independent review remains pending.
+behavior. Codex independently reran the frozen capacity and Manager gates, checked
+the implementation and evidence, and accepted S2.6 at `ab306965`. Its review is
+under the local evidence root's `reviewer/` directory; complete reviewer runtime
+evidence remains in the remote root's `reviewer-run-1/` directory.
