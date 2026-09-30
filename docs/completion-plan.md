@@ -244,6 +244,25 @@ This is same-host multi-process correctness, not cross-host HA, native GDS, a
 large sustained-capacity envelope or an engine-serving qualification. See the
 [Manager process recipe](distributed-cache.md#manager-process-dram-and-io_uring-metadata-faults).
 
+### S2.6 — Sustained metadata churn and capacity
+
+**Implementation pending qualification.** A 60-second ignored release gate uses
+16 registered production Publishers and real etcd to rotate 24,576 active DRAM/
+SSD metadata records through 245,760 changes. It starts fresh complete-index
+readers during eviction rounds, checks every final key, source incarnation,
+sequence and medium, and measures publication latency, Watch lag, rebuild time,
+logical index bytes, bounded publication batches, CPU/RSS and etcd growth against
+thresholds committed before execution. Manager metadata status also exposes the
+live residency count and retained journal current/peak bytes, capacity and
+history-gap count; the accepted S2.5 gate consumes these fields on the actual
+storage path.
+
+The committed workload contract and command are in the
+[sustained-capacity recipe](distributed-cache.md#sustained-metadata-churn-and-capacity).
+Results remain pending until frozen A100 runs and independent Codex review pass.
+This one-host/one-etcd-member gate cannot close three-host or independent-failure-
+domain qualification.
+
 ## S3 — Transfer lifetime and generation-safe ownership
 
 **Depends on:** S2's metadata contracts. **Owners:** core peer/query/storage owners,

@@ -4,6 +4,8 @@ use crate::cluster::tests::gate::TcpGate;
 use orbitkv_state::{ReplicaMetadata, ReplicaRepresentation, StateKey};
 use std::time::Instant;
 
+mod capacity;
+
 fn record(sequence: u64, medium: ReplicaMedium, present: bool) -> InventoryRecord {
     InventoryRecord {
         key: StateKey::new("publication-test".into(), vec![1; 32]),

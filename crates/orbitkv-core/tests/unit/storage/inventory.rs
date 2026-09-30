@@ -53,6 +53,13 @@ fn bounded_journal_reports_snapshot_gaps_and_batch_overflow() {
         inventory.changes(0, 30),
         Err(InventoryReadError::HistoryGap)
     );
+    let status = inventory.status();
+    assert_eq!(status.sequence, 30);
+    assert_eq!(status.resident_records, 30);
+    assert!(status.journal_records < 30);
+    assert!(status.journal_bytes <= status.journal_capacity_bytes);
+    assert!(status.journal_bytes_peak <= status.journal_capacity_bytes);
+    assert_eq!(status.history_gaps, 1);
     assert_eq!(inventory.changes(29, 30).unwrap().len(), 1);
     assert_eq!(inventory.page(None).unwrap().len(), 30);
     inventory.change(

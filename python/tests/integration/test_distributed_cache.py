@@ -472,12 +472,18 @@ def test_manager_process_metadata_faults_preserve_exact_dram_and_ssd(tmp_path, m
         source_status = _metadata(source_manager)
         assert source_status["index"]["registration_valid"]
         assert source_status["inventory_sequence"] > source_status["published"]["sequence"]
+        assert source_status["inventory_journal_capacity_bytes"] == 1024
+        assert source_status["inventory_journal_bytes"] <= 1024
+        assert source_status["inventory_journal_bytes_peak"] <= 1024
         assert set(_source_records(endpoint, cluster, source_incarnation)) == _expected_records(
             control_hashes, expected_medium
         )
         gate.heal()
         transient_revision = _sync(source_manager)
         _wait_for_revision(consumer_manager, transient_revision, managers)
+        recovered_status = _metadata(source_manager)
+        assert recovered_status["inventory_history_gaps"] >= 1
+        assert recovered_status["inventory_resident_records"] == pages
         _until(
             lambda: "Inventory publication history unavailable" in source_manager.read_logs(),
             managers,
@@ -519,6 +525,8 @@ def test_manager_process_metadata_faults_preserve_exact_dram_and_ssd(tmp_path, m
             "revision": transient_revision,
             "inventory_sequence": source_status["inventory_sequence"],
             "published_sequence_before_heal": source_status["published"]["sequence"],
+            "journal_bytes_peak": recovered_status["inventory_journal_bytes_peak"],
+            "history_gaps": recovered_status["inventory_history_gaps"],
         }
 
         if medium == "dram":

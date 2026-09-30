@@ -30,7 +30,20 @@ struct Inventory {
     journal: VecDeque<InventoryRecord>,
     sequence: u64,
     journal_bytes: usize,
+    journal_bytes_peak: usize,
     byte_limit: usize,
+    history_gaps: u64,
+}
+
+#[derive(Clone, Copy, Debug, serde::Serialize)]
+pub struct InventoryStatus {
+    pub sequence: u64,
+    pub resident_records: usize,
+    pub journal_records: usize,
+    pub journal_bytes: usize,
+    pub journal_bytes_peak: usize,
+    pub journal_capacity_bytes: usize,
+    pub history_gaps: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,7 +60,9 @@ impl ResidencyInventory {
                 journal: VecDeque::new(),
                 sequence: 0,
                 journal_bytes: 0,
+                journal_bytes_peak: 0,
                 byte_limit,
+                history_gaps: 0,
             }),
             changed: Arc::new(Notify::new()),
             published: watch::channel(PublishedInventory::default()).0,
@@ -93,12 +108,27 @@ impl ResidencyInventory {
                 state.journal_bytes -= record.estimated_size();
             }
         }
+        state.journal_bytes_peak = state.journal_bytes_peak.max(state.journal_bytes);
         self.changed.notify_one();
     }
 
     pub fn sequence(&self) -> u64 {
         self.state.lock().sequence
     }
+
+    pub fn status(&self) -> InventoryStatus {
+        let state = self.state.lock();
+        InventoryStatus {
+            sequence: state.sequence,
+            resident_records: state.residents.len(),
+            journal_records: state.journal.len(),
+            journal_bytes: state.journal_bytes,
+            journal_bytes_peak: state.journal_bytes_peak,
+            journal_capacity_bytes: state.byte_limit,
+            history_gaps: state.history_gaps,
+        }
+    }
+
     pub fn changed(&self) -> Arc<Notify> {
         self.changed.clone()
     }
@@ -121,7 +151,7 @@ impl ResidencyInventory {
         after: u64,
         through: u64,
     ) -> Result<Vec<InventoryRecord>, InventoryReadError> {
-        let state = self.state.lock();
+        let mut state = self.state.lock();
         if after > through
             || through > state.sequence
             || (after != state.sequence
@@ -130,6 +160,7 @@ impl ResidencyInventory {
                     .front()
                     .is_none_or(|record| record.sequence > after + 1))
         {
+            state.history_gaps = state.history_gaps.saturating_add(1);
             return Err(InventoryReadError::HistoryGap);
         }
         if after == through {

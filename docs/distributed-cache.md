@@ -600,3 +600,50 @@ The independent accepted review and its separate A100 run are under
 This is one A100 host with multiple processes and loopback TCP. It does not
 qualify a cross-host cache, etcd HA/failure domains, native GDS, P/D, RDMA,
 engine model output or a sustained maximum operating envelope.
+
+## Sustained metadata churn and capacity
+
+S2.6 has a separate ignored release gate for a declared 60-second load. It uses
+one real etcd 3.5.21 process, 16 registered production Publishers, one stable
+Watch/GlobalIndex observer and fresh observers started during rounds 15, 30, 45
+and 60. Each source rotates a 1,536-key active window through 2,048 deterministic
+keys. Every one-second round publishes 128 deletes and 128 inserts per source,
+for 4,096 changes per round, 245,760 changes total and 24,576 final records.
+Even keys advertise DRAM and odd keys advertise SSD, so the exact oracle checks
+key, source incarnation, sequence, medium, representation and stored bytes.
+
+The fixed pre-run budgets are a 16 MiB complete index per observer, production's
+48-record and 512 KiB plus key-overhead publication transaction bounds, and a
+1 GiB etcd backend quota. The gate records transaction publication time, stable
+observer Watch application lag, fresh-reader first-snapshot and target-revision
+convergence, logical index bytes, maximum transaction records/bytes, process CPU
+ticks and average cores, RSS/high-water RSS, and etcd backend/in-use growth. It
+writes its workload contract before starting etcd and writes the final JSON before
+applying threshold assertions, so failed runs remain diagnosable.
+
+The predeclared acceptance thresholds are at least 1,500 changes/second;
+publication p95 at most 100 ms and max at most 1 second; Watch p95 at most 100 ms
+and max at most 1 second; rebuild and convergence max at most 10 seconds; no
+publication batch over its production bounds; no index over 16 MiB; test/etcd
+average CPU at most 8/4 cores; test/etcd high-water growth at most 512 MiB each;
+and etcd backend growth at most 768 MiB. The 60-second work has a 180-second hard
+limit. All exact-set assertions and the raw etcd block count must pass.
+
+Build and freeze the release test executable and etcd before running:
+
+```bash
+ETCD_BIN=/path/to/frozen/etcd \
+ORBITKV_METADATA_ARTIFACT_DIR=/var/tmp/orbitkv-evidence/s2-6-run-1 \
+  /path/to/frozen/server-tests \
+  cluster::publish::tests::capacity::sustained_churn_bounds_batches_and_rebuilds_exactly \
+  --ignored --nocapture --exact --test-threads=1
+```
+
+This gate uses synthetic residency records at the production Publisher boundary.
+S2.4 and S2.5 separately qualify storage-originated journal overflow and complete
+Manager DRAM/io_uring behavior. `GET /cache/metadata` now exposes journal records,
+current/peak retained bytes, configured capacity and production-observed history
+gaps, without adding a metadata owner or widening the storage mutation API.
+Qualification results and immutable evidence paths are added only after the
+frozen implementation and independent review runs finish. One-host execution
+does not qualify three-host or independent-failure-domain behavior.

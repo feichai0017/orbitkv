@@ -88,6 +88,12 @@ pub struct MetadataStatus {
     pub index: orbitkv_catalog::IndexStatus,
     pub published: crate::PublishedInventory,
     pub inventory_sequence: u64,
+    pub inventory_resident_records: usize,
+    pub inventory_journal_records: usize,
+    pub inventory_journal_bytes: usize,
+    pub inventory_journal_bytes_peak: usize,
+    pub inventory_journal_capacity_bytes: usize,
+    pub inventory_history_gaps: u64,
 }
 
 impl OrbitKVEngine {
@@ -545,12 +551,19 @@ impl OrbitKVEngine {
     pub fn metadata_status(&self) -> Option<MetadataStatus> {
         let index = self.storage.global_index.as_ref()?.status();
         let inventory = self.storage.inventory.as_ref()?;
+        let inventory_status = inventory.status();
         let mut published = inventory.published();
         published.ready &= index.registration_valid;
         Some(MetadataStatus {
             index,
             published,
-            inventory_sequence: inventory.sequence(),
+            inventory_sequence: inventory_status.sequence,
+            inventory_resident_records: inventory_status.resident_records,
+            inventory_journal_records: inventory_status.journal_records,
+            inventory_journal_bytes: inventory_status.journal_bytes,
+            inventory_journal_bytes_peak: inventory_status.journal_bytes_peak,
+            inventory_journal_capacity_bytes: inventory_status.journal_capacity_bytes,
+            inventory_history_gaps: inventory_status.history_gaps,
         })
     }
 

@@ -549,6 +549,11 @@ endpoint. Direct Prometheus remains available.
 `GET /cache/metadata` reports the complete local index's `revision`,
 `accounted_bytes`, `registration_valid` and `available`, plus the publisher's
 `sequence`, committed `revision`, `ready` and the current `inventory_sequence`.
+It also reports resident and retained-journal record counts, current and peak
+journal bytes, the configured journal byte capacity and observed history gaps.
+The peak is the largest retained journal after enforcing the byte limit; it does
+not include a discarded oversized tail record. History gaps count production
+publisher reads that required complete snapshot reconciliation.
 Standalone Managers return JSON `null`. `POST /cache/sync` returns a
 `published_revision`; consumers must apply that revision before a test can assert
 remote visibility. These are background synchronization boundaries, independent

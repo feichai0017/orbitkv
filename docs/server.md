@@ -34,6 +34,10 @@ orbitkv-cache-manager
 - `GET /instances`: List registered instance IDs.
 - `POST /instances/cleanup[?id=<instance_id>]`: Remove one instance, or all instances when `id` is omitted.
 - `POST /cache/memory/cleanup`: Evict resident in-memory cache blocks while preserving backing-store data. `evicted_bytes` is the cache footprint removed from residency; `reclaimed_bytes` is the pinned-pool memory actually released immediately.
+- `GET /cache/metadata`: Report complete-index coverage, publisher progress,
+  live residency count and retained journal current/peak bytes, record count,
+  capacity and history-gap count. The journal peak is measured after enforcing
+  its byte limit.
 - `POST /cache/sync`: Wait for already submitted saves and return their committed etcd `published_revision`; remote indexes may still be applying it. Returns 503 on synchronization failure or 504 after 30 seconds; it does not make SSD payloads restart-durable.
 
 ### SSD Cache
