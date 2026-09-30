@@ -467,7 +467,10 @@ def test_manager_inventory_stream_faults_preserve_exact_dram_and_ssd(tmp_path, m
         for node, client in zip(("source", "consumer"), clients, strict=True):
             ok, message = client.unregister_context(node)
             assert ok, message
+        for client in clients:
+            client.close()
         tensors.clear()
+        del tensor
         source_tensor = consumer_tensor = None
         torch.cuda.synchronize()
         torch.cuda.ipc_collect()
