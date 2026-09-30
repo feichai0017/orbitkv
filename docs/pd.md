@@ -19,7 +19,7 @@ The NIXL integration described here is
 | --- | --- | --- | --- | --- |
 | OrbitKV external cache | Repeated-prefix lookup | Cache Manager DRAM/SSD, then engine HBM | Local index; global location index + exact source grant | GPU-validated locally; multi-node experimental |
 | OrbitKV vLLM split P/D connectors | P-to-D request handoff | Decode worker's GPU KV pages | OrbitKV handshake and proxy; Mooncake TENT moves bytes | A100 same-host TCP output gate passes; H20→A100 byte gate passes, strict output gate fails |
-| OrbitKV SGLang TENT factory (patched 0.5.20) | P-to-D request handoff | Decode worker's GPU KV pages | SGLang 0.5.20 bootstrap/room protocol; OrbitKV Rust/TENT moves bytes | A100 same-host TCP output/restart gate passes; H20→A100 reuse passes, strict 64-token output gate fails |
+| OrbitKV SGLang TENT factory (patched 0.5.20) | P-to-D request handoff | Decode worker's GPU KV pages | SGLang 0.5.20 bootstrap/room protocol; OrbitKV Rust/TENT moves bytes | A100 same-host TCP output/restart gate passes; patched cross-host and fault-reclamation profiles remain unqualified |
 | Native vLLM Mooncake + OrbitKV TENT factory | P-to-D request handoff | Decode worker's GPU KV pages | Native MooncakeConnector and vllm-router 0.1.15 | Experimental pinned patches; output gate below, S3 fault/reclamation qualification open |
 | vLLM `NixlConnector` | P-to-D request handoff | Decode worker's GPU KV pages | vLLM's NIXL side channel and request router | Upstream vLLM connector, not OrbitKV code |
 
@@ -36,7 +36,9 @@ The script requires an explicit model path, uses `.venv/vllm-release` by default
 and selects `PREFILL_GPU=0`, `DECODE_GPU=1` with `MC_FORCE_TCP=1`. Override
 `VLLM_PYTHON` for another pinned environment. RDMA testing requires
 `MC_FORCE_TCP=0` plus `PREFILL_NIC` and `DECODE_NIC`; the script does not infer
-GPU/NIC affinity. Each child runs in its own process group, startup timeout is
+GPU/NIC affinity. The launcher translates `MC_FORCE_TCP=0` into an unset native
+environment variable; TENT treats even the string `0` as forcing TCP when present.
+Each child runs in its own process group, startup timeout is
 fatal, and cleanup targets only those groups.
 
 For a focused one-GPU regression, run

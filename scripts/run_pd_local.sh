@@ -13,7 +13,12 @@ DECODE_PORT="${DECODE_PORT:-8101}"
 PREFILL_PORT="${PREFILL_PORT:-8102}"
 STARTUP_TIMEOUT="${STARTUP_TIMEOUT:-600}"
 LOG_DIR="${LOG_DIR:-$(mktemp -d /tmp/orbitkv-pd.XXXXXX)}"
-export MC_FORCE_TCP="${MC_FORCE_TCP:-1}"
+# The native TENT ABI treats any presence of MC_FORCE_TCP as forcing TCP.
+case "${MC_FORCE_TCP:-1}" in
+    1) export MC_FORCE_TCP=1 ;;
+    0) unset MC_FORCE_TCP ;;
+    *) echo "MC_FORCE_TCP must be 0 (RDMA) or 1 (TCP)" >&2; exit 2 ;;
+esac
 export PYTHONHASHSEED="${PYTHONHASHSEED:-42}"
 
 [[ -x "$PYTHON" ]] || { echo "Missing vLLM environment: $PYTHON" >&2; exit 1; }
