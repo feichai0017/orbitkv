@@ -123,13 +123,12 @@ consumed released replacement and tests; this audit deletes no protection.
 | `vllm/__init__.py` | Package import surface for connector classes | Keep a small public export surface |
 | `vllm/plugin.py` | `vllm.general_plugins` entry point; registers OrbitKV connector names | Prefer one official factory entry; remove duplicate registration only when the selected release resolves the class without it |
 | `vllm/connector.py` | vLLM factory; public callback adapter and role construction; owns selected client/context | Keep public class; reduce it to configuration plus scheduler/worker delegation. Explicitly return false for best-effort delivery and divergent hits until the latter is qualified |
-| `vllm/config.py` | Connector construction and scheduler/worker helpers; owns immutable identity/topology values | Keep engine-specific identity and rank mapping; remove the unused service-state field with `state_manager.py` |
+| `vllm/config.py` | Connector construction and scheduler/worker helpers; owns immutable identity/topology values | Keep engine-specific identity and rank mapping; the unused service-state field is removed |
 | `vllm/layout.py` | Worker registration and scheduler boundary code; maps released cache groups to physical layouts | Keep while layouts are consumed; qualify against 0.30.0 HMA/MLA/Mamba specs |
 | `vllm/metadata.py` | Scheduler-to-worker and worker-to-scheduler connector callbacks | Keep; migrate to 0.30.0 transfer results without compatibility aliases |
 | `vllm/scheduler.py` | Released scheduler callbacks; owns pending queries, leases, save intents and prepared state | Keep. Replace the `BlockPool.get_cached_block` monkey patch only after all-group native-hit correctness is consumed |
 | `vllm/worker.py` | Released worker callbacks; owns GPU registrations, restore handles, CUDA dependencies and save thread | Keep. Port completion/failure callbacks to 0.30.0 and retain drain ownership |
 | `vllm/runtime.py` | Plugin-installed `GPUModelRunner.update_requests` monkey patch; drains preempted saves before page overwrite and starts restore after page setup but before recurrent preprocessing | `pre_forward` is too late for both fences. Remove only after released pre-update and post-update/preprocess contracts pass page-reuse, dense and recurrent GPU gates |
-| `vllm/state_manager.py` | Created by `connector.py`; restore errors call `mark_unavailable`; health thread can run | `is_available` has no production caller. Remove the class, context field, thread and mocks while preserving real errors and drain; no retry facade replaces them |
 | `vllm/metrics.py` | vLLM metric callbacks and scheduler/worker aggregation | Keep metrics with production consumers; remove fields only with their producer and dashboard |
 | `vllm/tp_shards.py` | Scheduler multi-Manager query fan-out for same-host TP shards | Keep bounded local responsibility; cross-host fan-out belongs to S5.5 Manager work |
 | `client/__init__.py` | Both adapters import the shared client and CUDA registration surface from here | Keep the small public export surface aligned with the native type stubs |
@@ -157,11 +156,19 @@ consumed released replacement and tests; this audit deletes no protection.
 | `sglang/config.py` | `linker.py`; owns model/adapter/representation identity | Keep engine-specific identity; add live-weight invalidation before supporting it |
 | `sglang/layout.py` | `plugin.py`/`linker.py`; maps Unified pools to GPU regions | Keep; reject unknown DSA/draft/auxiliary layouts |
 | `sglang/linker.py` | `UnifiedRadixCache`; owns OrbitKV query/load/offload queues, registrations and terminal close | Keep as the released external-linker implementation |
+| `sglang/events.py` | Graph initialization Hook and `OrbitKVLinker`; owns stable CUDA events and forward activation counters | Keep event lifetime and pre-capture registration; import GPU dependencies only when the backend is selected |
 | `sglang/recovery.py` | `plugin.py`; wraps linker/tree and overrides Mamba component checkpoint behavior | Move generic checkpoint lifecycle into released engine components before shrinking; keep safety checks until consumed |
 | `sglang/admission.py` | Three Hook-registry targets in scheduler/prefill adder; owns pending external-query admission/cancel | Replace with public pending-lookup lifecycle callbacks; hooks remain bounded 0.5.20 responsibility |
 | `sglang/completion.py` | Six Hook-registry targets in native P/D receiver/queue; observes page handoff, DecodeReady, abort/failure/release | Replace with explicit lifecycle callbacks; telemetry must not become release authority |
 | `sglang/pd.py` | Plugin; substitutes the native Mooncake transfer class with a TENT adapter | Replace with a released transport factory/backend boundary; keep native bootstrap and request states |
 | `sglang/plugin.py` | `sglang.srt.plugins` entry point; registers backend and ten internal hooks | Keep public registration; remove each internal hook only with its explicit released replacement |
+
+The subsequent S5.2 cleanup removes `vllm/state_manager.py`, its context field,
+health thread and mocks because no production query consumed its availability.
+Restore failures still propagate and retain page ownership. Scheduler and worker
+implementations are named `SchedulerAdapter` and `WorkerAdapter`; their request
+states remain unchanged. This cleanup does not establish a released replacement
+for the lifecycle dependencies inventoried above.
 
 The current SGLang Hook targets are deliberately explicit. Graph capture uses
 `TpModelWorker.init_cuda_graphs`. Request admission/cancel uses

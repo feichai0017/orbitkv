@@ -26,7 +26,7 @@ per-layer readiness, terminal completion and source retirement are separate fact
 Model/adapter identity, cache salt, state representation and shard layout must
 match. Sharing a Manager does not make engine layouts interchangeable.
 
-## LMCache reference
+## LMCache and FlexKV reference
 
 Use release source, not an unversioned example, when comparing integrations:
 
@@ -41,13 +41,28 @@ release contract. API similarity and upstream support matrices do not qualify
 OrbitKV. Do not inherit LMCache's version compatibility branches or assume its
 documented P/D prerequisite patches are in the selected engine release.
 
+The pinned [vLLM 0.29.0 FlexKV entry](https://github.com/vllm-project/vllm/blob/98dff2a81d747d1dba01a47f939f48c3526d4206/vllm/distributed/kv_transfer/kv_connector/v1/flexkv_connector.py)
+loads its separately installed implementation when the connector is constructed.
+The [SGLang 0.5.20 FlexKV integration](https://github.com/sgl-project/sglang/blob/94602c9c2b7cbdb8efd5c52802dac6a1c180089e/python/sglang/srt/mem_cache/storage/flexkv/flexkv_connector.py)
+owns task completion and connection lifetime beside the engine cache. OrbitKV
+uses these explicit backend boundaries while retaining its existing Rust client,
+Unified tree and per-layer GPU completion dependencies.
+
 ## vLLM callbacks and current internal dependencies
 
 `OrbitKVConnector` implements `KVConnectorBase_V1` and `SupportsHMA`.
-`scheduler.py` discovers legal external coverage and hands allocated pages to
-`worker.py`; the worker registers tensors, restores/saves state and reports
+`SchedulerAdapter` in `scheduler.py` discovers legal external coverage and hands
+allocated pages to `WorkerAdapter` in `worker.py`; the worker registers tensors, restores/saves state and reports
 completion through the pinned engine contract. `layout.py` and `metadata.py`
 describe actual groups and intents rather than a second cache scheduler.
+
+Only the selected role implementation is imported and constructed. Metrics come
+from that role; native sessions close if role initialization fails. The connector
+inherits unchanged optional callbacks from the pinned engine base. Its required
+layer-save callback remains explicit because saves are submitted at step end.
+Restore failures propagate with their retained GPU ownership; there is no separate
+availability flag or background health-polling thread. Plugin registration errors
+remain visible instead of silently selecting a conflicting connector.
 
 Two internal dependencies currently require deliberate replacement:
 
@@ -74,6 +89,12 @@ ready boundaries, not a pending ticket; current OrbitKV admission Hooks defer a
 pending request while allowing other requests to progress. Do not assume HiCache
 scheduler hooks run when OrbitKV rejects the separate hierarchical-cache mode.
 The [hybrid recovery contract](hybrid-recovery.md) defines legal state boundaries.
+
+`events.py` owns the CUDA events and producer/consumer counters needed before
+graph capture. `linker.py` consumes those events and owns cache queries, loads,
+offloads and registration. Plugin discovery imports neither the native extension
+nor GPU layout code; graph and admission hooks check the selected backend before
+loading OrbitKV resources. Native bindings load on first native API access.
 
 `RecoveryLinkerWrapper` and `RecurrentComponent` currently extend the released
 Full/SWA linker with checkpoint-specific behavior. The plugin also Hooks internal
@@ -268,6 +289,7 @@ configured.
 | `vllm/layout.py`, `metadata.py` | Cache groups and transfer intents |
 | `vllm/pd/` | Current experimental handoff; native reuse audit required before replacement |
 | `sglang/layout.py`, `recovery.py` | Pool geometry and state/checkpoint handoff |
+| `sglang/events.py` | Graph-capture events and per-forward restore dependencies |
 | `sglang/linker.py`, `plugin.py`, `pd.py` | External linker, registration and current P/D transport adapter |
 | `orbitkv-state`, `orbitkv-channel`, core execution owners | Shared semantics, native client and physical lifetime |
 

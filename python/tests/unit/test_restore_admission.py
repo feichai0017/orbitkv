@@ -11,7 +11,7 @@ install_connector_unit_stubs()
 
 from orbitkv import BlockHashes, QueryReady  # noqa: E402
 from orbitkv.vllm.config import ConnectorContext  # noqa: E402
-from orbitkv.vllm.scheduler import SchedulerConnector  # noqa: E402
+from orbitkv.vllm.scheduler import SchedulerAdapter  # noqa: E402
 from orbitkv.vllm.tp_shards import ShardedQueryReady  # noqa: E402
 
 
@@ -29,7 +29,7 @@ def test_enqueue_warms_only_legal_missing_prefix_without_creating_a_load(monkeyp
     setting = "ORBITKV_PREPARE_REQUESTS" if preparation else "ORBITKV_QUEUE_WARMUP"
     monkeypatch.setenv(setting, "1")
     client = MagicMock()
-    scheduler = SchedulerConnector(
+    scheduler = SchedulerAdapter(
         ConnectorContext(
             instance_id="warm",
             namespace="warm",
@@ -39,7 +39,6 @@ def test_enqueue_warms_only_legal_missing_prefix_without_creating_a_load(monkeyp
             tp_rank=0,
             device_id=0,
             client=client,
-            state_manager=MagicMock(),
         )
     )
     pool = MagicMock()
@@ -89,7 +88,7 @@ def test_owned_prefix_preparation_keeps_ordinary_lookup_and_page_lifetime(monkey
     client = MagicMock()
     client.prepare_prefix.return_value = True
     client.query_prefetch.return_value = QueryReady(hits, b"prepared", [])
-    scheduler = SchedulerConnector(
+    scheduler = SchedulerAdapter(
         ConnectorContext(
             instance_id="prepared",
             namespace="prepared",
@@ -99,7 +98,6 @@ def test_owned_prefix_preparation_keeps_ordinary_lookup_and_page_lifetime(monkey
             tp_rank=0,
             device_id=0,
             client=client,
-            state_manager=MagicMock(),
         )
     )
     req = request("queued", 64)
@@ -140,7 +138,7 @@ def step(tokens=0):
 
 @pytest.fixture
 def restoring():
-    scheduler = SchedulerConnector(
+    scheduler = SchedulerAdapter(
         ConnectorContext(
             instance_id="test",
             namespace="test",
@@ -150,7 +148,6 @@ def restoring():
             tp_rank=0,
             device_id=0,
             client=MagicMock(),
-            state_manager=MagicMock(),
         )
     )
     scheduler._tp_shard_client.query = MagicMock(return_value=ShardedQueryReady(2, (b"hold",)))

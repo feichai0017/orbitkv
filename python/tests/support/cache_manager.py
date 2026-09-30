@@ -73,7 +73,7 @@ def _torch():
 
 
 def find_available_port() -> int:
-    """Avoid outgoing TCP ports while GPU initialization delays the listener."""
+    """Find a wildcard listener port outside the outgoing TCP range."""
     low, high = map(int, Path("/proc/sys/net/ipv4/ip_local_port_range").read_text().split())
     for _ in range(128):
         port = 1024 + secrets.randbelow(65536 - 1024)
@@ -81,7 +81,8 @@ def find_available_port() -> int:
             continue
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:
-                s.bind(("127.0.0.1", port))
+                s.bind(("0.0.0.0", port))
+                s.listen(1)
             except OSError as error:
                 if error.errno != errno.EADDRINUSE:
                     raise
@@ -198,8 +199,8 @@ class ClientContext:
     Client context that represents a vLLM instance.
 
     This class abstracts a vLLM instance by managing:
-    - GPU KV cache tensors (like WorkerConnector)
-    - Query operations (like SchedulerConnector)
+    - GPU KV cache tensors (like WorkerAdapter)
+    - Query operations (like SchedulerAdapter)
     - Context registration/unregistration
     """
 
@@ -249,7 +250,7 @@ class ClientContext:
         self._registered = False
 
     def register_kv_caches(self) -> None:
-        """Register KV cache tensors with the engine server (like WorkerConnector.register_kv_caches)."""
+        """Register KV cache tensors with the engine server (like WorkerAdapter.register_kv_caches)."""
         from orbitkv.client.gpu import serialize_gpu_buffer
 
         if self._registered:
@@ -326,7 +327,7 @@ class ClientContext:
         self._registered = True
 
     def unregister_context(self) -> None:
-        """Unregister context from server (like WorkerConnector.unregister_context)."""
+        """Unregister context from server (like WorkerAdapter.unregister_context)."""
         if not self._registered:
             return
 

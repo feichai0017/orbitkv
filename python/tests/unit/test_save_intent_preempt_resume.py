@@ -28,7 +28,7 @@ install_connector_unit_stubs()
 
 from orbitkv.vllm.config import ConnectorContext, OrbitKVConnectorMode  # noqa: E402
 from orbitkv.vllm.metadata import SaveIntent  # noqa: E402
-from orbitkv.vllm.scheduler import SchedulerConnector
+from orbitkv.vllm.scheduler import SchedulerAdapter
 
 VBS = 16
 
@@ -37,7 +37,7 @@ def _hash(i: int) -> bytes:
     return hashlib.sha256(f"block_{i}".encode()).digest()
 
 
-def _make_scheduler(mode: OrbitKVConnectorMode | None = None) -> SchedulerConnector:
+def _make_scheduler(mode: OrbitKVConnectorMode | None = None) -> SchedulerAdapter:
     kwargs = {} if mode is None else {"mode": mode}
     ctx = ConnectorContext(
         instance_id="test",
@@ -48,10 +48,9 @@ def _make_scheduler(mode: OrbitKVConnectorMode | None = None) -> SchedulerConnec
         tp_rank=0,
         device_id=0,
         client=MagicMock(),
-        state_manager=MagicMock(),
         **kwargs,
     )  # type: ignore[arg-type]
-    return SchedulerConnector(ctx)
+    return SchedulerAdapter(ctx)
 
 
 def _make_request(req_id: str, num_full_blocks: int) -> SimpleNamespace:
@@ -63,7 +62,7 @@ def _make_request(req_id: str, num_full_blocks: int) -> SimpleNamespace:
 
 
 def _step(
-    scheduler: SchedulerConnector,
+    scheduler: SchedulerAdapter,
     req_id: str,
     *,
     block_ids: list[int],

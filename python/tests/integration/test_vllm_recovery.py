@@ -53,7 +53,6 @@ def context(client, *, instance_id="instance", namespace="model/layout"):
         tp_rank=0,
         device_id=0,
         client=client,
-        state_manager=MagicMock(),
     )
 
 
@@ -66,8 +65,8 @@ def test_window_and_checkpoint_restore_only_required_destinations(channel_server
 
     from orbitkv import CacheManagerClient
     from orbitkv.vllm.metadata import OrbitKVConnectorMetadata
-    from orbitkv.vllm.scheduler import SchedulerConnector
-    from orbitkv.vllm.worker import WorkerConnector
+    from orbitkv.vllm.scheduler import SchedulerAdapter
+    from orbitkv.vllm.worker import WorkerAdapter
     from tests.support.metrics import fetch_orbitkv_metrics
 
     groups = list(config().kv_cache_groups)
@@ -83,8 +82,8 @@ def test_window_and_checkpoint_restore_only_required_destinations(channel_server
     ctx = context(client, instance_id=identity, namespace=identity)
     cache_config = SimpleNamespace(kv_cache_groups=groups)
     client.start_session_watcher(identity, identity, 1, 1)
-    scheduler = SchedulerConnector(ctx, kv_cache_config=cache_config)
-    worker = WorkerConnector(ctx, kv_cache_config=cache_config)
+    scheduler = SchedulerAdapter(ctx, kv_cache_config=cache_config)
+    worker = WorkerAdapter(ctx, kv_cache_config=cache_config)
     kv = torch.arange(16 * 2 * 16 * 32, device="cuda", dtype=torch.float32).reshape(
         16, 2, 16, 1, 32
     )
@@ -193,12 +192,12 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(channel
     torch = pytest.importorskip("torch")
     from orbitkv import BlockHashes, CacheManagerClient, QueryReady
     from orbitkv.vllm.metadata import OrbitKVConnectorMetadata, SaveIntent
-    from orbitkv.vllm.worker import WorkerConnector
+    from orbitkv.vllm.worker import WorkerAdapter
 
     client = CacheManagerClient(channel_server.bootstrap_socket)
     identity = f"producer-{uuid.uuid4().hex}"
     client.start_session_watcher(identity, identity, 1, 1)
-    worker = WorkerConnector(context(client, instance_id=identity, namespace=identity))
+    worker = WorkerAdapter(context(client, instance_id=identity, namespace=identity))
     kv = torch.zeros((2, 8, 16, 1, 32), device="cuda", dtype=torch.float32)
     producer, unrelated = torch.cuda.Stream(), torch.cuda.Stream()
     unrelated_done = torch.cuda.Event()
@@ -283,7 +282,7 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(channel
 def test_native_contract_gates_vllm_hits(attention, positions, tokens, expected):
     cache_config = config()
     from orbitkv import QueryCandidates, QueryReady
-    from orbitkv.vllm.scheduler import SchedulerConnector
+    from orbitkv.vllm.scheduler import SchedulerAdapter
 
     client = MagicMock()
     client.query_candidates.side_effect = [
@@ -295,7 +294,7 @@ def test_native_contract_gates_vllm_hits(attention, positions, tokens, expected)
         if args[-1] == 0
         else QueryReady(1, b"state", [(args[6] - args[5]) // 16 - 1])
     )
-    scheduler = SchedulerConnector(context(client), kv_cache_config=cache_config)
+    scheduler = SchedulerAdapter(context(client), kv_cache_config=cache_config)
     try:
         req = SimpleNamespace(
             request_id="r",
@@ -303,7 +302,7 @@ def test_native_contract_gates_vllm_hits(attention, positions, tokens, expected)
             shared_prefix_boundary=0,
             block_hashes=[bytes([index]) for index in range(tokens // 16)],
         )
-        assert scheduler.get_num_new_matched_tokens(req, 64) == (expected, expected > 0)
+        assert scheduler.get_num_new_matched_tokens(req, 64) == (expected, False)
     finally:
         scheduler.shutdown()
 
@@ -312,14 +311,14 @@ def test_native_contract_gates_vllm_hits(attention, positions, tokens, expected)
 def test_native_contract_rejects_duplicate_or_unordered_evidence(positions):
     cache_config = config()
     from orbitkv import QueryCandidates
-    from orbitkv.vllm.scheduler import SchedulerConnector
+    from orbitkv.vllm.scheduler import SchedulerAdapter
 
     client = MagicMock()
     client.query_candidates.side_effect = [
         QueryCandidates([0, 1, 2, 3]),
         QueryCandidates(positions),
     ]
-    scheduler = SchedulerConnector(context(client), kv_cache_config=cache_config)
+    scheduler = SchedulerAdapter(context(client), kv_cache_config=cache_config)
     req = SimpleNamespace(
         request_id="r",
         num_tokens=129,
@@ -343,16 +342,16 @@ def test_complete_checkpoint_restores_through_vllm_worker(channel_server):
     cache_config = config()
     from orbitkv import CacheManagerClient
     from orbitkv.vllm.metadata import OrbitKVConnectorMetadata
-    from orbitkv.vllm.scheduler import SchedulerConnector
-    from orbitkv.vllm.worker import WorkerConnector
+    from orbitkv.vllm.scheduler import SchedulerAdapter
+    from orbitkv.vllm.worker import WorkerAdapter
     from tests.support.metrics import fetch_orbitkv_metrics
 
     client = CacheManagerClient(channel_server.bootstrap_socket)
     identity = f"recovery-{uuid.uuid4().hex}"
     ctx = context(client, instance_id=identity, namespace=identity)
     client.start_session_watcher(identity, identity, 1, 1)
-    scheduler = SchedulerConnector(ctx, kv_cache_config=cache_config)
-    worker = WorkerConnector(ctx, kv_cache_config=cache_config)
+    scheduler = SchedulerAdapter(ctx, kv_cache_config=cache_config)
+    worker = WorkerAdapter(ctx, kv_cache_config=cache_config)
     kv = torch.arange(16 * 2 * 16 * 32, device="cuda", dtype=torch.float32).reshape(
         16, 2, 16, 1, 32
     )

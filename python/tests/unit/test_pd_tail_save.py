@@ -22,7 +22,7 @@ install_connector_unit_stubs()
 
 from orbitkv.orbitkv import BlockHashes, QueryReady
 from orbitkv.vllm.config import ConnectorContext  # noqa: E402
-from orbitkv.vllm.scheduler import SchedulerConnector
+from orbitkv.vllm.scheduler import SchedulerAdapter
 
 VBS = 16  # virtual block size for these tests
 
@@ -42,7 +42,6 @@ def _make_ctx() -> ConnectorContext:
             "tp_rank": 0,
             "device_id": 0,
             "client": MagicMock(),
-            "state_manager": MagicMock(),
             "is_mla": False,
             "dcp_world_size": 1,
             "dcp_rank": 0,
@@ -66,8 +65,8 @@ def _make_request(req_id: str, prompt_len: int, full_hashes: int):
     )
 
 
-def _make_connector(req, allocated: list[int]) -> SchedulerConnector:
-    sc = SchedulerConnector(_make_ctx())
+def _make_connector(req, allocated: list[int]) -> SchedulerAdapter:
+    sc = SchedulerAdapter(_make_ctx())
     # Inject the tail machinery directly: these tests pin the TRIGGER, not
     # vLLM's hash function (covered by the cross-engine e2e gates).
     sc._tail_save_enabled = True
@@ -83,10 +82,10 @@ def _make_connector(req, allocated: list[int]) -> SchedulerConnector:
     return sc
 
 
-def _make_load_connector(req, hit_blocks: int) -> SchedulerConnector:
+def _make_load_connector(req, hit_blocks: int) -> SchedulerAdapter:
     ctx = _make_ctx()
     ctx.client.query_prefetch.return_value = QueryReady(hit_blocks, b"lease")
-    sc = SchedulerConnector(ctx)
+    sc = SchedulerAdapter(ctx)
     sc._tail_load_enabled = True
     sc._tail_hash_fn = object()
     sc._kv_cache_utils = SimpleNamespace(NONE_HASH=b"\x00" * 32)

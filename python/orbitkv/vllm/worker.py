@@ -192,7 +192,7 @@ def _registration_tensor(kv_cache) -> torch.Tensor:
     return first
 
 
-class WorkerConnector:
+class WorkerAdapter:
     """Holds worker-only state and behaviors."""
 
     # A deadline is fatal once a forward owns Restore destinations. It never
@@ -615,7 +615,6 @@ class WorkerConnector:
                 for req_id in request_ids:
                     trace_transfer("restore_link", req_id, engine="vllm", restore_key=restore.key)
         except Exception as error:
-            self._ctx.state_manager.mark_unavailable(f"restore submit exception: {error}")
             # Earlier restores can still own GPU destinations when this
             # submission fails. Keep their pages until transfer teardown.
             raise RuntimeError(
@@ -664,7 +663,6 @@ class WorkerConnector:
                 if not status.success:
                     raise RuntimeError(status.message)
             except Exception as error:
-                self._ctx.state_manager.mark_unavailable(f"forward Restore failed: {error}")
                 raise RuntimeError(
                     "OrbitKV forward consumed Restore dependencies; "
                     "GPU pages remain held until transfer teardown"
@@ -1027,4 +1025,4 @@ class WorkerConnector:
             return self._stats.clone_and_reset()
 
 
-__all__ = ["WorkerConnector"]
+__all__ = ["WorkerAdapter"]

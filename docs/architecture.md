@@ -238,7 +238,7 @@ LMCache, FlexKV and Mooncake provide implementation references for concrete
 cache mechanisms. OrbitKV applies them through its existing state contract and
 Rust resource owners. vLLM and SGLang adapters continue to supply engine layouts,
 scheduler signals and page ownership; they do not gain separate cache schedulers.
-The [integration reference](adapters.md#lmcache-reference)
+The [integration reference](adapters.md#lmcache-and-flexkv-reference)
 maps released LMCache callback and P/D contracts to OrbitKV ownership;
 remaining execution work is tracked only in the completion plan.
 
