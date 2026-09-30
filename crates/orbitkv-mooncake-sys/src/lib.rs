@@ -129,6 +129,7 @@ type SubmitWithNotify = unsafe extern "C" fn(
 ) -> c_int;
 type TransferStatusFn =
     unsafe extern "C" fn(NativeEngine, BatchId, usize, *mut TransferStatus) -> c_int;
+type BatchStatusFn = unsafe extern "C" fn(NativeEngine, BatchId, *mut TransferStatus) -> c_int;
 type CancelTask = unsafe extern "C" fn(NativeEngine, BatchId, usize) -> c_int;
 type FreeBatch = unsafe extern "C" fn(NativeEngine, BatchId) -> c_int;
 type ReceiveNotifications = unsafe extern "C" fn(NativeEngine, *mut NotificationInfo) -> c_int;
@@ -153,6 +154,7 @@ struct Api {
     submit: Submit,
     submit_with_notify: SubmitWithNotify,
     transfer_status: TransferStatusFn,
+    batch_status: BatchStatusFn,
     cancel_task: CancelTask,
     free_batch: FreeBatch,
     receive_notifications: ReceiveNotifications,
@@ -245,6 +247,7 @@ unsafe fn load_api_from(directory: &Path) -> Result<Api, String> {
         submit: unsafe { symbol(&library, b"tent_submit\0")? },
         submit_with_notify: unsafe { symbol(&library, b"tent_submit_notif\0")? },
         transfer_status: unsafe { symbol(&library, b"tent_task_status\0")? },
+        batch_status: unsafe { symbol(&library, b"tent_overall_status\0")? },
         cancel_task: unsafe { symbol(&library, b"tent_cancel_task\0")? },
         free_batch: unsafe { symbol(&library, b"tent_free_batch\0")? },
         receive_notifications: unsafe { symbol(&library, b"tent_recv_notifs\0")? },
@@ -402,6 +405,14 @@ pub unsafe fn transfer_status(
     status: &mut TransferStatus,
 ) -> c_int {
     unsafe { (api().transfer_status)(engine, batch, task, status) }
+}
+
+pub unsafe fn batch_status(
+    engine: NativeEngine,
+    batch: BatchId,
+    status: &mut TransferStatus,
+) -> c_int {
+    unsafe { (api().batch_status)(engine, batch, status) }
 }
 
 pub unsafe fn cancel_task(engine: NativeEngine, batch: BatchId, task: usize) -> c_int {

@@ -271,6 +271,22 @@ impl TransferEngine {
                     native::cancel_task(self.native, batch, task)
                 })
             },
+            || {
+                let mut status = native::TransferStatus {
+                    status: STATUS_WAITING,
+                    transferred_bytes: 0,
+                };
+                check("tent_overall_status", unsafe {
+                    native::batch_status(self.native, batch, &mut status)
+                })?;
+                if status.status != STATUS_COMPLETED {
+                    return Err(MooncakeError::TransferFailed {
+                        task: 0,
+                        state: status.status,
+                    });
+                }
+                Ok(status.transferred_bytes as usize)
+            },
             || unsafe { native::free_batch(self.native, batch) == 0 },
         )
     }
@@ -557,11 +573,12 @@ fn drain_batch(
     submitted: Result<()>,
     mut poll: impl FnMut(usize) -> Result<native::TransferStatus>,
     mut cancel: impl FnMut(usize) -> Result<()>,
+    mut completed_bytes: impl FnMut() -> Result<usize>,
     mut free: impl FnMut() -> bool,
 ) -> Result<usize> {
     let started = Instant::now();
     let mut completed = vec![false; tasks];
-    let mut total = 0usize;
+    let mut total = None;
     let mut failure = submitted.err();
     let mut timed_out = false;
     let mut cancel_sent = vec![false; tasks];
@@ -576,7 +593,6 @@ fn drain_batch(
             }
             match poll(task) {
                 Ok(status) if status.status == STATUS_COMPLETED => {
-                    total = total.saturating_add(status.transferred_bytes as usize);
                     *done = true;
                 }
                 Ok(status) if matches!(status.status, STATUS_WAITING | STATUS_PENDING) => {}
@@ -622,12 +638,22 @@ fn drain_batch(
                 cancel_sent[task] = true;
             }
         }
-        if completed.iter().all(|done| *done) && free() {
-            return match failure {
-                Some(error) => Err(error),
-                None if timed_out => Err(MooncakeError::Timeout),
-                None => Ok(total),
-            };
+        if completed.iter().all(|done| *done) {
+            // TENT can merge public descriptors into one physical task. Its
+            // per-task counters then overlap; only the batch counter is additive.
+            if total.is_none() && failure.is_none() && !timed_out {
+                match completed_bytes() {
+                    Ok(bytes) => total = Some(bytes),
+                    Err(error) => failure = Some(error),
+                }
+            }
+            if free() {
+                return match failure {
+                    Some(error) => Err(error),
+                    None if timed_out => Err(MooncakeError::Timeout),
+                    None => Ok(total.unwrap_or(0)),
+                };
+            }
         }
         if started.elapsed() < Duration::from_millis(1) {
             std::thread::yield_now();
