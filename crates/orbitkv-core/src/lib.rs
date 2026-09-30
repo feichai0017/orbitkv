@@ -42,7 +42,7 @@ pub use query::{QueryAdmission, QueryMode, QueryOwner, QueryReservation};
 pub use storage::MemoryCacheCleanupStats;
 pub use storage::inventory::{
     DEFAULT_INVENTORY_JOURNAL_BYTES, InventoryDelta, InventoryReadError, InventoryStatus,
-    PublishedInventory, ResidencyInventory,
+    ResidencyInventory,
 };
 pub use storage::ssd::metadata::SlotMeta;
 pub use storage::ssd::{

@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::ops::Bound::{Excluded, Unbounded};
-use std::sync::Arc;
 use std::time::Duration;
 
 use orbitkv_state::{
@@ -8,23 +7,15 @@ use orbitkv_state::{
     ReplicaMetadata, StateKey,
 };
 use parking_lot::Mutex;
-use tokio::sync::{Notify, watch};
+use tokio::sync::watch;
 
 pub const DEFAULT_INVENTORY_JOURNAL_BYTES: usize = 16 * 1024 * 1024;
 
-#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
-pub struct PublishedInventory {
-    pub sequence: u64,
-    pub revision: i64,
-    pub ready: bool,
-}
-
 pub struct ResidencyInventory {
     state: Mutex<Inventory>,
-    changed: Arc<Notify>,
-    flush_requested: Arc<Notify>,
+    changed: watch::Sender<u64>,
+    flush_requested: watch::Sender<u64>,
     publish_coalesce_window: Duration,
-    published: watch::Sender<PublishedInventory>,
 }
 
 struct Inventory {
@@ -39,7 +30,7 @@ struct Inventory {
     delta_input_records: u64,
     delta_input_bytes: u64,
     delta_output_records: u64,
-    delta_transactions: u64,
+    delta_frames: u64,
     delta_encoded_bytes: u64,
     coalescing_windows: u64,
     coalescing_wait_micros: u64,
@@ -58,7 +49,7 @@ pub struct InventoryStatus {
     pub delta_input_records: u64,
     pub delta_input_bytes: u64,
     pub delta_output_records: u64,
-    pub delta_transactions: u64,
+    pub delta_frames: u64,
     pub delta_encoded_bytes: u64,
     pub coalescing_windows: u64,
     pub coalescing_wait_micros: u64,
@@ -105,15 +96,14 @@ impl ResidencyInventory {
                 delta_input_records: 0,
                 delta_input_bytes: 0,
                 delta_output_records: 0,
-                delta_transactions: 0,
+                delta_frames: 0,
                 delta_encoded_bytes: 0,
                 coalescing_windows: 0,
                 coalescing_wait_micros: 0,
             }),
-            changed: Arc::new(Notify::new()),
-            flush_requested: Arc::new(Notify::new()),
+            changed: watch::channel(0).0,
+            flush_requested: watch::channel(0).0,
             publish_coalesce_window,
-            published: watch::channel(PublishedInventory::default()).0,
         })
     }
 
@@ -157,7 +147,17 @@ impl ResidencyInventory {
             }
         }
         state.journal_bytes_peak = state.journal_bytes_peak.max(state.journal_bytes);
-        self.changed.notify_one();
+        self.changed.send_replace(state.sequence);
+    }
+
+    #[cfg(feature = "test-hooks")]
+    pub fn test_change(
+        &self,
+        key: &StateKey,
+        medium: ReplicaMedium,
+        metadata: Option<ReplicaMetadata>,
+    ) {
+        self.change(key, medium, metadata);
     }
 
     pub fn sequence(&self) -> u64 {
@@ -178,43 +178,45 @@ impl ResidencyInventory {
             delta_input_records: state.delta_input_records,
             delta_input_bytes: state.delta_input_bytes,
             delta_output_records: state.delta_output_records,
-            delta_transactions: state.delta_transactions,
+            delta_frames: state.delta_frames,
             delta_encoded_bytes: state.delta_encoded_bytes,
             coalescing_windows: state.coalescing_windows,
             coalescing_wait_micros: state.coalescing_wait_micros,
         }
     }
 
-    pub fn changed(&self) -> Arc<Notify> {
-        self.changed.clone()
+    pub fn changed(&self) -> watch::Receiver<u64> {
+        self.changed.subscribe()
     }
 
     pub async fn wait_to_publish(&self, after: u64) -> Duration {
         let window = self.publish_coalesce_window;
-        if window.is_zero() || self.state.lock().flush_through_sequence > after {
+        let mut change = self.changed.subscribe();
+        let mut flush = self.flush_requested.subscribe();
+        if window.is_zero() || *flush.borrow() > after {
             return Duration::ZERO;
         }
         let started = tokio::time::Instant::now();
         let maximum = started + Duration::from_millis(5);
         let mut quiet = (started + window).min(maximum);
         loop {
-            let change = self.changed.notified();
-            let flush = self.flush_requested.notified();
-            tokio::pin!(change, flush);
-            change.as_mut().enable();
-            flush.as_mut().enable();
-            if self.state.lock().flush_through_sequence > after {
+            if *flush.borrow() > after {
                 break;
             }
             tokio::select! {
                 _ = tokio::time::sleep_until(quiet) => break,
                 _ = tokio::time::sleep_until(maximum) => break,
-                _ = &mut flush => {
-                    if self.state.lock().flush_through_sequence > after {
+                result = flush.changed() => {
+                    if result.is_err() || *flush.borrow() > after {
                         break;
                     }
                 },
-                _ = &mut change => quiet = (tokio::time::Instant::now() + window).min(maximum),
+                result = change.changed() => {
+                    if result.is_err() {
+                        break;
+                    }
+                    quiet = (tokio::time::Instant::now() + window).min(maximum);
+                },
             }
         }
         started.elapsed()
@@ -289,12 +291,12 @@ impl ResidencyInventory {
         })
     }
 
-    pub fn record_delta_publication(
+    pub fn record_delta_stream(
         &self,
         input_records: usize,
         input_bytes: usize,
         output_records: usize,
-        transactions: usize,
+        frames: usize,
         encoded_bytes: usize,
         coalescing_wait: Duration,
     ) {
@@ -302,13 +304,13 @@ impl ResidencyInventory {
         let input_records = u64::try_from(input_records).unwrap_or(u64::MAX);
         let input_bytes = u64::try_from(input_bytes).unwrap_or(u64::MAX);
         let output_records = u64::try_from(output_records).unwrap_or(u64::MAX);
-        let transactions = u64::try_from(transactions).unwrap_or(u64::MAX);
+        let frames = u64::try_from(frames).unwrap_or(u64::MAX);
         let encoded_bytes = u64::try_from(encoded_bytes).unwrap_or(u64::MAX);
         let coalescing_wait = u64::try_from(coalescing_wait.as_micros()).unwrap_or(u64::MAX);
         state.delta_input_records = state.delta_input_records.saturating_add(input_records);
         state.delta_input_bytes = state.delta_input_bytes.saturating_add(input_bytes);
         state.delta_output_records = state.delta_output_records.saturating_add(output_records);
-        state.delta_transactions = state.delta_transactions.saturating_add(transactions);
+        state.delta_frames = state.delta_frames.saturating_add(frames);
         state.delta_encoded_bytes = state.delta_encoded_bytes.saturating_add(encoded_bytes);
         state.coalescing_windows = state.coalescing_windows.saturating_add(1);
         state.coalescing_wait_micros = state.coalescing_wait_micros.saturating_add(coalescing_wait);
@@ -324,32 +326,20 @@ impl ResidencyInventory {
                 .is_some_and(|resident| resident.sequence == record.sequence)
     }
 
-    pub fn published(&self) -> PublishedInventory {
-        *self.published.borrow()
-    }
-
-    pub fn acknowledge(&self, progress: PublishedInventory) {
-        self.published.send_replace(progress);
-    }
-
-    pub async fn flush(&self) -> Result<i64, String> {
-        let mut progress = self.published.subscribe();
+    pub fn request_flush(&self, target: u64) {
         let target = {
             let mut state = self.state.lock();
-            state.flush_through_sequence = state.flush_through_sequence.max(state.sequence);
+            state.flush_through_sequence = state.flush_through_sequence.max(target);
             state.flush_through_sequence
         };
-        self.flush_requested.notify_one();
-        self.changed.notify_one();
-        tokio::time::timeout(Duration::from_secs(30), async {
-            let ack = progress
-                .wait_for(|ack| ack.ready && ack.sequence >= target)
-                .await
-                .map_err(|_| "inventory publisher stopped".to_string())?;
-            Ok(ack.revision)
-        })
-        .await
-        .map_err(|_| "inventory publication timed out".to_string())?
+        self.flush_requested.send_replace(target);
+        self.changed.send_replace(self.sequence());
+    }
+
+    pub fn capture_fence(&self) -> u64 {
+        let target = self.sequence();
+        self.request_flush(target);
+        target
     }
 }
 

@@ -4,21 +4,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use etcd_client::{Client, EventType, GetOptions, KeyValue, WatchOptions};
-use orbitkv_catalog::{GlobalIndex, IndexUpdate, MembershipView};
-use orbitkv_state::InventoryRecord;
-use prost::Message;
+use orbitkv_catalog::MembershipView;
 
-use super::publish::{MAX_RECORD_BYTES, Progress, record_key};
-use super::{
-    BootstrapError, MAX_MEMBERS, MEMBER_BYTES, Member, RPC_TIMEOUT, cluster_id, parse_label, rpc,
-};
-
-const FORMAT: &[u8] = b"orbitkv/global-index/v2";
+use super::format::ClusterFormat;
+use super::inventory::InventoryRuntime;
+use super::{MAX_MEMBERS, MEMBER_BYTES, Member, RPC_TIMEOUT, cluster_id, parse_label, rpc};
 
 pub(super) enum FollowError {
     Disconnected(String),
     Rebuild(String),
 }
+
 impl From<etcd_client::Error> for FollowError {
     fn from(error: etcd_client::Error) -> Self {
         match &error {
@@ -40,9 +36,6 @@ fn disconnected_status(status: &tonic::Status) -> bool {
     ) {
         return true;
     }
-    // tonic maps an HTTP/2 connection reset while reading a Watch body to
-    // Unknown. Resume from the last applied revision; etcd requests a rebuild
-    // if that history was compacted while the connection was unavailable.
     status.code() == tonic::Code::Unknown
         && (status.message().contains("h2 protocol error")
             || status.message().contains("transport error"))
@@ -61,42 +54,44 @@ pub(super) async fn run(
     mut client: Client,
     prefix: String,
     expected_cluster: u64,
+    format: ClusterFormat,
     registration: Member,
     view: Arc<MembershipView>,
-    index: Arc<GlobalIndex>,
+    inventory: InventoryRuntime,
 ) {
     let mut snapshot = None;
     while view.registration_valid() {
         if snapshot.is_none() {
-            index.reset();
             view.invalidate_snapshot();
+            inventory.membership_unavailable();
             match bootstrap(
                 &mut client,
                 &prefix,
                 expected_cluster,
+                &format,
                 &registration,
                 &view,
-                &index,
+                &inventory,
             )
             .await
             {
                 Ok(state) => snapshot = Some(state),
                 Err(error) => {
-                    index.reset();
-                    log::warn!("Global index snapshot needs repair: {error}");
+                    log::warn!("Membership snapshot needs repair: {error}");
                     tokio::time::sleep(Duration::from_secs(1)).await;
                     continue;
                 }
             }
         }
-        let (members, revision) = snapshot.as_mut().expect("completed metadata snapshot");
+        let (members, revision) = snapshot.as_mut().expect("completed membership snapshot");
         match follow(
             &mut client,
             &prefix,
             expected_cluster,
+            &format,
             &registration,
             &view,
-            &index,
+            &inventory,
             members,
             revision,
         )
@@ -104,65 +99,30 @@ pub(super) async fn run(
         {
             Ok(()) => break,
             Err(FollowError::Disconnected(error)) => {
-                log::warn!("Metadata Watch will resume at revision {revision}: {error}");
+                log::warn!("Membership Watch will resume at revision {revision}: {error}");
             }
             Err(FollowError::Rebuild(error)) => {
-                log::warn!("Metadata Watch requires a fresh snapshot: {error}");
-                index.reset();
+                log::warn!("Membership Watch requires a fresh snapshot: {error}");
                 view.invalidate_snapshot();
+                inventory.membership_unavailable();
                 snapshot = None;
             }
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
-    index.reset();
     view.invalidate_snapshot();
+    inventory.membership_unavailable();
 }
 
-pub(super) async fn install_format(
+async fn bootstrap(
     client: &mut Client,
     prefix: &str,
     expected_cluster: u64,
-) -> Result<(), BootstrapError> {
-    use etcd_client::{Compare, CompareOp, Txn, TxnOp};
-    let key = format!("{prefix}format");
-    let response = rpc(client.txn(
-        Txn::new()
-            .when([Compare::version(key.clone(), CompareOp::Equal, 0)])
-            .and_then([TxnOp::put(key.clone(), FORMAT, None)]),
-    ))
-    .await?;
-    if cluster_id(response.header()).map_err(BootstrapError::Rejected)? != expected_cluster {
-        return Err(BootstrapError::Rejected(
-            "coordinator changed during format registration".into(),
-        ));
-    }
-    let response = rpc(client.get(key, None)).await?;
-    if cluster_id(response.header()).map_err(BootstrapError::Rejected)? != expected_cluster
-        || response.kvs().len() != 1
-        || response.kvs()[0].value() != FORMAT
-        || response.kvs()[0].lease() != 0
-    {
-        return Err(BootstrapError::Rejected(
-            "cluster metadata format differs".into(),
-        ));
-    }
-    Ok(())
-}
-
-pub(super) async fn bootstrap(
-    client: &mut Client,
-    prefix: &str,
-    expected_cluster: u64,
+    expected_format: &ClusterFormat,
     registration: &Member,
     view: &MembershipView,
-    index: &GlobalIndex,
+    inventory: &InventoryRuntime,
 ) -> Result<(BTreeMap<String, Member>, i64), String> {
-    // A page can contain 128 maximum-sized records plus keys/protobuf overhead.
-    // Keep snapshot decoding bounded while allowing every valid record shape.
-    let mut pages = client
-        .kv_client()
-        .max_decoding_message_size(128 * (MAX_RECORD_BYTES + 1024));
     let mut members = BTreeMap::new();
     let mut start = prefix.as_bytes().to_vec();
     let mut end = start.clone();
@@ -170,7 +130,7 @@ pub(super) async fn bootstrap(
     let mut revision = 0;
     let mut format_seen = false;
     loop {
-        let response = rpc(pages.get(
+        let response = rpc(client.get(
             start.clone(),
             Some(
                 GetOptions::new()
@@ -182,33 +142,31 @@ pub(super) async fn bootstrap(
         .await?;
         if cluster_id(response.header())? != expected_cluster {
             view.fence();
-            return Err("coordinator changed during snapshot".into());
+            return Err("coordinator changed during membership snapshot".into());
         }
         if revision == 0 {
             revision = response
                 .header()
-                .ok_or("missing snapshot revision")?
+                .ok_or("missing membership snapshot revision")?
                 .revision();
         }
-        let mut updates = Vec::new();
         for kv in response.kvs() {
             decode(
                 prefix,
                 kv,
                 false,
+                expected_format,
                 &mut members,
-                &mut updates,
                 &mut format_seen,
             )?;
         }
-        index.apply(revision, updates)?;
         if !response.more() {
             break;
         }
         start = response
             .kvs()
             .last()
-            .ok_or("empty continuation page")?
+            .ok_or("empty membership continuation page")?
             .key()
             .to_vec();
         start.push(0);
@@ -218,36 +176,25 @@ pub(super) async fn bootstrap(
         view.fence();
         return Err("cluster format or own registration changed".into());
     }
-    view.replace_members(
-        members
-            .values()
-            .map(|member| (member.node_id.clone(), member.owner.clone())),
-    );
-    index.finish_snapshot(revision)?;
+    install_members(view, inventory, revision, &members);
     Ok((members, revision))
 }
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "explicit revision, membership and index owners share one Watch boundary"
+    reason = "membership identity and inventory consumers share one Watch boundary"
 )]
-pub(super) async fn follow(
+async fn follow(
     client: &mut Client,
     prefix: &str,
     expected_cluster: u64,
+    expected_format: &ClusterFormat,
     registration: &Member,
     view: &MembershipView,
-    index: &GlobalIndex,
+    inventory: &InventoryRuntime,
     members: &mut BTreeMap<String, Member>,
     applied: &mut i64,
 ) -> Result<(), FollowError> {
-    let watch_bytes = opentelemetry::global::meter("orbitkv-metadata")
-        .u64_counter("orbitkv_metadata_watch_key_value_bytes")
-        .with_description("Received Watch event key/value payload bytes including previous values; excludes protocol framing and snapshots")
-        .with_unit("By")
-        .build();
-    // No fragmentation: etcd preserves transaction atomicity. Oversized responses
-    // fail the bounded gRPC decoder and are repaired through paginated bootstrap.
     let mut stream = follow_rpc(
         client.watch(
             prefix,
@@ -271,15 +218,7 @@ pub(super) async fn follow(
                 continue;
             }
         }
-        .ok_or_else(|| FollowError::Disconnected("metadata Watch closed".into()))?;
-        let received_bytes = response
-            .events()
-            .iter()
-            .flat_map(|event| [event.kv(), event.prev_kv()])
-            .flatten()
-            .map(|kv| (kv.key().len() + kv.value().len()) as u64)
-            .sum::<u64>();
-        watch_bytes.add(received_bytes, &[]);
+        .ok_or_else(|| FollowError::Disconnected("membership Watch closed".into()))?;
         if cluster_id(response.header()).map_err(FollowError::Rebuild)? != expected_cluster {
             view.fence();
             return Ok(());
@@ -294,21 +233,20 @@ pub(super) async fn follow(
             continue;
         }
         let mut through = *applied;
-        let mut updates = Vec::new();
         let mut format_valid = true;
         for event in response.events() {
             let kv = event
                 .kv()
-                .ok_or_else(|| FollowError::Rebuild("missing event key".into()))?;
+                .ok_or_else(|| FollowError::Rebuild("missing membership event key".into()))?;
             if kv.mod_revision() <= *applied {
                 continue;
             }
             through = through.max(kv.mod_revision());
             let deleted = event.event_type() == EventType::Delete;
             let value = if deleted {
-                event
-                    .prev_kv()
-                    .ok_or_else(|| FollowError::Rebuild("delete lacks previous metadata".into()))?
+                event.prev_kv().ok_or_else(|| {
+                    FollowError::Rebuild("membership delete lacks previous value".into())
+                })?
             } else {
                 kv
             };
@@ -316,8 +254,8 @@ pub(super) async fn follow(
                 prefix,
                 value,
                 deleted,
+                expected_format,
                 members,
-                &mut updates,
                 &mut format_valid,
             )
             .map_err(FollowError::Rebuild)?;
@@ -334,25 +272,32 @@ pub(super) async fn follow(
                 .max(through);
         }
         if through > *applied {
-            view.replace_members(
-                members
-                    .values()
-                    .map(|member| (member.node_id.clone(), member.owner.clone())),
-            );
-            index
-                .apply(through, updates)
-                .map_err(FollowError::Rebuild)?;
+            install_members(view, inventory, through, members);
             *applied = through;
         }
     }
+}
+
+fn install_members(
+    view: &MembershipView,
+    inventory: &InventoryRuntime,
+    revision: i64,
+    members: &BTreeMap<String, Member>,
+) {
+    view.replace_members(
+        members
+            .values()
+            .map(|member| (member.node_id.clone(), member.owner.clone())),
+    );
+    inventory.replace_members(revision, members.clone());
 }
 
 fn decode(
     prefix: &str,
     kv: &KeyValue,
     deleted: bool,
+    expected_format: &ClusterFormat,
     members: &mut BTreeMap<String, Member>,
-    updates: &mut Vec<IndexUpdate>,
     format_valid: &mut bool,
 ) -> Result<(), String> {
     let suffix = kv
@@ -360,65 +305,31 @@ fn decode(
         .map_err(|error| error.to_string())?
         .strip_prefix(prefix)
         .ok_or("metadata key outside cluster")?;
-    if kv.value().len() > MAX_RECORD_BYTES {
-        return Err("metadata record exceeds byte limit".into());
+    if kv.value().len() > MEMBER_BYTES {
+        return Err("membership record exceeds byte limit".into());
     }
     if suffix == "format" {
-        *format_valid = !deleted && kv.value() == FORMAT && kv.lease() == 0;
+        *format_valid = !deleted
+            && kv.lease() == 0
+            && ClusterFormat::decode(kv.value())
+                .is_ok_and(|observed| observed.same_identity(expected_format));
         if !*format_valid {
-            return Err("cluster metadata format changed".into());
+            return Err("cluster inventory format changed".into());
         }
     } else if let Some(node) = suffix.strip_prefix("members/") {
         let member = decode_member(node, kv)?;
         if deleted {
             members.remove(node);
-            updates.push(IndexUpdate::RemoveOwner(member.owner.incarnation));
         } else {
-            if let Some(old) = members.insert(node.into(), member.clone())
-                && old.owner != member.owner
-            {
-                updates.push(IndexUpdate::RemoveOwner(old.owner.incarnation));
-            }
+            members.insert(node.into(), member);
         }
         if members.len() > MAX_MEMBERS {
             return Err("metadata member limit exceeded".into());
         }
-    } else if let Some(owner) = suffix.strip_prefix("publishers/") {
-        let owner = owner.parse().map_err(|_| "invalid publisher incarnation")?;
-        if kv.lease() == 0 {
-            return Err("publisher is not leased".into());
-        }
-        let progress: Progress =
-            serde_json::from_slice(kv.value()).map_err(|error| error.to_string())?;
-        if deleted {
-            updates.push(IndexUpdate::RemoveOwner(owner));
-        } else {
-            updates.push(IndexUpdate::Publisher {
-                owner,
-                ready: progress.ready,
-            });
-        }
-    } else if let Some(block) = suffix.strip_prefix("blocks/") {
-        let owner = block
-            .split('/')
-            .next()
-            .ok_or("missing block owner")?
-            .parse()
-            .map_err(|_| "invalid block owner")?;
-        if kv.lease() == 0 {
-            return Err("block metadata is not leased".into());
-        }
-        let wire = orbitkv_proto::proto::engine::InventoryRecord::decode(kv.value())
-            .map_err(|error| error.to_string())?;
-        let mut record: InventoryRecord = wire.into();
-        if !record.present || record_key(prefix, owner, &record)?.as_bytes() != kv.key() {
-            return Err("block metadata key/value mismatch".into());
-        }
-        record.present = !deleted;
-        updates.push(IndexUpdate::Residency { owner, record });
     } else if let Some(node) = suffix.strip_prefix("epochs/") {
         parse_label(node)?;
-        if kv.lease() != 0
+        if deleted
+            || kv.lease() != 0
             || kv
                 .value_str()
                 .map_err(|error| error.to_string())?
@@ -428,7 +339,7 @@ fn decode(
             return Err("invalid persistent node epoch".into());
         }
     } else {
-        return Err("unknown cluster metadata record".into());
+        return Err("block metadata is forbidden by the inventory-stream format".into());
     }
     Ok(())
 }
@@ -448,6 +359,7 @@ fn decode_member(node: &str, kv: &KeyValue) -> Result<Member, String> {
         .map_err(|_| "invalid member endpoint")?;
     if node != member.node_id
         || member.epoch == 0
+        || member.protocol != orbitkv_state::INVENTORY_STREAM_PROTOCOL
         || member.owner.incarnation.is_nil()
         || address.ip().is_unspecified()
         || address.port() == 0
