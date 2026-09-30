@@ -79,7 +79,12 @@ pub(super) async fn run(
             }
             let records = match inventory.changes(publisher.progress.sequence, through) {
                 Ok(records) => records,
-                Err(_) => break,
+                Err(error) => {
+                    log::warn!(
+                        "Inventory publication history unavailable; rebuilding complete snapshot: {error:?}"
+                    );
+                    break;
+                }
             };
             for batch in records.chunks(MAX_BATCH_RECORDS) {
                 let sequence = batch

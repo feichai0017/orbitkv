@@ -382,6 +382,7 @@ class CacheManagerProcess:
         ssd_read_path: str | None = None,
         query_budget: str | None = None,
         query_instance_budget: str | None = None,
+        log_path: Path | None = None,
         extra_args: tuple[str, ...] = (),
     ):
         self.port = port
@@ -397,8 +398,10 @@ class CacheManagerProcess:
         self.ssd_read_path = ssd_read_path
         self.query_budget = query_budget
         self.query_instance_budget = query_instance_budget
+        self._configured_log_path = log_path
         self.extra_args = extra_args
         self.process: subprocess.Popen | None = None
+        self.command: tuple[str, ...] | None = None
         self._binary_path = find_cache_manager_binary()
         self._log_path: Path | None = None
         self._log_file = None
@@ -470,14 +473,20 @@ class CacheManagerProcess:
             )
         cmd.extend(["--bootstrap-socket", self.bootstrap_socket])
         cmd.extend(self.extra_args)
+        self.command = tuple(cmd)
 
         # Route logs to a tempfile so the pipe buffer cannot fill up and
         # block the server mid-startup, and so tests can read the log
         # contents via read_logs() (used by integration tests that assert
         # on server-side log signals).
-        fd, path = tempfile.mkstemp(prefix=f"orbitkv-cache-manager-{self.port}-", suffix=".log")
-        self._log_path = Path(path)
-        self._log_file = os.fdopen(fd, "wb")
+        if self._configured_log_path is not None:
+            self._log_path = self._configured_log_path
+            self._log_path.parent.mkdir(parents=True, exist_ok=True)
+            self._log_file = self._log_path.open("wb")
+        else:
+            fd, path = tempfile.mkstemp(prefix=f"orbitkv-cache-manager-{self.port}-", suffix=".log")
+            self._log_path = Path(path)
+            self._log_file = os.fdopen(fd, "wb")
 
         try:
             self.process = subprocess.Popen(
@@ -531,6 +540,6 @@ class CacheManagerProcess:
             with contextlib.suppress(OSError):
                 self._log_file.close()
             self._log_file = None
-        if self._log_path and self._log_path.exists():
+        if self._configured_log_path is None and self._log_path and self._log_path.exists():
             with contextlib.suppress(OSError):
                 self._log_path.unlink()

@@ -461,7 +461,7 @@ process-wide counters are not instrumentation of pure service time.
 
 Median of three runs on each checked host:
 
-| Host | Sources / records | Publish p50 / p95, ms | Watch p50 / p95, ms | Rebuild, ms | Index peak | Etcd growth | Test / etcd CPU ticks | Test / etcd RSS delta |
+| Host | Sources / records | Publish p50 / p95, ms | Watch p50 / p95, ms | Rebuild, ms | Index before rebuild | Etcd growth | Test / etcd CPU ticks | Test / etcd RSS delta |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | H20 container | 1 / 512 | 0.61 / 0.83 | 2.16 / 2.26 | 5.74 | 144,640 B | 196,608 B | 1 / 5 | 5,776 / 7,000 KiB |
 | H20 container | 4 / 2,048 | 0.60 / 0.90 | 2.13 / 2.31 | 14.07 | 578,176 B | 790,528 B | 4 / 27 | 4,560 / 12,540 KiB |
@@ -489,6 +489,10 @@ correction runs used for the table remain under `s2-3-correction/` on each host.
 The initial stale-`db_size` run and the first evidence version that did not
 verify the exact deleted key set remain under `s2-3-final/` and
 `s2-3-qualified/`; both are excluded from this table.
+
+The original JSON called this pre-rebuild sample `index_bytes_peak`; it was not a
+sampled high-water mark. New runs emit `index_bytes_before_rebuild`. Historical
+artifacts retain their original field name.
 
 This does not qualify 16 nodes as a production maximum or model CPU/RSS under
 contention. Sources are real registered metadata publishers with synthetic

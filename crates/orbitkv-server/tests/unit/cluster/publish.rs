@@ -762,7 +762,7 @@ async fn increasing_metadata_load_records_publication_watch_rebuild_cpu_rss_and_
                 .all(|row| row.replicas.len() == 1)
         })
         .await;
-        let index_bytes_peak = index.bytes();
+        let index_bytes_before_rebuild = index.bytes();
 
         let rebuild_view = view(59200 + profile as u16);
         let rebuild_index = Arc::new(orbitkv_catalog::GlobalIndex::new(
@@ -856,7 +856,7 @@ async fn increasing_metadata_load_records_publication_watch_rebuild_cpu_rss_and_
             "publication_ms": duration_summary(&publication_ms),
             "watch_lag_ms": duration_summary(&watch_lag_ms),
             "snapshot_rebuild_ms": rebuild_ms,
-            "index_bytes_peak": index_bytes_peak,
+            "index_bytes_before_rebuild": index_bytes_before_rebuild,
             "index_bytes_final": index.bytes(),
             "etcd_db_bytes_before": db_before,
             "etcd_db_bytes_after": db_after,
