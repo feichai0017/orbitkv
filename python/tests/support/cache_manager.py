@@ -421,6 +421,7 @@ class CacheManagerProcess:
 
         # Set PYTHONPATH to include python package and venv site-packages
         python_dir = PYTHON_ROOT
+        configured_paths = [path for path in env.get("PYTHONPATH", "").split(":") if path]
         site_packages = [
             path
             for path in dict.fromkeys(
@@ -431,7 +432,9 @@ class CacheManagerProcess:
             )
             if path
         ]
-        env["PYTHONPATH"] = ":".join([str(python_dir), *site_packages])
+        env["PYTHONPATH"] = ":".join(
+            dict.fromkeys([str(python_dir), *configured_paths, *site_packages])
+        )
 
         cmd = [
             self._binary_path,
