@@ -139,6 +139,19 @@ def _wait_for_ssd_write(manager, minimum_bytes, managers):
     )
 
 
+def _wait_for_remote_drain(source_manager, consumer_manager, managers):
+    def drained():
+        source_metrics = fetch_orbitkv_metrics(source_manager.http_port)
+        consumer_metrics = fetch_orbitkv_metrics(consumer_manager.http_port)
+        if source_metrics.get("orbitkv_transfer_lock_active", 0):
+            return None
+        if consumer_metrics.get("orbitkv_transfer_completion_outstanding", 0):
+            return None
+        return source_metrics, consumer_metrics
+
+    return _until(drained, managers)
+
+
 def _prefix_end(prefix: bytes) -> bytes:
     end = bytearray(prefix)
     end[-1] += 1
@@ -350,6 +363,7 @@ def test_manager_inventory_stream_faults_preserve_exact_dram_and_ssd(tmp_path, m
             "orbitkv_remote_fetch_bytes_total"
         ]
         assert remote_after >= remote_before + payload_bytes
+        _wait_for_remote_drain(source_manager, consumer_manager, managers)
 
         peer_gate.partition()
         partition_started = time.monotonic()
@@ -384,6 +398,7 @@ def test_manager_inventory_stream_faults_preserve_exact_dram_and_ssd(tmp_path, m
             final_payload,
             managers,
         )
+        _wait_for_remote_drain(source_manager, consumer_manager, managers)
         recovered = _metadata(consumer_manager)
         assert recovered["index"]["coverage"] == "complete_at_watermarks"
         result["stream_repair"] = {
