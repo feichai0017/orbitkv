@@ -7,7 +7,7 @@ import os
 
 logger = logging.getLogger(__name__)
 
-_ENABLE_ENV = "ORBITKV_SGLANG_TENT"
+_ENABLE_ENV = "SGLANG_MOONCAKE_TRANSFER_ENGINE"
 _TIMEOUT_ENV = "ORBITKV_SGLANG_TENT_TIMEOUT_S"
 _UPSTREAM_PROBE_ENV = "SGLANG_ENABLE_FAILED_SESSION_PROBE"
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
@@ -125,8 +125,8 @@ class SGLangTentTransferEngine:
         return self._engine.nic_load_stats()
 
 
-def install_sglang_tent_backend() -> bool:
-    """Install the adapter before SGLang initializes its shared engine."""
+def register_sglang_tent_backend() -> bool:
+    """Select TENT through SGLang's explicit payload-engine factory."""
 
     if not sglang_tent_enabled():
         return False
@@ -136,18 +136,13 @@ def install_sglang_tent_backend() -> bool:
             f"unset {_UPSTREAM_PROBE_ENV}"
         )
 
-    from sglang.srt.distributed.device_communicators import (
-        mooncake_transfer_engine as engine_module,
+    from sglang.srt.distributed.device_communicators.mooncake_transfer_engine import (
+        register_mooncake_transfer_engine_factory,
     )
 
-    active = engine_module.get_mooncake_transfer_engine()
-    if active is not None and not isinstance(active, SGLangTentTransferEngine):
-        raise RuntimeError(
-            "OrbitKV TENT must be installed before SGLang initializes its Mooncake engine"
-        )
-    engine_module.MooncakeTransferEngine = SGLangTentTransferEngine
+    register_mooncake_transfer_engine_factory("orbitkv", SGLangTentTransferEngine)
     logger.info(
-        "OrbitKV installed the Rust TENT payload engine for SGLang P/D; "
+        "OrbitKV registered the Rust TENT payload engine for SGLang P/D; "
         "SGLang retains bootstrap and request-state ownership"
     )
     return True
@@ -164,11 +159,13 @@ def validate_pd_cache_transport(disaggregation_mode: str, transfer_backend: str)
             "--disaggregation-transfer-backend mooncake"
         )
     if not sglang_tent_enabled():
-        raise ValueError("OrbitKV SGLang P/D cache composition requires ORBITKV_SGLANG_TENT=1")
+        raise ValueError(
+            "OrbitKV SGLang P/D cache composition requires SGLANG_MOONCAKE_TRANSFER_ENGINE=orbitkv"
+        )
 
 
 def sglang_tent_enabled() -> bool:
-    return _enabled(_ENABLE_ENV)
+    return os.getenv(_ENABLE_ENV, "mooncake") == "orbitkv"
 
 
 def _enabled(name: str) -> bool:

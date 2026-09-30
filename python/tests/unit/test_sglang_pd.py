@@ -1,5 +1,6 @@
 import sys
 from types import ModuleType, SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -15,7 +16,7 @@ from orbitkv.sglang.completion import (
 )
 from orbitkv.sglang.pd import (
     SGLangTentTransferEngine,
-    install_sglang_tent_backend,
+    register_sglang_tent_backend,
     validate_pd_cache_transport,
 )
 
@@ -24,7 +25,7 @@ from orbitkv.sglang.pd import (
 def _clear_sglang_pd_environment(monkeypatch):
     for name in (
         "MC_FORCE_TCP",
-        "ORBITKV_SGLANG_TENT",
+        "SGLANG_MOONCAKE_TRANSFER_ENGINE",
         "ORBITKV_SGLANG_TENT_TIMEOUT_S",
         "SGLANG_ENABLE_FAILED_SESSION_PROBE",
     ):
@@ -65,7 +66,7 @@ class _NativeTent:
         return self.stats
 
 
-def _install_modules(monkeypatch, *, active=None):
+def _install_modules(monkeypatch):
     native = ModuleType("orbitkv.orbitkv")
     native.MooncakeTransferEngine = _NativeTent
     monkeypatch.setitem(sys.modules, "orbitkv.orbitkv", native)
@@ -74,7 +75,7 @@ def _install_modules(monkeypatch, *, active=None):
         "sglang.srt.distributed.device_communicators.mooncake_transfer_engine"
     )
     engine_module.MooncakeTransferEngine = object
-    engine_module.get_mooncake_transfer_engine = lambda: active
+    engine_module.register_mooncake_transfer_engine_factory = Mock()
     engine_module.get_ib_devices_for_gpu = lambda value, _gpu_id: value
 
     device_communicators = ModuleType("sglang.srt.distributed.device_communicators")
@@ -98,51 +99,56 @@ def _install_modules(monkeypatch, *, active=None):
     return engine_module
 
 
-def test_install_is_explicit_and_precedes_engine_init(monkeypatch):
+def test_registration_is_explicit_and_precedes_engine_init(monkeypatch):
     engine_module = _install_modules(monkeypatch)
-    monkeypatch.delenv("ORBITKV_SGLANG_TENT", raising=False)
+    monkeypatch.delenv("SGLANG_MOONCAKE_TRANSFER_ENGINE", raising=False)
 
-    assert not install_sglang_tent_backend()
+    assert not register_sglang_tent_backend()
     assert engine_module.MooncakeTransferEngine is object
 
-    monkeypatch.setenv("ORBITKV_SGLANG_TENT", "1")
-    assert install_sglang_tent_backend()
-    assert engine_module.MooncakeTransferEngine is SGLangTentTransferEngine
+    monkeypatch.setenv("SGLANG_MOONCAKE_TRANSFER_ENGINE", "orbitkv")
+    assert register_sglang_tent_backend()
+    engine_module.register_mooncake_transfer_engine_factory.assert_called_once_with(
+        "orbitkv", SGLangTentTransferEngine
+    )
+    assert engine_module.MooncakeTransferEngine is object
 
 
-def test_install_rejects_mixed_runtime(monkeypatch):
-    _install_modules(monkeypatch, active=SimpleNamespace())
-    monkeypatch.setenv("ORBITKV_SGLANG_TENT", "true")
+def test_registration_rejects_mixed_runtime(monkeypatch):
+    module = _install_modules(monkeypatch)
+    module.register_mooncake_transfer_engine_factory.side_effect = RuntimeError(
+        "Cannot change the Mooncake engine after initialization"
+    )
+    monkeypatch.setenv("SGLANG_MOONCAKE_TRANSFER_ENGINE", "orbitkv")
 
-    with pytest.raises(RuntimeError, match="before SGLang initializes"):
-        install_sglang_tent_backend()
+    with pytest.raises(RuntimeError, match="after initialization"):
+        register_sglang_tent_backend()
 
 
-def test_install_rejects_invalid_toggle(monkeypatch):
+def test_registration_leaves_other_selected_engines_untouched(monkeypatch):
+    module = _install_modules(monkeypatch)
+    monkeypatch.setenv("SGLANG_MOONCAKE_TRANSFER_ENGINE", "another-plugin")
+    assert not register_sglang_tent_backend()
+    module.register_mooncake_transfer_engine_factory.assert_not_called()
+
+
+def test_registration_rejects_unavailable_peer_probe(monkeypatch):
     _install_modules(monkeypatch)
-    monkeypatch.setenv("ORBITKV_SGLANG_TENT", "sometimes")
-
-    with pytest.raises(ValueError, match="ORBITKV_SGLANG_TENT must be one of"):
-        install_sglang_tent_backend()
-
-
-def test_install_rejects_unavailable_peer_probe(monkeypatch):
-    _install_modules(monkeypatch)
-    monkeypatch.setenv("ORBITKV_SGLANG_TENT", "1")
+    monkeypatch.setenv("SGLANG_MOONCAKE_TRANSFER_ENGINE", "orbitkv")
     monkeypatch.setenv("SGLANG_ENABLE_FAILED_SESSION_PROBE", "1")
 
     with pytest.raises(RuntimeError, match="stable TENT peer-liveness ABI"):
-        install_sglang_tent_backend()
+        register_sglang_tent_backend()
 
 
 def test_cache_composition_requires_tent_mooncake(monkeypatch):
-    monkeypatch.delenv("ORBITKV_SGLANG_TENT", raising=False)
+    monkeypatch.delenv("SGLANG_MOONCAKE_TRANSFER_ENGINE", raising=False)
     validate_pd_cache_transport("null", "nixl")
 
-    with pytest.raises(ValueError, match="ORBITKV_SGLANG_TENT=1"):
+    with pytest.raises(ValueError, match="SGLANG_MOONCAKE_TRANSFER_ENGINE=orbitkv"):
         validate_pd_cache_transport("prefill", "mooncake")
 
-    monkeypatch.setenv("ORBITKV_SGLANG_TENT", "1")
+    monkeypatch.setenv("SGLANG_MOONCAKE_TRANSFER_ENGINE", "orbitkv")
     with pytest.raises(ValueError, match="disaggregation-transfer-backend mooncake"):
         validate_pd_cache_transport("decode", "nixl")
 

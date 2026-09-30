@@ -74,10 +74,12 @@ Multi-node cache sharing is experimental. Interfaces may change before 1.0.
   with cross-GPU numerical and RDMA limits documented separately. Peer SSD reads use
   exact-generation, bounded source-side io_uring staging before the same
   Mooncake transfer path; physical two-host qualification remains open.
-- **Experimental P/D handoff.** vLLM uses OrbitKV's connector protocol;
-  SGLang `0.5.20` keeps its native bootstrap/room protocol and can opt into the
-  same Rust TENT payload owner with `ORBITKV_SGLANG_TENT=1`. SGLang external
-  H20 qualification remains open.
+- **Experimental P/D handoff.** An explicit TENT payload factory can use the
+  engines' native P/D lifecycle and router. This requires the pinned experimental
+  engine patches in [P/D setup](docs/pd.md#native-pd-with-an-explicit-tent-backend);
+  official engine releases do not yet provide these factories. The vLLM custom
+  path remains until cancellation, generation and drain equivalence is qualified.
+  RDMA and heterogeneous-GPU strict-output qualification remain open.
 
 See [supported deployments](docs/deployment.md) and
 [model qualification](docs/models.md) before selecting a checkpoint and topology.

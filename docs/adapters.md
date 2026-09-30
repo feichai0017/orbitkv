@@ -120,7 +120,7 @@ there is no additional Scheduler abort Hook.
 The ordinary cache profile registers two internal Hooks: graph initialization
 and pending-query admission. Enqueue preparation adds one Hook only when
 `ORBITKV_PREPARE_REQUESTS=1` or `ORBITKV_QUEUE_WARMUP=1` is set before startup.
-The six P/D observation Hooks are registered only with `ORBITKV_SGLANG_TENT=1`.
+The six P/D observation Hooks are registered only with `SGLANG_MOONCAKE_TRANSFER_ENGINE=orbitkv`.
 These remaining targets are version-coupled dependencies, not stable public APIs.
 Replace them with consumed factory/lifecycle/component contracts and then delete
 the duplicate logic. Unknown DSA, draft, auxiliary state and unsupported request
@@ -152,10 +152,19 @@ drain acknowledgement. A synchronous TENT wrapper alone cannot make decoder
 page reuse safe: cancellation must revoke new writes and retain destinations
 until every already-authorized writer has drained. This is a prerequisite for
 retiring OrbitKV's generation/grant/cancellation protocol.
-SGLang keeps native bootstrap and request states but opt-in TENT
-uses a module-class replacement. These are experimental integration boundaries.
-The target is native P/D lifecycle plus an explicit TENT backend, independently
-composable with cache reuse. Audit equivalence before deleting the existing path.
+The experimental vLLM factory patch now consumes the thin
+`orbitkv.vllm.transport.TentTransferEngine` adapter with the native connector and
+upstream router. Its separate receive fix retains D pages until all producers
+finish; permanent peer loss and shutdown still need S3 evidence. The official
+0.30.0 release does not include these patches.
+
+SGLang now registers TENT through an explicit, lazy factory in the patched
+0.5.20 profile. The global-class substitution is removed; selecting TENT on an
+unpatched release fails startup. Its six private completion Hooks remain
+observations, not page-release authority. The upstream deferred-release timeout
+still permits release without a full drain acknowledgement. Factory integration
+does not close that lifecycle gap. Audit equivalence before deleting existing
+owners or claiming full S5.4 acceptance.
 Do not allow two connectors to write the same target range or independently
 release it. See [current P/D configuration and limits](pd.md).
 

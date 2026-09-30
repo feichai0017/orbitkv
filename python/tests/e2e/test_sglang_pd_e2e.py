@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import signal
 import subprocess
@@ -20,16 +21,21 @@ from tests.support.paths import PYTHON_ROOT
 pytestmark = [pytest.mark.e2e, pytest.mark.gpu]
 
 
-def test_sglang_pd_tent_and_external_cache_match_monolithic(request, tmp_path):
+@pytest.mark.parametrize("channel_server", [{"tier": "dram", "pool_size": "512mb"}], indirect=True)
+def test_sglang_pd_tent_and_external_cache_match_monolithic(channel_server, request, tmp_path):
     pytest.importorskip("sglang")
     torch = pytest.importorskip("torch")
-    if torch.cuda.device_count() < 2:
-        pytest.skip("SGLang P/D qualification requires two visible GPUs")
+    device_count = torch.cuda.device_count()
+    if device_count < 1:
+        pytest.skip("SGLang P/D requires a visible GPU")
+    decode_device = 1 if device_count > 1 else 0
+    request.node.user_properties.append(
+        ("pd_topology", "two-gpu-tcp" if decode_device else "same-gpu-tcp")
+    )
 
     model = Path(request.config.getoption("--model"))
     if not model.exists():
         pytest.skip("pass --model with a local model path")
-    channel_server = request.getfixturevalue("channel_server")
 
     plugin_dir = tmp_path / "orbitkv_source_plugin-0.0.dist-info"
     plugin_dir.mkdir()
@@ -42,7 +48,7 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(request, tmp_path):
     env["PYTHONPATH"] = os.pathsep.join(
         [str(PYTHON_ROOT), str(tmp_path), env.get("PYTHONPATH", "")]
     )
-    env["ORBITKV_SGLANG_TENT"] = "1"
+    env["SGLANG_MOONCAKE_TRANSFER_ENGINE"] = "orbitkv"
     env["ORBITKV_SGLANG_ENDPOINT"] = f"unix://{channel_server.bootstrap_socket}"
     env["ORBITKV_TRANSFER_BACKEND"] = request.config.getoption("--orbitkv-transfer-backend")
     env["MC_FORCE_TCP"] = "1"
@@ -78,6 +84,9 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(request, tmp_path):
         "--page-size",
         "64",
         "--enable-cache-report",
+        "--disable-cuda-graph",
+        "--mem-fraction-static",
+        "0.8",
     ]
 
     def launch(
@@ -162,7 +171,7 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(request, tmp_path):
                 "--nccl-port",
                 str(find_available_port()),
                 "--base-gpu-id",
-                "1",
+                str(decode_device),
                 "--disaggregation-mode",
                 "decode",
                 "--disaggregation-decode-enable-radix-cache",
@@ -239,6 +248,10 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(request, tmp_path):
         output_ids = first["output_ids"]
         assert len(output_ids) == 64
         wait_for_saved_bytes(save_before)
+        (tmp_path / "first-output.json").write_text(json.dumps(first, indent=2))
+        (tmp_path / "after-first-metrics.json").write_text(
+            json.dumps(fetch_orbitkv_metrics(channel_server.http_port), indent=2)
+        )
 
         for name in ("prefill", "decode"):
             assert "SGLang P/D TENT ready:" in logs[name].read_text()
@@ -260,8 +273,19 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(request, tmp_path):
 
         router_port = start_pd()
         follow = request_generation(router_port, follow_payload)
-        assert follow["meta_info"]["cached_tokens"] >= decode_boundary, follow
         after_restart = fetch_orbitkv_metrics(channel_server.http_port)
+        (tmp_path / "restart-evidence.json").write_text(
+            json.dumps(
+                {
+                    "before": before_restart,
+                    "after": after_restart,
+                    "output": follow,
+                    "required_cache_boundary": decode_boundary,
+                },
+                indent=2,
+            )
+        )
+        assert follow["meta_info"]["cached_tokens"] >= decode_boundary, follow
         assert after_restart.get("orbitkv_load_bytes_total", 0) > before_restart.get(
             "orbitkv_load_bytes_total", 0
         )
@@ -269,7 +293,7 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(request, tmp_path):
 
         monolithic_port = find_available_port()
         monolithic_env = dict(env)
-        monolithic_env.pop("ORBITKV_SGLANG_TENT")
+        monolithic_env.pop("SGLANG_MOONCAKE_TRANSFER_ENGINE")
         monolithic = launch(
             "monolithic",
             common

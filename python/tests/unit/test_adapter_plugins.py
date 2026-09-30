@@ -99,7 +99,10 @@ def test_unselected_plugins_do_not_load_native_or_gpu_modules(engine):
         """
     )
     environment = dict(
-        os.environ, ORBITKV_SGLANG_TENT="0", ORBITKV_PREPARE_REQUESTS="0", ORBITKV_QUEUE_WARMUP="0"
+        os.environ,
+        SGLANG_MOONCAKE_TRANSFER_ENGINE="mooncake",
+        ORBITKV_PREPARE_REQUESTS="0",
+        ORBITKV_QUEUE_WARMUP="0",
     )
     result = subprocess.run(
         [sys.executable, "-c", program, engine],
@@ -109,3 +112,24 @@ def test_unselected_plugins_do_not_load_native_or_gpu_modules(engine):
         timeout=20,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_selected_sglang_payload_failure_stops_plugin_loading(monkeypatch):
+    from types import ModuleType, SimpleNamespace
+
+    from orbitkv.sglang import pd, plugin
+
+    registry = ModuleType("sglang.srt.mem_cache.registry")
+    registry.register_radix_cache_backend = lambda *_args: None
+    hooks = ModuleType("sglang.srt.plugins.hook_registry")
+    hooks.HookRegistry = SimpleNamespace(register=lambda *_args: None)
+    hooks.HookType = SimpleNamespace(BEFORE="before", AFTER="after", AROUND="around")
+    monkeypatch.setitem(sys.modules, registry.__name__, registry)
+    monkeypatch.setitem(sys.modules, hooks.__name__, hooks)
+
+    def unavailable():
+        raise ImportError("register_mooncake_transfer_engine_factory is unavailable")
+
+    monkeypatch.setattr(pd, "register_sglang_tent_backend", unavailable)
+    with pytest.raises(SystemExit, match="Cannot select OrbitKV TENT payload engine"):
+        plugin.register()

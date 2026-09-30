@@ -15,9 +15,16 @@ def register() -> None:
 
     from .admission import admit_request, enqueue_request
     from .events import initialize_layer_counter
-    from .pd import install_sglang_tent_backend
+    from .pd import register_sglang_tent_backend
 
-    if install_sglang_tent_backend():
+    try:
+        tent_registered = register_sglang_tent_backend()
+    except Exception as error:
+        # SGLang logs and ignores ordinary plugin exceptions. A selected payload
+        # engine must stop startup when its required factory is unavailable.
+        raise SystemExit(f"Cannot select OrbitKV TENT payload engine: {error}") from error
+
+    if tent_registered:
         from .completion import (
             capture_decode_pages,
             capture_handoff_admission,
