@@ -197,10 +197,10 @@ and final image acceptance gates.
 ## Add peer caching
 
 Keep engine connections unchanged and configure each Manager with the
-[local global index and etcd metadata](p2p.md). Mooncake TENT moves
-remote bytes; etcd stores block locations and member incarnations.
+[local global index and inventory protocol](p2p.md). Mooncake TENT moves
+remote bytes; etcd stores protocol identity, epochs and leased members.
 There is no standalone metadata server to deploy. Every Manager maintains a
-complete local index through background publication and snapshot/Watch. RDMA, sustained distributed faults and broader model
+local index through bounded peer snapshot/delta sessions. RDMA, sustained distributed faults and broader model
 serving remain separate gates after the recorded two-host TCP checks.
 Multi-host TP query fan-out is not supported yet.
 

@@ -34,11 +34,19 @@ orbitkv-cache-manager
 - `GET /instances`: List registered instance IDs.
 - `POST /instances/cleanup[?id=<instance_id>]`: Remove one instance, or all instances when `id` is omitted.
 - `POST /cache/memory/cleanup`: Evict resident in-memory cache blocks while preserving backing-store data. `evicted_bytes` is the cache footprint removed from residency; `reclaimed_bytes` is the pinned-pool memory actually released immediately.
-- `GET /cache/metadata`: Report complete-index coverage, publisher progress,
-  live residency count and retained journal current/peak bytes, record count,
-  capacity and history-gap count. The journal peak is measured after enforcing
-  its byte limit.
-- `POST /cache/sync`: Wait for already submitted saves and return their committed etcd `published_revision`; remote indexes may still be applying it. Returns 503 on synchronization failure or 504 after 30 seconds; it does not make SSD payloads restart-durable.
+- `GET /cache/metadata`: Report membership validity/revision, explicit index
+  coverage, active/staging/accounted index bytes, installed owner-view counts,
+  local journal state and bounded inventory-stream session/byte diagnostics.
+- `GET /cache/metadata/owners?after=<uuid>&limit=<1..128>`: Paginate installed
+  owner view IDs, applied source sequences, freshness, receipt age and record
+  counts. This diagnostic does not query a source or authorize payload access.
+- `POST /cache/sync`: Wait for already submitted saves and return a source
+  `inventory_fence`. It does not wait for a requester or make SSD payloads
+  restart-durable.
+- `POST /cache/metadata/await`: Controlled-test/operation barrier. Supply an
+  `inventory_fence`, this requester's exact `scope_digest`, and `timeout_ms` no
+  greater than 30,000. Success means the matching owner view is installed through
+  the fence while membership remains valid. Ordinary queries never call it.
 
 ### SSD Cache
 
@@ -118,25 +126,27 @@ See [request preparation](request-preparation.md) for limits and control runs.
 ### Cross-Node (Multi-Node Setup)
 
 - `--nics`: Optional Mooncake RDMA rail allow-list (e.g., `--nics mlx5_0,mlx5_1` or `--nics mlx5_0 mlx5_1`). Omit it to let Mooncake select the available transport, including TCP fallback.
-- `--etcd-endpoints`: comma-separated HTTP etcd endpoints; enables distributed cache. Requires `--node-id`. Peers must reach the concrete `--addr` endpoint.
+- `--etcd-endpoints`: comma-separated HTTP etcd endpoints; enables distributed cache. Requires `--node-id`. Etcd stores protocol identity, epochs and leased members, not block locations.
+- `--peer-advertise-addr`: optional concrete peer address stored in membership when a proxy/fault gate fronts the actual `--addr` listener.
 - `--index-budget`: logical accounting for this Manager's complete global index; defaults to 256 MiB. This is not a process RSS cap.
 - `--cluster-name`: etcd namespace, default `orbitkv`. `--membership-ttl-secs` defaults to 30 and accepts 12–3600; remote admission uses half the acknowledged TTL. See [deployment](p2p.md#leased-manager-membership).
 - `--transfer-lock-timeout-secs`: Mark source transfers overdue after this many seconds (default: `120`). Timeout never releases memory still exposed to a remote READ.
 - `--transfer-budget`: Source allocation reservations, defaulting to half the pinned pool. Entire allocations are charged once per session, including overdue sessions. At most 1024 sessions can be retained. New authorizations fail when either limit is exhausted; permanent requester loss still requires safe transport revocation or coordinated teardown.
 - `--inventory-journal-bytes`: Retained residency-change bytes (default: `16777216`, 16 MiB). Lag beyond this history triggers a paginated inventory resnapshot.
-- `--inventory-publish-coalesce-ms`: Quiet window for grouping a bounded
-  contiguous inventory interval before publication (default: `0`, range `0..=5`).
-  `0` preserves immediate publication. An explicit `/cache/sync` request bypasses
-  the wait; all records in a multi-transaction interval commit before its source
-  sequence advances. Five-run A100 measurements qualify `2` as an opt-in tradeoff:
-  fewer repeated-key mutations with added sparse-publication delay; see
+- `--inventory-stream-coalesce-ms`: Quiet window for grouping a bounded
+  contiguous inventory interval before sending a delta (default: `0`, range
+  `0..=5`). `0` preserves immediate delivery. An explicit source fence causes
+  subscribed requesters to prioritize the captured target without treating frame
+  receipt as installation. The frozen S2.7 experiment qualifies `2` as an opt-in
+  tradeoff; see
   [the coalescing measurements](distributed-cache.md#bounded-etcd-publication-coalescing).
 
 ## Distributed metadata
 
-The same Cache Manager binary owns local storage and a complete global index.
+The same Cache Manager binary owns local storage and its local global index.
 All distributed Managers use the same etcd cluster and namespace, with distinct
-Node IDs. The peer gRPC endpoint serves source grants and completion only.
+Node IDs. The peer gRPC endpoint serves inventory sessions as well as source
+grants and completion.
 
 ```bash
 orbitkv-cache-manager --addr 10.0.0.1:50055 --pool-size 30gb \
@@ -145,6 +155,14 @@ orbitkv-cache-manager --addr 10.0.0.1:50055 --pool-size 30gb \
 ```
 
 Use the other host's address and Node ID there. `GET /cache/metadata` exposes
-index revision, available coverage, logical bytes, registration validity and
-publisher progress; standalone mode returns JSON `null`. See [deployment and
-failure behavior](p2p.md) and [metadata recovery](distributed-cache.md).
+coverage, installed views, logical bytes, registration validity and stream
+progress; standalone mode returns JSON `null`. See [deployment and failure
+behavior](p2p.md) and [metadata recovery](distributed-cache.md).
+
+The stream format is a coordinated cutover. Stop every Manager first, then
+dry-run and apply `scripts/migrate-metadata-format.py` with an explicit cluster
+UUID and an archive path outside the checkout. The script refuses live member
+records, compares the exact old format revision/value, preserves epoch keys and
+deletes retired block/publisher keys in the same transaction. Rollback likewise
+requires all new Managers stopped and restarts the frozen old binary with fresh
+incarnations; it does not restore live leases or old cursors.

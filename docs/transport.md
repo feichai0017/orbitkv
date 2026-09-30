@@ -364,9 +364,9 @@ The local raw payload arena protocol and native executor are implemented.
 Bounded large-plan partitioning and native layer readiness are implemented;
 broader graph/topology, page-generation and deployment gates remain separate.
 CUDA IPC metadata still serves Publish and Manager SSD/codec routes. Peer
-metadata currently uses gRPC. The selected local global-index replacement moves
-directory synchronization to background etcd publication and snapshot/Watch,
-and removes foreground discovery RPCs. Source grants/completions retain gRPC;
+metadata currently uses gRPC. The local global index is synchronized through
+bounded Manager inventory snapshots/deltas, with etcd limited to membership,
+and has no foreground discovery RPC. Source grants/completions retain gRPC;
 TENT retains payload READ/WRITE. The custom native metadata bus is outside the
 delivery plan. See the [communication plan](completion-plan.md#s4--finish-communication-execution-and-demonstrate-gains) and
 [peer-control boundary](peer-control.md).

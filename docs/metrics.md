@@ -546,35 +546,43 @@ endpoint. Direct Prometheus remains available.
 
 ### Distributed metadata progress
 
-`GET /cache/metadata` reports the complete local index's `revision`,
-`accounted_bytes`, `registration_valid` and `available`, plus the publisher's
-`sequence`, committed `revision`, `ready` and the current `inventory_sequence`.
-It also reports resident and retained-journal record counts, current and peak
-journal bytes, the configured journal byte capacity and observed history gaps.
-The peak is the largest retained journal after enforcing the byte limit; it does
-not include a discarded oversized tail record. History gaps count production
-publisher reads that required complete snapshot reconciliation.
-Completed incremental intervals also report original/coalesced record counts,
-bounded etcd transactions, encoded block-key/value bytes, coalescing windows and
-their total elapsed coalescing wait in microseconds, including timer scheduling
-overshoot; the scheduled intentional deadline is capped at 5 ms. Snapshot traffic, etcd protocol
-framing and Watch response bytes are separate and are not included in these
-delta counters. `inventory_flush_through_sequence` is the latest requested flush
-target; it is not a remote-reader visibility watermark.
-`orbitkv_metadata_watch_key_value_bytes_bytes_total` counts received event key and
-value lengths, including requested previous values. It excludes protobuf/HTTP2
-framing, response headers and snapshot RPCs; resumed events are counted again.
-This is distinct from etcd's aggregate client gRPC network-byte counters.
-Standalone Managers return JSON `null`. `POST /cache/sync` returns a
-`published_revision`; consumers must apply that revision before a test can assert
-remote visibility. These are background synchronization boundaries, independent
-of source authorization and native completion.
+`GET /cache/metadata` reports the local index's `membership_revision`, explicit
+`coverage`, active/staging/accounted bytes, expected/installed owner views and
+view generation. Registration validity is separate: an interrupted inventory
+stream can retain positive hints with `partial_hints`, while invalid membership
+makes coverage `unavailable`.
+
+The same response includes the local inventory sequence, resident and retained-
+journal record counts, current/peak journal bytes, capacity and history gaps.
+Completed stream intervals report input/coalesced records, encoded bytes, delta
+frames and elapsed coalescing wait. `inventory_flush_through_sequence` is the
+latest requested source-fence target; it is not a received-frame or installed-
+view watermark.
+
+The `stream` object reports protocol/cluster/source identity, all-namespace scope
+digest, membership revision, current/peak source and receiver sessions, frames
+and encoded bytes sent/received, current/peak aggregate outbound queue bytes and
+reset count. These are process-lifetime counters. Snapshot bytes share the frame
+counters; etcd network metrics now represent membership/configuration traffic,
+not block traffic. The pre-cutover Watch payload counter is removed with its sole
+producer.
+
+`GET /cache/metadata/owners?after=<uuid>&limit=<1..128>` reports bounded,
+UUID-ordered installed owner views with their committed sequence, freshness,
+receipt age and record count. It is an operational/qualification surface, not a
+request-path directory lookup.
+
+Standalone Managers return JSON `null`. `POST /cache/sync` returns an
+`inventory_fence`; `POST /cache/metadata/await` succeeds only after the matching
+source incarnation/epoch is installed through that sequence. These are
+synchronization boundaries, independent of source authorization and native
+payload completion.
 
 The old per-shard Catalog gauges, inventory-RPC counters and candidate-lookup
 metrics were removed with their runtime. Transfer, source budget, remote-stage
-and release metrics remain. Repeated reconciliation warnings or an unavailable
-index indicate incomplete coverage; inspect membership, the metadata budget and
-etcd capacity/connectivity. See [directory recovery](distributed-cache.md).
+and release metrics remain. Repeated reset/reconnect warnings or incomplete
+coverage indicate a stream, membership or index-budget fault; inspect peer
+connectivity and etcd membership health. See [metadata recovery](distributed-cache.md).
 
 ### Environment Variables
 
