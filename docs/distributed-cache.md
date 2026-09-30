@@ -582,8 +582,9 @@ python3 -m pytest -m integration -vv -s \
   tests/integration/test_distributed_cache.py
 ```
 
-The final A100 implementation run passes both parameters in 38.71 seconds. DRAM
-and SSD transient partitions measured 258.5 and 252.3 ms; expiry checks measured
+The final A100 implementation run passes both parameters in 38.71 seconds. The
+whole DRAM and SSD transient scenarios measured 258.5 and 252.3 ms, including
+healing, convergence and final restore; expiry checks measured
 11.29 and 11.43 seconds. The SSD Manager recorded 163,840 written bytes and
 262,144 io_uring-prefetched bytes, with zero final write/read ownership gauges.
 These values are correctness diagnostics, not latency or capacity claims.
@@ -593,7 +594,8 @@ Frozen artifacts and copied raw evidence are under
 The original failed runs remain under the preceding `s2-5-manager-process*`
 directories. Remote raw evidence, including etcd DB/WAL files, remains under
 `/workspace/orbitkv-three-host-20260930/s2-5-manager-process-e4cfc810/`.
-Independent review is pending.
+The independent accepted review and its separate A100 run are under
+`/root/orbitkv-artifacts/s2-s51-20260930/s2-5-manager-process-exact/reviewer/`.
 
 This is one A100 host with multiple processes and loopback TCP. It does not
 qualify a cross-host cache, etcd HA/failure domains, native GDS, P/D, RDMA,
