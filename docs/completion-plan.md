@@ -36,7 +36,7 @@ record submitted, merged and released as different states.
 | --- | --- |
 | S0 | Agent handoff and Codex skill migration merged in PR #190. |
 | S1 | Evidence separation independently verified at `ec3add9b`; this delivery consolidates plans and release-based integration guidance. Acceptance covers S1 only; native CUDA qualification remains blocked on this host. |
-| S2 | Partial: S2.1–S2.6 are independently accepted; sustained synthetic metadata capacity and bounded full-Manager DRAM/io_uring faults pass. S2.7 bounded coalescing is next. Three-host metadata remains blocked by CPU-node SSH authorization and mutually unreachable A/B container data addresses; live-store soak and separate-host cells remain open under S2.10. |
+| S2 | Partial: S2.1–S2.6 are independently accepted; sustained synthetic metadata capacity and bounded full-Manager DRAM/io_uring faults pass. S2.7 bounded coalescing is implemented and its frozen comparison passes, pending independent acceptance. Three-host metadata remains blocked by CPU-node SSH authorization and mutually unreachable A/B container data addresses; live-store soak and separate-host cells remain open under S2.10. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
 | S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`. vLLM 0.30.0 remains an unqualified upgrade target, and public lifecycle/deployment gates remain open. |
@@ -273,14 +273,16 @@ qualification.
 
 ### S2.7 — Bounded coalescing and frozen comparison baseline
 
-**Implementation partial; qualification pending.** The candidate coalesces at
+**Implementation complete; independent qualification pending.** The candidate coalesces at
 most 1,024 records / 512 KiB from a contiguous journal interval, preserves the
 latest key/medium generation and final deletes, and advances the input cursor
 only after every etcd transaction commits. Flush bypasses the bounded wait.
 The [coalescing benchmark](distributed-cache.md#bounded-etcd-publication-coalescing)
 compares frozen S2.6 and candidate 0/2/5 ms profiles with exact byte/generation
-checks, visibility, effective hits and local save/query costs. The default remains
-0 until the predeclared comparisons and independent review pass.
+checks, visibility, effective hits and local save/query costs. All 20 rotated A100
+runs and the selected-default S2.5/S2.6 regressions pass the predeclared limits.
+The default remains 0; 2 ms is a qualified opt-in tradeoff. Evidence is frozen
+outside the checkout. Independent review remains the only S2.7 gate.
 
 ## S3 — Transfer lifetime and generation-safe ownership
 

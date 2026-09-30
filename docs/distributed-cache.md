@@ -722,8 +722,41 @@ an available observer applies the source's acknowledged inventory target. Exact
 GPU restores and final generation checks accompany the measurements. Inference
 latency is unmeasured in this client workload and is reported as such.
 
-The frozen S2.6 package is the zero-window comparison baseline. The S2.7 A/B gate
-runs the same full Manager correctness path with legacy, explicit 0, 2 and 5 ms
-profiles and keeps raw results outside the checkout. Results and the selected
-default are recorded only after all predeclared comparisons and independent
-review pass. This change does not implement the inventory-stream protocol.
+The frozen S2.6 package is the zero-window comparison baseline. Five independent,
+order-rotated A100 runs per profile pass the declared comparison with native
+candidate `ba5c166b` and harness `d4ac16b5`. Against candidate 0 ms, the 2 ms
+profile reduces median output records from 3,305 to 881 (73.3%) and transactions
+from 481 to 111 (76.9%). Median Watch event key/value bytes per Manager fall from
+1.362 MB to 0.483 MB. Measured etcd client received/sent bytes fall from
+1.058/3.128 MB to 0.340/1.116 MB; these include observer and lease traffic, not
+only block mutations. Each run uses 3,360 source mutations, with exact eight-record
+final sets and successful local/remote GPU-byte checks.
+
+The median low-traffic visibility p95 is 3.60, 6.07 and 11.06 ms at 0, 2 and 5 ms.
+The 5 ms profile has similar mutation savings to 2 ms. Median save/query p99 stays
+within the declared 5% plus 0.20 ms budget in every profile. Immediate remote
+probes miss before metadata arrives in this workload; all probes after observed
+visibility recover correctly, and every final-matrix local query hits immediately.
+The harness retains polling and retry samples because `save()` acknowledges queued
+host publication, so one immediate query is not a completion barrier.
+
+Median Manager/etcd CPU deltas fall from 24/100 ticks at 0 ms to 15/25 ticks at
+2 ms. Maximum Manager/etcd high-water growth is 5,964/6,032 KiB at 2 ms, below
+the declared 256 MiB limit. Median encoded bytes and etcd revision delta fall
+from 710,902/500 to 217,400/130. These short-run process counters describe this
+metadata workload only; they are not a serving CPU or memory claim.
+
+Default intentional waiting remains **0 ms**, preserving the sparse-traffic
+freshness choice. The **2 ms** setting is an explicit option for workloads that
+can accept its measured visibility delay. These are metadata/client measurements;
+model inference latency and shared-serving benefits remain unqualified. This
+change does not implement the inventory-stream protocol.
+
+Frozen candidates, declarations, failed controls and raw samples are under
+`/root/orbitkv-artifacts/s2-s51-20260930/s2-7-coalesced-publication/` and the matching
+A100 root `/workspace/orbitkv-three-host-20260930/s2-7-coalesced-publication/`.
+The A100 `matrix-d4ac16b5/` directory contains the final comparison, selected-
+default regressions, exact commands, hashes and cleanup proof. The successful
+intermediate `matrix-430f7578/`, its earlier failed immediate-query run, and the
+failed pre-fix Watch-metric run under `candidate-ba5c166b/` remain retained.
+Independent acceptance is pending.

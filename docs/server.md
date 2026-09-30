@@ -128,7 +128,9 @@ See [request preparation](request-preparation.md) for limits and control runs.
   contiguous inventory interval before publication (default: `0`, range `0..=5`).
   `0` preserves immediate publication. An explicit `/cache/sync` request bypasses
   the wait; all records in a multi-transaction interval commit before its source
-  sequence advances.
+  sequence advances. Five-run A100 measurements qualify `2` as an opt-in tradeoff:
+  fewer repeated-key mutations with added sparse-publication delay; see
+  [the coalescing measurements](distributed-cache.md#bounded-etcd-publication-coalescing).
 
 ## Distributed metadata
 
