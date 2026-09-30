@@ -122,7 +122,10 @@ impl GlobalIndex {
             return;
         }
         for (owner, owner_view) in &mut view.owners {
-            owner_view.retired = !expected.contains(owner);
+            if !expected.contains(owner) {
+                owner_view.retired = true;
+                owner_view.fresh = false;
+            }
         }
         let retired_staging = view
             .staging

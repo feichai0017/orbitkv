@@ -365,8 +365,8 @@ fn snapshot_pages_are_rejected_after_replay_starts() {
 }
 
 #[test]
-fn withdrawn_replacement_releases_old_view_in_bounded_batches() {
-    let (index, _, remote) = setup(1 << 20);
+fn membership_refresh_does_not_revive_budget_withdrawal() {
+    let (index, membership, remote) = setup(1 << 20);
     let mut old = (0..700)
         .map(|key| InventoryRecord {
             key: StateKey::new("model".into(), (key as u64).to_le_bytes().to_vec()),
@@ -385,8 +385,20 @@ fn withdrawn_replacement_releases_old_view_in_bounded_batches() {
     let before = index.bytes();
     assert!(!index.cleanup_owner(remote.incarnation, 128));
     assert!(index.bytes() < before);
+    index.set_expected_owners(2, [membership.owner().incarnation, remote.incarnation]);
+    assert_eq!(index.owner_watermark(remote.incarnation), None);
+    assert_eq!(index.status().coverage, DiscoveryCoverage::Unavailable);
     while !index.cleanup_owner(remote.incarnation, 128) {}
     assert_eq!(index.bytes(), 0);
+    let replacement = record(9, 701, ReplicaMedium::Ssd, true);
+    let key = replacement.key.clone();
+    let view = install(&index, &remote, vec![replacement], 701);
+    assert_eq!(index.owner_watermark(remote.incarnation), Some((view, 701)));
+    assert_eq!(index.lookup(&[key])[0].replicas.len(), 1);
+    assert_eq!(
+        index.status().coverage,
+        DiscoveryCoverage::CompleteAtWatermarks
+    );
 }
 
 #[test]
