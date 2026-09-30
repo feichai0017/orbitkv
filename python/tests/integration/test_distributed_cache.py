@@ -315,7 +315,7 @@ def test_manager_process_metadata_faults_preserve_exact_dram_and_ssd(tmp_path, m
                     "--membership-ttl-secs",
                     "12",
                     "--inventory-journal-bytes",
-                    "1kb",
+                    "1024",
                     "--enable-prometheus",
                 ),
             )
