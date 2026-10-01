@@ -35,6 +35,8 @@ from tests.support.cluster import TcpGate, etcd_server
 
 from .artifacts import external_path
 
+JOURNAL_BYTES = 32 * 1024
+
 
 def _summary(values):
     ordered = sorted(values)
@@ -88,7 +90,7 @@ def _etcd_revision(endpoint, prefix):
     return int(response.json()["header"]["revision"])
 
 
-def run(output: Path, subscription: str, coalesce_ms: int):
+def run(output: Path, subscription: str, coalesce_ms: int, seed: str):
     import torch
 
     import orbitkv.orbitkv as native
@@ -99,7 +101,7 @@ def run(output: Path, subscription: str, coalesce_ms: int):
     os.environ["MC_FORCE_TCP"] = "1"
     pages, block_bytes, namespace_count, cycles = 8, 4096, 4, 50
     payload_bytes = pages * block_bytes
-    identities = [f"s2.9:bench:{index}:{uuid.uuid4().hex}" for index in range(namespace_count)]
+    identities = [f"s2.9:bench:{seed}:{index}" for index in range(namespace_count)]
     storage_namespaces = _discover_storage_namespaces(output, identities, pages, block_bytes)
     selected_scope = storage_namespaces[0]
     hashes = [hashlib.sha256(f"s2.9:matched:{block}".encode()).digest() for block in range(pages)]
@@ -109,7 +111,9 @@ def run(output: Path, subscription: str, coalesce_ms: int):
     cluster = f"s29-{subscription}-{uuid.uuid4().hex[:12]}"
     result = {
         "subscription": subscription,
+        "seed": seed,
         "coalesce_ms": coalesce_ms,
+        "inventory_journal_bytes": JOURNAL_BYTES,
         "namespace_count": namespace_count,
         "selected_scope": selected_scope,
         "storage_namespaces": storage_namespaces,
@@ -153,7 +157,7 @@ def run(output: Path, subscription: str, coalesce_ms: int):
                 "--membership-ttl-secs",
                 "120",
                 "--inventory-journal-bytes",
-                str(8 * 1024),
+                str(JOURNAL_BYTES),
                 "--inventory-stream-coalesce-ms",
                 str(coalesce_ms),
                 "--enable-prometheus",
@@ -223,6 +227,7 @@ def run(output: Path, subscription: str, coalesce_ms: int):
         before_observer = _metadata(observer_manager)
         process_before = _process_sample(manager.process.pid for manager in managers)
         revision_before = _etcd_revision(endpoint, f"/orbitkv/v2/{cluster}/")
+        workload_started = time.monotonic()
         async_visibility = []
         barrier_visibility = []
         for cycle in range(cycles):
@@ -286,6 +291,12 @@ def run(output: Path, subscription: str, coalesce_ms: int):
                 json.dumps({"cycle": cycle, "mode": mode, "visibility_ms": visibility}) + "\n"
             )
 
+        steady_source = _metadata(source_manager)
+        steady_observer = _metadata(observer_manager)
+        steady_history_gaps = (
+            steady_source["inventory_history_gaps"] - before_source["inventory_history_gaps"]
+        )
+        assert steady_history_gaps == 0
         gate.partition()
         for repair in range(10):
             _cleanup_dram(source_manager)
@@ -322,6 +333,7 @@ def run(output: Path, subscription: str, coalesce_ms: int):
                 "manager_commands": [manager.command for manager in managers],
                 "bootstrap_ms": bootstrap_ms,
                 "repair_ms": repair_ms,
+                "workload_ms": (time.monotonic() - workload_started) * 1000,
                 "async_visibility_ms": _summary(async_visibility),
                 "barrier_visibility_ms": _summary(barrier_visibility),
                 "owner_records": owner["records"],
@@ -330,6 +342,20 @@ def run(output: Path, subscription: str, coalesce_ms: int):
                 - before_source["stream"]["encoded_bytes_sent"],
                 "stream_bytes_received": after_observer["stream"]["encoded_bytes_received"]
                 - before_observer["stream"]["encoded_bytes_received"],
+                "steady_stream_bytes_sent": steady_source["stream"]["encoded_bytes_sent"]
+                - before_source["stream"]["encoded_bytes_sent"],
+                "steady_stream_bytes_received": steady_observer["stream"]["encoded_bytes_received"]
+                - before_observer["stream"]["encoded_bytes_received"],
+                "stream_frames_sent": after_source["stream"]["frames_sent"]
+                - before_source["stream"]["frames_sent"],
+                "stream_frames_received": after_observer["stream"]["frames_received"]
+                - before_observer["stream"]["frames_received"],
+                "steady_history_gaps": steady_history_gaps,
+                "repair_history_gaps": after_source["inventory_history_gaps"]
+                - steady_source["inventory_history_gaps"],
+                "stream_resets": after_source["stream"]["resets"]
+                - before_source["stream"]["resets"],
+                "inventory_journal_bytes_peak": after_source["inventory_journal_bytes_peak"],
                 "delta_input_records": after_source["inventory_delta_input_records"]
                 - before_source["inventory_delta_input_records"],
                 "delta_output_records": after_source["inventory_delta_output_records"]
@@ -353,6 +379,8 @@ def run(output: Path, subscription: str, coalesce_ms: int):
             }
         )
         assert result["filter_input_records"] >= result["filter_output_records"]
+        assert result["repair_history_gaps"] >= 1
+        assert result["stream_resets"] >= 1
         assert after_observer["index"]["coverage"] == "complete_at_watermarks"
         assert after_source["stream"]["source_sessions_peak"] >= 1
         assert after_observer["stream"]["receiver_sessions_peak"] >= 1
@@ -370,6 +398,7 @@ def run(output: Path, subscription: str, coalesce_ms: int):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--subscription", choices=("all", "scoped"), required=True)
+    parser.add_argument("--seed", required=True)
     parser.add_argument("--coalesce-ms", type=int, choices=range(0, 6), default=2)
     parser.add_argument("--output", type=external_path, required=True)
     args = parser.parse_args()
@@ -378,7 +407,7 @@ def main():
             parser.error(f"set {variable} to a frozen artifact")
     args.output.mkdir(parents=True, exist_ok=False)
     try:
-        run(args.output, args.subscription, args.coalesce_ms)
+        run(args.output, args.subscription, args.coalesce_ms, args.seed)
     except BaseException as error:
         (args.output / "failure.txt").write_text(repr(error) + "\n")
         raise
