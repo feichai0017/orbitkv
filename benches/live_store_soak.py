@@ -20,6 +20,7 @@ from tests.integration.test_distributed_cache import (
     _discover_storage_namespaces,
     _etcd_keys,
     _metadata,
+    _owner_status,
     _payload,
     _query_ready,
     _restore,
@@ -233,6 +234,10 @@ def run(output: Path, duration_seconds: int, schedule_scale: float):
         barrier_visibility = []
         save_latency = []
         local_query_latency = []
+        quiet_save_latency = []
+        pressure_save_latency = []
+        quiet_query_latency = []
+        pressure_query_latency = []
         remote_dram_bytes = 0
         remote_ssd_bytes = 0
         ssd_read_bytes = 0
@@ -241,6 +246,7 @@ def run(output: Path, duration_seconds: int, schedule_scale: float):
         expected_remote = True
         peer_partitioned = False
         source_isolated = False
+        slow_subscriber = False
         fault_index = 0
         schedule = [(at * schedule_scale, action) for at, action in FAULTS]
         started = time.monotonic()
@@ -276,7 +282,7 @@ def run(output: Path, duration_seconds: int, schedule_scale: float):
         shutdown_times = []
 
         def apply_fault(action):
-            nonlocal expected_remote, peer_partitioned, source_isolated
+            nonlocal expected_remote, peer_partitioned, slow_subscriber, source_isolated
             event = {"elapsed": time.monotonic() - started, "action": action}
             if action in ("peer_partition", "overflow_partition"):
                 source_peer_gate.partition()
@@ -288,8 +294,10 @@ def run(output: Path, duration_seconds: int, schedule_scale: float):
                 repair_times.append(reconcile(action))
             elif action == "slow_subscriber":
                 source_peer_gate.set_delay(0.05)
+                slow_subscriber = True
             elif action == "slow_release":
                 source_peer_gate.set_delay(0)
+                slow_subscriber = False
                 repair_times.append(reconcile(action))
             elif action == "receiver_restart":
                 old_owner = registrations["consumer"]["owner"]["incarnation"]
@@ -363,6 +371,8 @@ def run(output: Path, duration_seconds: int, schedule_scale: float):
                 assert ok, message
             save_ms = (time.monotonic() - save_started) * 1000
             save_latency.append(save_ms)
+            pressure_window = peer_partitioned or slow_subscriber
+            (pressure_save_latency if pressure_window else quiet_save_latency).append(save_ms)
             expected_write = write_before + payload_bytes * 2
             _until(
                 lambda source_manager=source_manager, expected_write=expected_write: (
@@ -394,13 +404,31 @@ def run(output: Path, duration_seconds: int, schedule_scale: float):
                 list(managers.values()),
             )
             local_query_latency.append((time.monotonic() - local_started) * 1000)
+            (pressure_query_latency if pressure_window else quiet_query_latency).append(
+                local_query_latency[-1]
+            )
             clients[("source", "dram")].release(local.lease)
 
             can_barrier = source_valid and not peer_partitioned and not source_isolated
             if can_barrier:
                 visible_started = time.monotonic()
-                fence = _sync(source_manager)
-                _await_fence(consumer_manager, fence, list(managers.values()), timeout=30)
+                if cycle % 2:
+                    fence = _sync(source_manager)
+                    _await_fence(consumer_manager, fence, list(managers.values()), timeout=30)
+                else:
+                    target = _metadata(source_manager)["inventory_sequence"]
+                    source_owner = registrations["source"]["owner"]["incarnation"]
+                    _until(
+                        lambda target=target,
+                        source_owner=source_owner,
+                        consumer_manager=consumer_manager: (
+                            (status := _owner_status(consumer_manager, source_owner))
+                            and status["fresh"]
+                            and status["applied_sequence"] >= target
+                        ),
+                        list(managers.values()),
+                        timeout=30,
+                    )
                 visibility = (time.monotonic() - visible_started) * 1000
                 (barrier_visibility if cycle % 2 else async_visibility).append(visibility)
                 expected_remote = True
@@ -496,6 +524,9 @@ def run(output: Path, duration_seconds: int, schedule_scale: float):
                 "local_query_ms": local_query_latency[-1],
                 "visibility_ms": visibility,
                 "source_valid": source_valid,
+                "peer_partitioned": peer_partitioned,
+                "slow_subscriber": slow_subscriber,
+                "source_isolated": source_isolated,
                 "coverage": consumer_status["index"]["coverage"],
                 "dram_remote": dram_remote,
                 "ssd_remote": ssd_remote,
@@ -547,6 +578,12 @@ def run(output: Path, duration_seconds: int, schedule_scale: float):
         assert final_consumer["index"]["coverage"] == "complete_at_watermarks"
         assert wrong_bytes == 0
         assert stale_authorizations == 0
+        quiet_save = _summary(quiet_save_latency)
+        pressure_save = _summary(pressure_save_latency)
+        quiet_query = _summary(quiet_query_latency)
+        pressure_query = _summary(pressure_query_latency)
+        save_regression = pressure_save["p99"] / quiet_save["p99"] - 1
+        query_regression = pressure_query["p99"] / quiet_query["p99"] - 1
         source_metrics = fetch_orbitkv_metrics(source_manager.http_port)
         consumer_metrics = fetch_orbitkv_metrics(consumer_manager.http_port)
         assert not source_metrics.get("orbitkv_transfer_lock_active", 0)
@@ -563,6 +600,12 @@ def run(output: Path, duration_seconds: int, schedule_scale: float):
                 "barrier_visibility_ms": _summary(barrier_visibility),
                 "save_latency_ms": _summary(save_latency),
                 "local_query_latency_ms": _summary(local_query_latency),
+                "quiet_save_latency_ms": quiet_save,
+                "pressure_save_latency_ms": pressure_save,
+                "quiet_query_latency_ms": quiet_query,
+                "pressure_query_latency_ms": pressure_query,
+                "save_p99_regression": save_regression,
+                "query_p99_regression": query_regression,
                 "remote_dram_bytes": remote_dram_bytes,
                 "remote_ssd_bytes": remote_ssd_bytes,
                 "ssd_read_bytes": ssd_read_bytes,
