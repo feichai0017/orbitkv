@@ -263,6 +263,7 @@ vllm serve /path/to/qwen3-8b \
   --kv-transfer-config '{
     "kv_connector": "MultiConnector",
     "kv_role": "kv_both",
+    "kv_load_failure_policy": "fail",
     "kv_connector_extra_config": {
       "connectors": [
         {
@@ -300,6 +301,7 @@ vllm serve /path/to/qwen3-8b \
   --kv-transfer-config '{
     "kv_connector": "MultiConnector",
     "kv_role": "kv_both",
+    "kv_load_failure_policy": "fail",
     "kv_connector_extra_config": {
       "connectors": [
         {

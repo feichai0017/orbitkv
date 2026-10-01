@@ -53,7 +53,8 @@ def test_sglang_native_pd_and_external_cache_match_monolithic(channel_server, re
     env["ORBITKV_SGLANG_ENDPOINT"] = f"unix://{channel_server.bootstrap_socket}"
     env["ORBITKV_TRANSFER_BACKEND"] = request.config.getoption("--orbitkv-transfer-backend")
     env["MC_FORCE_TCP"] = "1"
-    env["SGLANG_DISAGGREGATION_DEFERRED_DECODE_KV_RELEASE_TIMEOUT"] = "1"
+    env["SGLANG_DISAGGREGATION_DEFERRED_DECODE_KV_RELEASE"] = "1"
+    env["SGLANG_DISAGGREGATION_DEFERRED_DECODE_KV_RELEASE_TIMEOUT"] = "30"
 
     logs = {
         "prefill": tmp_path / "sglang-pd-prefill.log",

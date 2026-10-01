@@ -41,6 +41,7 @@ The candidate profile uses a read/write cache on P and a save-only cache on D:
 {
   "kv_connector": "MultiConnector",
   "kv_role": "kv_both",
+  "kv_load_failure_policy": "fail",
   "kv_connector_extra_config": {
     "connectors": [
       {
@@ -97,6 +98,15 @@ Select `--disaggregation-mode prefill` or `decode`; D also needs
 and routing. P restores historical state, D only publishes completed state;
 `RecoveryLinkerWrapper` disables external loads on D. Host-pool retraction,
 DSA/draft/unknown auxiliary layouts remain rejected.
+
+Enable `SGLANG_DISAGGREGATION_DEFERRED_DECODE_KV_RELEASE=1` on both P and D
+for the candidate; leave its timeout at 30 seconds. In official 0.5.20 this
+protection defaults off. Even when enabled, the native queue releases pages
+on timeout without a full drain acknowledgement. Therefore in-flight transfer
+cancellation, peer loss and delayed-ACK page reuse remain unsupported by this
+candidate; enabling the flag does not qualify them. The model test cancels an
+already-running decode request and does not claim to exercise this DMA boundary.
+See the [release audit](engine-release-audit.md#native-pd-release-limits).
 
 The ordinary cache has two version-coupled internal Hooks, plus optional queue
 preparation. Their purpose and removal conditions are documented in

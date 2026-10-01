@@ -52,6 +52,18 @@ and host-pool retraction fail explicitly. No second RadixCache, Python cache
 facade or alternative P/D lifecycle is added. Unselected plugins remain lazy
 and do not import CUDA/native runtime or connect to a Manager.
 
+## Native P/D release limits
+
+SGLang 0.5.20 defaults `SGLANG_DISAGGREGATION_DEFERRED_DECODE_KV_RELEASE`
+to false. The candidate explicitly enables it on both workers. However, the
+[released decode queue](https://github.com/sgl-project/sglang/blob/94602c9c2b7cbdb8efd5c52802dac6a1c180089e/python/sglang/srt/disaggregation/decode.py#L2492)
+still frees held pages when the timeout expires without a full drain ACK.
+This is a released lifecycle gap: a deadline alone cannot prove remote writes
+have stopped. Native P/D transfer cancellation, delayed ACK and peer-loss page
+reuse remain unqualified; ordinary linker restore cancellation is a separate
+cache-owned contract. The historical upstream patches remain contribution
+material; no local runtime patch hides this limitation.
+
 ## Comparison with external caches
 
 - [LMCache 0.5.5 vLLM MP adapter](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/integration/vllm/lmcache_mp_connector.py)

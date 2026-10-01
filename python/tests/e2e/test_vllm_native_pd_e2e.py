@@ -77,6 +77,7 @@ def test_native_pd_nixl_matches_monolithic(model, tmp_path, channel_server, cach
             "--attention-config.flash_attn_version",
             "2",
             "--enforce-eager",
+            "--enable-log-requests",
         ],
     }
     if pressure:
@@ -178,6 +179,7 @@ def test_native_pd_nixl_matches_monolithic(model, tmp_path, channel_server, cach
                     config = {
                         "kv_connector": "MultiConnector",
                         "kv_role": "kv_both",
+                        "kv_load_failure_policy": "fail",
                         "kv_connector_extra_config": {"connectors": children},
                     }
                 urls[role] = launch(stack, role, config, find_available_port())
@@ -254,13 +256,6 @@ def test_native_pd_nixl_matches_monolithic(model, tmp_path, channel_server, cach
                     assert after.get("orbitkv_load_failures_total", 0) == 0
 
             if cache_order == "save_only":
-                aborted_metric = r'^vllm:request_success_total\{[^}]*finished_reason="abort"[^}]*\}\s+([\d.eE+-]+)$'
-                before_cancel = requests.get(urls["consumer"] + "/metrics", timeout=5)
-                before_cancel.raise_for_status()
-                aborted_before = sum(
-                    float(value)
-                    for value in re.findall(aborted_metric, before_cancel.text, re.MULTILINE)
-                )
                 cancellation = {**bodies[-1], "max_tokens": 1024, "stream": True}
                 cancellation["prompt"] = [token + 31 for token in cancellation["prompt"]]
                 with requests.post(
@@ -270,13 +265,20 @@ def test_native_pd_nixl_matches_monolithic(model, tmp_path, channel_server, cach
                     timeout=120,
                 ) as stream:
                     stream.raise_for_status()
-                    first_chunk = next(
-                        line
-                        for line in stream.iter_lines(chunk_size=1)
-                        if line.startswith(b"data:")
-                    )
-                    assert b"[DONE]" not in first_chunk
-                    (tmp_path / "cancel-first-chunk.txt").write_bytes(first_chunk)
+                    chunks = []
+                    token_count = 0
+                    for line in stream.iter_lines(chunk_size=1):
+                        if not line.startswith(b"data:"):
+                            continue
+                        assert b"[DONE]" not in line, "request finished before cancellation"
+                        chunk = json.loads(line.removeprefix(b"data:"))
+                        chunks.append(chunk)
+                        token_count += len(chunk["choices"][0].get("token_ids") or [])
+                        if token_count >= 3:
+                            break
+                    assert token_count >= 3
+                    cancel_id = chunks[-1]["id"]
+                    (tmp_path / "cancel-chunks.json").write_text(json.dumps(chunks, indent=2))
                 deadline = time.monotonic() + 30
                 while True:
                     response = requests.get(urls["consumer"] + "/metrics", timeout=5)
@@ -286,15 +288,12 @@ def test_native_pd_nixl_matches_monolithic(model, tmp_path, channel_server, cach
                         response.text,
                         re.MULTILINE,
                     )
-                    aborted_after = sum(
-                        float(value)
-                        for value in re.findall(aborted_metric, response.text, re.MULTILINE)
+                    (tmp_path / "cancel-last-metrics.txt").write_text(response.text)
+                    aborted = any(
+                        "Aborted request(s)" in line and cancel_id in line
+                        for line in (tmp_path / "consumer.log").read_text().splitlines()
                     )
-                    if (
-                        aborted_after > aborted_before
-                        and gauges
-                        and all(float(value) == 0 for value in gauges)
-                    ):
+                    if aborted and gauges and all(float(value) == 0 for value in gauges):
                         (tmp_path / "cancel-drained-metrics.txt").write_text(response.text)
                         break
                     assert time.monotonic() < deadline, "client cancellation did not drain"
@@ -321,22 +320,37 @@ def test_native_pd_nixl_matches_monolithic(model, tmp_path, channel_server, cach
 
             deadline = time.monotonic() + 30
             while True:
-                log = (tmp_path / "consumer.log").read_text()
+                response = requests.get(urls["consumer"] + "/metrics", timeout=5)
+                response.raise_for_status()
+                (tmp_path / "nixl-metrics.txt").write_text(response.text)
                 completed = sum(
-                    int(value)
-                    for value in re.findall(r"Num successful transfers[\"']?[:=]\s*(\d+)", log)
+                    float(value)
+                    for value in re.findall(
+                        r"^vllm:nixl_bytes_transferred_count(?:\{[^}]*\})?\s+([\d.eE+-]+)$",
+                        response.text,
+                        re.MULTILINE,
+                    )
                 )
                 if completed >= (0 if cache_order == "cache_first" else len(bodies)):
                     break
-                assert time.monotonic() < deadline, log[-6000:]
+                assert time.monotonic() < deadline, response.text
                 time.sleep(0.2)
             if cache_order != "cache_first":
-                assert any(
-                    float(value) > 0
-                    for value in re.findall(r"Avg MB per transfer[\"']?[:=]\s*([\d.]+)", log)
+                transferred = re.findall(
+                    r"^vllm:nixl_bytes_transferred_sum(?:\{[^}]*\})?\s+([\d.eE+-]+)$",
+                    response.text,
+                    re.MULTILINE,
                 )
+                assert transferred and sum(map(float, transferred)) > 0
+            for metric in ("failed_transfers", "failed_notifications"):
+                values = re.findall(
+                    rf"^vllm:nixl_num_{metric}_total(?:\{{[^}}]*\}})?\s+([\d.eE+-]+)$",
+                    response.text,
+                    re.MULTILINE,
+                )
+                assert values and all(float(value) == 0 for value in values), response.text
             if pressure and restart:
-                producer_log = (tmp_path / "consumer.log").read_text()
+                producer_log = (tmp_path / "producer.log").read_text()
                 hits = [
                     int(value)
                     for value in re.findall(
@@ -347,9 +361,3 @@ def test_native_pd_nixl_matches_monolithic(model, tmp_path, channel_server, cach
             for role in ("producer", "consumer"):
                 role_log = (tmp_path / f"{role}.log").read_text()
                 assert "Nixl" in role_log
-                assert all(
-                    int(value) == 0
-                    for value in re.findall(
-                        r"Num failed (?:transfers|recvs)[\"']?[:=]\s*(\d+)", role_log
-                    )
-                )

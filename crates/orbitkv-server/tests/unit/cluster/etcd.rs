@@ -132,6 +132,7 @@ impl Etcd {
         let _ = self.processes[node].wait();
     }
 
+    #[cfg(feature = "test-hooks")]
     pub(crate) fn pids(&self) -> Vec<u32> {
         self.processes.iter().map(Child::id).collect()
     }

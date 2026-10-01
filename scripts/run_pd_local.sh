@@ -49,6 +49,7 @@ cache = {
 print(json.dumps({
     "kv_connector": "MultiConnector",
     "kv_role": "kv_both",
+    "kv_load_failure_policy": "fail",
     "kv_connector_extra_config": {
         "connectors": [cache, native] if role == "producer" else [native, cache],
     },
