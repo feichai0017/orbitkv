@@ -36,7 +36,7 @@ record submitted, merged and released as different states.
 | --- | --- |
 | S0 | Agent handoff and Codex skill migration merged in PR #190. |
 | S1 | Evidence separation independently verified at `ec3add9b`; this delivery consolidates plans and release-based integration guidance. Acceptance covers S1 only; native CUDA qualification remains blocked on this host. |
-| S2 | Partial: S2.1–S2.9 are independently accepted. S2.10 same-host correctness is implemented, but 16-owner visibility and 5% isolation performance gates fail; physical cross-host cache/HA, final serving, RDMA/GDS and S3-dependent cells remain open. |
+| S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. The 16-owner visibility and 5% isolation performance gates fail; physical cross-host cache/HA, final serving, RDMA/GDS and S3-dependent cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
 | S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`. vLLM 0.30.0 remains an unqualified upgrade target, and public lifecycle/deployment gates remain open. |
@@ -71,7 +71,7 @@ independent protocol or native-lifetime implementation.
 | Local transport | UDS bootstrap, iceoryx2 descriptors, shared arenas and bounded operation ownership | Page-generation coverage, explicit registration data and live-process stall handling |
 | Raw copies | Contiguous/strided DMA, bounded multipart Restore, engine-local execution | Residual overhead and earlier multipart consumption |
 | Compute overlap | Qualified raw single-part layer/group readiness; coarse dependencies where required | SSD/codec pipelines and legal multipart overlap |
-| Distributed discovery | Local `GlobalIndex`, bounded scoped owner streams, explicit coverage and same-host live-store correctness; no directory RPCs | S2.10 performance remediation/review and separate host-failure domains |
+| Distributed discovery | Local `GlobalIndex`, bounded scoped owner streams, explicit coverage and independently accepted same-host live-store correctness; no directory RPCs | 5% isolation and 16-owner performance remediation, plus separate host-failure domains |
 | Remote recovery | Source authorization, TENT READ, release reconciliation, peer DRAM/SSD | Permanent requester loss and transfer/partition fault qualification |
 | Engine support | vLLM 0.29.0 and SGLang 0.5.20 local recovery and TP=1 replica sharing | Explicit multi-instance, container, P/D and TP/PP qualification cells |
 | Cost decisions | Resource-scoped observations, shadow estimates and guarded experimental peer choices | One consumed planner for complete routes, legal boundaries and P/D authority |
@@ -444,11 +444,11 @@ with the frozen S2.9 handoff; no serving or tenant-isolation claim is inferred.
 
 ### S2.10 — Sustained live-store and independent-domain qualification
 
-**Same-host correctness implemented; qualification partial and independently
-rejected on frozen performance gates. Depends on:** accepted protocol
-implementation from S2.8 and S2.9 for scoped claims. This carries forward S2's
-remaining performance, capacity, serving and cross-host obligations; it does not
-replace missing evidence with a new name.
+**Same-host correctness independently accepted at `65c51aaa`; qualification
+remains partial because the frozen 16-owner visibility and 5% isolation gates
+fail. Depends on:** accepted protocol implementation from S2.8 and S2.9 for
+scoped claims. This carries forward S2's remaining performance, capacity, serving
+and cross-host obligations; it does not replace missing evidence with a new name.
 
 - Execute the [frozen workload/acceptance matrix](distributed-design.md#performance-acceptance-and-ablations)
   on actual live DRAM and io_uring storage. Increase one load dimension at a time,
