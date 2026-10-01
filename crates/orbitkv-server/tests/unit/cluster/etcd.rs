@@ -175,7 +175,11 @@ pub(crate) async fn join(
     view: Arc<MembershipView>,
     ttl: i64,
 ) -> (Cluster, Arc<GlobalIndex>, Arc<ResidencyInventory>) {
-    let index = Arc::new(GlobalIndex::new(view.clone(), 1 << 20));
+    let index = Arc::new(GlobalIndex::new(
+        view.clone(),
+        1 << 20,
+        Arc::new(orbitkv_state::InventoryScope::AllNamespaces),
+    ));
     let inventory = Arc::new(ResidencyInventory::new(16 << 10));
     let member = Cluster::join(
         &server.endpoints,

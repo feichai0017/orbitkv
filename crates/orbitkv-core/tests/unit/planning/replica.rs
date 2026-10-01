@@ -42,7 +42,8 @@ fn peer_evidence_is_bounded_by_runtime_identity_and_preserves_local_memory() {
             },
         })
         .collect();
-    replicas.set_peers(peers.clone());
+    replicas.set_remote(DiscoveryCoverage::PartialHints, peers.clone());
+    assert_eq!(replicas.remote_coverage(), DiscoveryCoverage::PartialHints);
     assert_eq!(
         replicas.peer(ReplicaMedium::Dram).count(),
         DISCOVERY_MAX_REPLICAS_PER_MEDIUM

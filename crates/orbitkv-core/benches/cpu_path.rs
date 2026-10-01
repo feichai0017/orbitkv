@@ -77,9 +77,13 @@ impl BenchFixture {
                 enable_lfu_admission: false,
                 hint_value_size_bytes: Some(bytes_per_block),
                 enable_numa_affinity: false,
-                global_index: membership
-                    .as_ref()
-                    .map(|view| Arc::new(orbitkv_catalog::GlobalIndex::new(view.clone(), 1 << 20))),
+                global_index: membership.as_ref().map(|view| {
+                    Arc::new(orbitkv_catalog::GlobalIndex::new(
+                        view.clone(),
+                        1 << 20,
+                        Arc::new(orbitkv_state::InventoryScope::AllNamespaces),
+                    ))
+                }),
                 inventory: enable_inventory.then(|| {
                     Arc::new(orbitkv_core::ResidencyInventory::new(
                         orbitkv_core::DEFAULT_INVENTORY_JOURNAL_BYTES,

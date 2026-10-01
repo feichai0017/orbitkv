@@ -101,6 +101,9 @@ pub struct MetadataStatus {
     pub inventory_delta_encoded_bytes: u64,
     pub inventory_coalescing_windows: u64,
     pub inventory_coalescing_wait_micros: u64,
+    pub inventory_scope_filter_input_records: u64,
+    pub inventory_scope_filter_output_records: u64,
+    pub inventory_scope_filter_micros: u64,
 }
 
 impl OrbitKVEngine {
@@ -549,6 +552,9 @@ impl OrbitKVEngine {
             inventory_delta_encoded_bytes: inventory_status.delta_encoded_bytes,
             inventory_coalescing_windows: inventory_status.coalescing_windows,
             inventory_coalescing_wait_micros: inventory_status.coalescing_wait_micros,
+            inventory_scope_filter_input_records: inventory_status.scope_filter_input_records,
+            inventory_scope_filter_output_records: inventory_status.scope_filter_output_records,
+            inventory_scope_filter_micros: inventory_status.scope_filter_micros,
         })
     }
 

@@ -5,6 +5,10 @@ use std::sync::Arc;
 fn key(n: u32) -> StateKey {
     StateKey::new("model".into(), n.to_le_bytes().to_vec())
 }
+
+fn scoped_key(namespace: &str, n: u32) -> StateKey {
+    StateKey::new(namespace.into(), n.to_le_bytes().to_vec())
+}
 fn metadata(medium: ReplicaMedium) -> ReplicaMetadata {
     ReplicaMetadata {
         medium,
@@ -247,4 +251,67 @@ fn coalescing_partitions_input_before_deduplication() {
         delta.input_bytes + large.changes(delta.through, 100).unwrap()[0].estimated_size()
             > INVENTORY_BATCH_BYTES
     );
+}
+
+#[test]
+fn scoped_scan_and_delta_preserve_source_coverage_across_empty_intervals() {
+    let inventory = ResidencyInventory::new(4 << 20);
+    let scope = InventoryScope::exact(["selected".into()]).unwrap();
+    for id in 0..700 {
+        for namespace in ["outside", "selected"] {
+            let key = scoped_key(namespace, id);
+            inventory.change(
+                &key,
+                ReplicaMedium::Dram,
+                Some(metadata(ReplicaMedium::Dram)),
+            );
+        }
+    }
+    let mut cursor = None;
+    let mut selected = Vec::new();
+    loop {
+        let page = inventory.scoped_page(cursor.as_ref(), &scope).unwrap();
+        selected.extend(page.records);
+        cursor = page.next;
+        if page.complete {
+            break;
+        }
+    }
+    assert_eq!(selected.len(), 700);
+    assert!(
+        selected
+            .iter()
+            .all(|record| record.key.namespace == "selected")
+    );
+
+    let before = inventory.sequence();
+    inventory.change(
+        &scoped_key("outside", 999),
+        ReplicaMedium::Ssd,
+        Some(metadata(ReplicaMedium::Ssd)),
+    );
+    let empty = inventory
+        .coalesced_changes_scoped(before, inventory.sequence(), &scope)
+        .unwrap();
+    assert_eq!(empty.through, inventory.sequence());
+    assert_eq!(empty.input_records, 1);
+    assert!(empty.records.is_empty());
+
+    let selected_key = scoped_key("selected", 0);
+    let before = inventory.sequence();
+    inventory.change(&selected_key, ReplicaMedium::Dram, None);
+    inventory.change(
+        &selected_key,
+        ReplicaMedium::Dram,
+        Some(metadata(ReplicaMedium::Dram)),
+    );
+    let replacement = inventory
+        .coalesced_changes_scoped(before, inventory.sequence(), &scope)
+        .unwrap();
+    assert_eq!(replacement.records.len(), 1);
+    assert!(replacement.records[0].present);
+    assert_eq!(replacement.records[0].sequence, inventory.sequence());
+    let status = inventory.status();
+    assert!(status.scope_filter_input_records > status.scope_filter_output_records);
+    assert!(status.scope_filter_micros > 0);
 }

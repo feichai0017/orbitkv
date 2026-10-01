@@ -3,7 +3,7 @@ use std::ops::Bound::{Excluded, Unbounded};
 use std::time::Duration;
 
 use orbitkv_state::{
-    INVENTORY_BATCH_BYTES, INVENTORY_BATCH_RECORDS, InventoryRecord, ReplicaMedium,
+    INVENTORY_BATCH_BYTES, INVENTORY_BATCH_RECORDS, InventoryRecord, InventoryScope, ReplicaMedium,
     ReplicaMetadata, StateKey,
 };
 use parking_lot::Mutex;
@@ -34,6 +34,9 @@ struct Inventory {
     delta_encoded_bytes: u64,
     coalescing_windows: u64,
     coalescing_wait_micros: u64,
+    scope_filter_input_records: u64,
+    scope_filter_output_records: u64,
+    scope_filter_micros: u64,
 }
 
 #[derive(Clone, Copy, Debug, serde::Serialize)]
@@ -53,6 +56,9 @@ pub struct InventoryStatus {
     pub delta_encoded_bytes: u64,
     pub coalescing_windows: u64,
     pub coalescing_wait_micros: u64,
+    pub scope_filter_input_records: u64,
+    pub scope_filter_output_records: u64,
+    pub scope_filter_micros: u64,
 }
 
 #[derive(Debug)]
@@ -61,6 +67,12 @@ pub struct InventoryDelta {
     pub records: Vec<InventoryRecord>,
     pub input_records: usize,
     pub input_bytes: usize,
+}
+
+pub struct InventoryPage {
+    pub records: Vec<InventoryRecord>,
+    pub next: Option<(StateKey, ReplicaMedium)>,
+    pub complete: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,6 +112,9 @@ impl ResidencyInventory {
                 delta_encoded_bytes: 0,
                 coalescing_windows: 0,
                 coalescing_wait_micros: 0,
+                scope_filter_input_records: 0,
+                scope_filter_output_records: 0,
+                scope_filter_micros: 0,
             }),
             changed: watch::channel(0).0,
             flush_requested: watch::channel(0).0,
@@ -182,6 +197,9 @@ impl ResidencyInventory {
             delta_encoded_bytes: state.delta_encoded_bytes,
             coalescing_windows: state.coalescing_windows,
             coalescing_wait_micros: state.coalescing_wait_micros,
+            scope_filter_input_records: state.scope_filter_input_records,
+            scope_filter_output_records: state.scope_filter_output_records,
+            scope_filter_micros: state.scope_filter_micros,
         }
     }
 
@@ -226,13 +244,62 @@ impl ResidencyInventory {
         &self,
         after: Option<&(StateKey, ReplicaMedium)>,
     ) -> Result<Vec<InventoryRecord>, InventoryReadError> {
-        let state = self.state.lock();
-        bounded_records(
-            state
+        self.scoped_page(after, &InventoryScope::AllNamespaces)
+            .map(|page| page.records)
+    }
+
+    pub fn scoped_page(
+        &self,
+        after: Option<&(StateKey, ReplicaMedium)>,
+        scope: &InventoryScope,
+    ) -> Result<InventoryPage, InventoryReadError> {
+        let started = std::time::Instant::now();
+        let mut state = self.state.lock();
+        let (records, next, complete, input_records) = {
+            let mut scanned = 0usize;
+            let mut scanned_bytes = 0usize;
+            let mut records = Vec::new();
+            let mut next = None;
+            let mut source = state
                 .residents
                 .range((after.map_or(Unbounded, Excluded), Unbounded))
-                .map(|(_, record)| record.clone()),
-        )
+                .peekable();
+            while let Some((identity, record)) = source.peek() {
+                let bytes = record.estimated_size();
+                if scanned == INVENTORY_BATCH_RECORDS
+                    || (scanned > 0 && scanned_bytes + bytes > INVENTORY_BATCH_BYTES)
+                {
+                    break;
+                }
+                if scanned == 0 && bytes > INVENTORY_BATCH_BYTES {
+                    return Err(InventoryReadError::RecordTooLarge);
+                }
+                let identity = (*identity).clone();
+                let record = (*record).clone();
+                source.next();
+                scanned += 1;
+                scanned_bytes += bytes;
+                next = Some(identity);
+                if scope.contains(&record.key.namespace) {
+                    records.push(record);
+                }
+            }
+            (records, next, source.peek().is_none(), scanned)
+        };
+        state.scope_filter_input_records = state
+            .scope_filter_input_records
+            .saturating_add(u64::try_from(input_records).unwrap_or(u64::MAX));
+        state.scope_filter_output_records = state
+            .scope_filter_output_records
+            .saturating_add(u64::try_from(records.len()).unwrap_or(u64::MAX));
+        state.scope_filter_micros = state
+            .scope_filter_micros
+            .saturating_add(u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX));
+        Ok(InventoryPage {
+            records,
+            next,
+            complete,
+        })
     }
 
     pub fn changes(
@@ -272,6 +339,16 @@ impl ResidencyInventory {
         after: u64,
         through: u64,
     ) -> Result<InventoryDelta, InventoryReadError> {
+        self.coalesced_changes_scoped(after, through, &InventoryScope::AllNamespaces)
+    }
+
+    pub fn coalesced_changes_scoped(
+        &self,
+        after: u64,
+        through: u64,
+        scope: &InventoryScope,
+    ) -> Result<InventoryDelta, InventoryReadError> {
+        let started = std::time::Instant::now();
         let input = self.changes(after, through)?;
         let through = input.last().map_or(after, |record| record.sequence);
         let input_records = input.len();
@@ -281,8 +358,22 @@ impl ResidencyInventory {
             let Some(metadata) = record.metadata else {
                 return Err(InventoryReadError::InvalidRecord);
             };
-            records.insert((record.key.clone(), metadata.medium), record);
+            if scope.contains(&record.key.namespace) {
+                records.insert((record.key.clone(), metadata.medium), record);
+            }
         }
+        let output_records = records.len();
+        let mut state = self.state.lock();
+        state.scope_filter_input_records = state
+            .scope_filter_input_records
+            .saturating_add(u64::try_from(input_records).unwrap_or(u64::MAX));
+        state.scope_filter_output_records = state
+            .scope_filter_output_records
+            .saturating_add(u64::try_from(output_records).unwrap_or(u64::MAX));
+        state.scope_filter_micros = state
+            .scope_filter_micros
+            .saturating_add(u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX));
+        drop(state);
         Ok(InventoryDelta {
             through,
             records: records.into_values().collect(),

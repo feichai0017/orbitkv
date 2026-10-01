@@ -913,7 +913,11 @@ async fn live_dram_journal_overflow_rebuilds_and_local_payload_survives_metadata
         .parse()
         .unwrap();
     let source_view = view(source_port);
-    let source_index = Arc::new(GlobalIndex::new(source_view.clone(), 1 << 20));
+    let source_index = Arc::new(GlobalIndex::new(
+        source_view.clone(),
+        1 << 20,
+        Arc::new(orbitkv_state::InventoryScope::AllNamespaces),
+    ));
     let inventory = Arc::new(ResidencyInventory::new(1024));
     let source_cluster = crate::cluster::Cluster::join(
         std::slice::from_ref(&etcd_gate.endpoint),

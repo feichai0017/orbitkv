@@ -181,6 +181,12 @@ message InventoryRecord {
   ReplicaMetadata metadata = 5;
 }
 
+enum InventoryScopeMode {
+  INVENTORY_SCOPE_UNSPECIFIED = 0;
+  INVENTORY_SCOPE_ALL_NAMESPACES = 1;
+  INVENTORY_SCOPE_EXACT_NAMESPACES = 2;
+}
+
 message InventoryOpen {
   string protocol = 1;
   bytes cluster_uuid = 2;
@@ -192,6 +198,8 @@ message InventoryOpen {
   bytes session_id = 8;
   optional uint64 resume_sequence = 9;
   bytes installed_view_id = 10;
+  InventoryScopeMode scope_mode = 11;
+  repeated bytes scope_namespaces = 12;
 }
 
 message InventoryAck {

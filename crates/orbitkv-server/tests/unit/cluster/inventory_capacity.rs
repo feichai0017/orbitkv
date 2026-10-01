@@ -38,7 +38,11 @@ async fn sustained_all_to_all_stream_churn_is_exact_bounded_and_etcd_constant() 
     for source in 0..SOURCES {
         let port = free_port();
         let membership = view(port);
-        let index = Arc::new(GlobalIndex::new(membership.clone(), INDEX_BYTES));
+        let index = Arc::new(GlobalIndex::new(
+            membership.clone(),
+            INDEX_BYTES,
+            Arc::new(orbitkv_state::InventoryScope::AllNamespaces),
+        ));
         let inventory = Arc::new(
             ResidencyInventory::with_publish_coalescing(16 * 1024 * 1024, Duration::from_millis(2))
                 .unwrap(),

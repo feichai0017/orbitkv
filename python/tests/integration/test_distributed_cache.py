@@ -7,9 +7,11 @@ MC_FORCE_TCP=1 on one host. This is not cross-host qualification.
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import json
 import os
+import re
 import time
 import uuid
 from contextlib import ExitStack
@@ -39,6 +41,16 @@ def _metadata(manager):
     response = requests.get(f"http://127.0.0.1:{manager.http_port}/cache/metadata", timeout=5)
     response.raise_for_status()
     return response.json()
+
+
+def _owner_status(manager, incarnation):
+    response = requests.get(
+        f"http://127.0.0.1:{manager.http_port}/cache/metadata/owners",
+        params={"limit": 128},
+        timeout=5,
+    )
+    response.raise_for_status()
+    return next((row for row in response.json() if row["owner"] == incarnation), None)
 
 
 def _sync(manager):
@@ -186,6 +198,72 @@ def _hashes(medium, round_id, pages):
         hashlib.sha256(f"s2.8:{medium}:{round_id}:{block}".encode()).digest()
         for block in range(pages)
     ]
+
+
+def _discover_storage_namespaces(tmp_path, identities, pages, block_bytes):
+    import torch
+
+    from orbitkv import CacheManagerClient
+    from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
+
+    port = find_available_port()
+    manager = CacheManagerProcess(
+        port,
+        pool_size="64mb",
+        http_port=find_available_port(),
+        bootstrap_socket=f"/tmp/orbitkv-s29-probe-{port}.sock",
+        log_path=tmp_path / "namespace-probe-manager.log",
+    )
+    clients = []
+    tensors = []
+    try:
+        assert manager.start(), manager.read_logs()
+        client = CacheManagerClient(manager.bootstrap_socket)
+        clients.append(client)
+        for index, identity in enumerate(identities):
+            instance = f"namespace-probe-{index}"
+            tensor = torch.empty(pages * block_bytes, dtype=torch.uint8, device="cuda")
+            tensors.append(tensor)
+            client.start_session_watcher(instance, identity, 1, 1)
+            ok, message = client.register_context_batch(
+                instance,
+                identity,
+                0,
+                0,
+                1,
+                1,
+                resolve_device_id(),
+                ["kv:0"],
+                [serialize_gpu_buffer(tensor)],
+                [pages],
+                [block_bytes],
+                [0],
+                [1],
+                "direct",
+                False,
+                tensors=[tensor],
+            )
+            assert ok, message
+        pattern = re.compile(
+            r"instance=(namespace-probe-\d+).*storage_namespace=(orbitkv:v2:[0-9a-f]{64})"
+        )
+
+        def discovered():
+            found = dict(pattern.findall(manager.read_logs()))
+            return found if len(found) == len(identities) else None
+
+        found = _until(discovered, [manager])
+        return [found[f"namespace-probe-{index}"] for index in range(len(identities))]
+    finally:
+        for client in clients:
+            for instance in [f"namespace-probe-{item}" for item in range(len(identities))]:
+                with contextlib.suppress(Exception):
+                    client.unregister_context(instance)
+            client.close()
+        tensors.clear()
+        manager.stop()
+        torch.cuda.synchronize()
+        torch.cuda.ipc_collect()
 
 
 @pytest.mark.parametrize("medium", ["dram", "ssd"])
@@ -478,3 +556,209 @@ def test_manager_inventory_stream_faults_preserve_exact_dram_and_ssd(tmp_path, m
         torch.cuda.synchronize()
         torch.cuda.ipc_collect()
         (tmp_path / "result.json").write_text(json.dumps(result, indent=2) + "\n")
+
+
+@pytest.mark.parametrize("medium", ["dram", "ssd"])
+def test_manager_scoped_inventory_keeps_outside_local_cache_and_exact_remote_bytes(
+    tmp_path, monkeypatch, medium
+):
+    torch = pytest.importorskip("torch")
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is required")
+    from orbitkv import CacheManagerClient
+    from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
+
+    monkeypatch.setenv("MC_FORCE_TCP", "1")
+    pages, block_bytes = 8, 4096
+    payload_bytes = pages * block_bytes
+    selected_identity = f"s2.9:selected:{uuid.uuid4().hex}"
+    outside_identity = f"s2.9:outside:{uuid.uuid4().hex}"
+    selected_scope, outside_scope = _discover_storage_namespaces(
+        tmp_path, [selected_identity, outside_identity], pages, block_bytes
+    )
+    assert selected_scope != outside_scope
+    cluster = f"s29-{medium}-{uuid.uuid4().hex[:12]}"
+    hashes = [hashlib.sha256(f"s2.9:shared:{block}".encode()).digest() for block in range(pages)]
+    selected_payload = _payload(torch, pages, block_bytes, 90)
+    outside_payload = _payload(torch, pages, block_bytes, 91)
+    result = {
+        "medium": medium,
+        "cluster": cluster,
+        "selected_scope": selected_scope,
+        "outside_scope": outside_scope,
+        "hashes": [value.hex() for value in hashes],
+    }
+
+    with ExitStack() as stack:
+        endpoint, _ = stack.enter_context(etcd_server(tmp_path))
+        managers = []
+        clients = {}
+        tensors = {}
+        for node in ("source", "consumer"):
+            port = find_available_port()
+            source = node == "source"
+            ssd_enabled = source and medium == "ssd"
+            manager = CacheManagerProcess(
+                port,
+                pool_size="64mb",
+                http_port=find_available_port(),
+                bootstrap_socket=f"/tmp/orbitkv-s29-{port}.sock",
+                ssd_cache_path=tmp_path / "scoped-source-ssd" if ssd_enabled else None,
+                ssd_cache_capacity="64kb",
+                ssd_backend="uring",
+                ssd_read_path="uring" if ssd_enabled else None,
+                log_path=tmp_path / f"scoped-{node}-manager.log",
+                extra_args=(
+                    "--etcd-endpoints",
+                    endpoint,
+                    "--node-id",
+                    node,
+                    "--cluster-name",
+                    cluster,
+                    "--membership-ttl-secs",
+                    "60",
+                    "--metadata-namespace",
+                    selected_scope,
+                    "--enable-prometheus",
+                ),
+            )
+            stack.callback(manager.stop)
+            assert manager.start(), manager.read_logs()
+            managers.append(manager)
+            client = CacheManagerClient(manager.bootstrap_socket)
+            stack.callback(client.close)
+            clients[node] = client
+            for label, identity in (("selected", selected_identity), ("outside", outside_identity)):
+                instance = f"{node}-{label}"
+                tensor = torch.empty(payload_bytes, dtype=torch.uint8, device="cuda")
+                tensors[(node, label)] = tensor
+                client.start_session_watcher(instance, identity, 1, 1)
+                ok, message = client.register_context_batch(
+                    instance,
+                    identity,
+                    0,
+                    0,
+                    1,
+                    1,
+                    resolve_device_id(),
+                    ["kv:0"],
+                    [serialize_gpu_buffer(tensor)],
+                    [pages],
+                    [block_bytes],
+                    [0],
+                    [1],
+                    "direct",
+                    False,
+                    tensors=[tensor],
+                )
+                assert ok, message
+
+        source_manager, consumer_manager = managers
+        source_client = clients["source"]
+        consumer_client = clients["consumer"]
+        device = resolve_device_id()
+        for label, payload in (("selected", selected_payload), ("outside", outside_payload)):
+            tensor = tensors[("source", label)]
+            tensor.copy_(payload)
+            torch.cuda.synchronize()
+            ok, message = source_client.save(
+                f"source-{label}", 0, 0, device, [("kv:0", list(range(pages)), hashes)]
+            )
+            assert ok, message
+        if medium == "ssd":
+            _wait_for_ssd_write(source_manager, payload_bytes * 2, managers)
+            cleaned = _cleanup_dram(source_manager)
+            assert cleaned["evicted_blocks"] == pages * 2
+            assert cleaned["still_referenced_blocks"] == 0
+
+        fence = _sync(source_manager)
+        _await_fence(consumer_manager, fence, managers)
+        source_owner = fence["source_incarnation"]
+        owner = _owner_status(consumer_manager, source_owner)
+        assert owner and owner["records"] == pages
+        consumer_metadata = _metadata(consumer_manager)
+        assert consumer_metadata["stream"]["scope_kind"] == "exact_namespaces"
+        assert consumer_metadata["stream"]["scope_namespaces"] == 1
+        assert consumer_metadata["index"]["scope_kind"] == "exact_namespaces"
+
+        miss = _query_ready(
+            consumer_client,
+            "consumer-outside",
+            hashes,
+            "outside-remote-miss",
+            0,
+            managers,
+        )
+        assert not miss.lease
+        selected_before = fetch_orbitkv_metrics(consumer_manager.http_port).get(
+            "orbitkv_remote_fetch_bytes_total", 0
+        )
+        _restore(
+            consumer_client,
+            "consumer-selected",
+            tensors[("consumer", "selected")],
+            hashes,
+            "selected-remote",
+            selected_payload,
+            managers,
+        )
+        selected_after = fetch_orbitkv_metrics(consumer_manager.http_port)[
+            "orbitkv_remote_fetch_bytes_total"
+        ]
+        assert selected_after >= selected_before + payload_bytes
+        _wait_for_remote_drain(source_manager, consumer_manager, managers)
+
+        local = tensors[("consumer", "outside")]
+        local.copy_(outside_payload)
+        torch.cuda.synchronize()
+        ok, message = consumer_client.save(
+            "consumer-outside", 0, 0, device, [("kv:0", list(range(pages)), hashes)]
+        )
+        assert ok, message
+        _restore(
+            consumer_client,
+            "consumer-outside",
+            local,
+            hashes,
+            "outside-local",
+            outside_payload,
+            managers,
+        )
+        _cleanup_dram(consumer_manager)
+        miss = _query_ready(
+            consumer_client,
+            "consumer-outside",
+            hashes,
+            "outside-after-local-eviction",
+            0,
+            managers,
+        )
+        assert not miss.lease
+        assert (
+            fetch_orbitkv_metrics(consumer_manager.http_port)["orbitkv_remote_fetch_bytes_total"]
+            == selected_after
+        )
+
+        keys = _etcd_keys(endpoint, f"/orbitkv/v2/{cluster}/")
+        assert not any("/blocks/" in key or "/publishers/" in key for key in keys)
+        result.update(
+            {
+                "fence": fence,
+                "owner_status": owner,
+                "consumer_metadata": consumer_metadata,
+                "etcd_keys": keys,
+                "remote_fetch_bytes": selected_after,
+                "outside_remote_rejected": True,
+                "outside_local_exact": True,
+            }
+        )
+        for node, client in clients.items():
+            for label in ("selected", "outside"):
+                ok, message = client.unregister_context(f"{node}-{label}")
+                assert ok, message
+        for client in clients.values():
+            client.close()
+        tensors.clear()
+        torch.cuda.synchronize()
+        torch.cuda.ipc_collect()
+        (tmp_path / f"scoped-{medium}-result.json").write_text(json.dumps(result, indent=2) + "\n")

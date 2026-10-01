@@ -2,7 +2,7 @@ use std::sync::Weak;
 
 use orbitkv_state::ReplicaMedium;
 #[cfg(feature = "mooncake")]
-use orbitkv_state::{DISCOVERY_MAX_REPLICAS_PER_MEDIUM, ReplicaLocation};
+use orbitkv_state::{DISCOVERY_MAX_REPLICAS_PER_MEDIUM, DiscoveryCoverage, ReplicaLocation};
 use smallvec::SmallVec;
 
 use crate::block::{SealedBlock, StateKey};
@@ -67,6 +67,8 @@ impl ReplicaCandidate {
 pub(crate) struct ReplicaSet {
     pub(crate) key: StateKey,
     replicas: SmallVec<[ReplicaCandidate; 2]>,
+    #[cfg(feature = "mooncake")]
+    remote_coverage: DiscoveryCoverage,
 }
 
 impl ReplicaSet {
@@ -74,6 +76,8 @@ impl ReplicaSet {
         Self {
             key,
             replicas: SmallVec::new(),
+            #[cfg(feature = "mooncake")]
+            remote_coverage: DiscoveryCoverage::Unavailable,
         }
     }
 
@@ -116,6 +120,21 @@ impl ReplicaSet {
                 });
             }
         }
+    }
+
+    #[cfg(feature = "mooncake")]
+    pub(crate) fn set_remote(
+        &mut self,
+        coverage: DiscoveryCoverage,
+        replicas: Vec<ReplicaLocation>,
+    ) {
+        self.remote_coverage = coverage;
+        self.set_peers(replicas);
+    }
+
+    #[cfg(all(feature = "mooncake", test))]
+    pub(crate) fn remote_coverage(&self) -> DiscoveryCoverage {
+        self.remote_coverage
     }
 
     #[cfg(feature = "mooncake")]

@@ -10,19 +10,36 @@ fn owner(port: u16) -> CacheOwner {
 }
 
 fn setup(limit: usize) -> (GlobalIndex, Arc<MembershipView>, CacheOwner) {
+    setup_scope(limit, InventoryScope::AllNamespaces)
+}
+
+fn setup_scope(
+    limit: usize,
+    scope: InventoryScope,
+) -> (GlobalIndex, Arc<MembershipView>, CacheOwner) {
     let local = owner(51001);
     let remote = owner(51002);
     let membership = Arc::new(MembershipView::new(local.clone()));
     assert!(membership.renew(Instant::now(), Duration::from_secs(60)));
     membership.replace_members([("local".into(), local), ("remote".into(), remote.clone())]);
-    let index = GlobalIndex::new(membership.clone(), limit);
+    let index = GlobalIndex::new(membership.clone(), limit, Arc::new(scope));
     index.set_expected_owners(10, [remote.incarnation]);
     (index, membership, remote)
 }
 
 fn record(key: u8, sequence: u64, medium: ReplicaMedium, present: bool) -> InventoryRecord {
+    record_in("model", key, sequence, medium, present)
+}
+
+fn record_in(
+    namespace: &str,
+    key: u8,
+    sequence: u64,
+    medium: ReplicaMedium,
+    present: bool,
+) -> InventoryRecord {
     InventoryRecord {
-        key: StateKey::new("model".into(), vec![key]),
+        key: StateKey::new(namespace.into(), vec![key]),
         sequence,
         present,
         metadata: Some(ReplicaMetadata {
@@ -31,6 +48,138 @@ fn record(key: u8, sequence: u64, medium: ReplicaMedium, present: bool) -> Inven
             stored_bytes: Some(1024),
         }),
     }
+}
+
+#[test]
+fn scoped_index_distinguishes_empty_views_and_rejects_cross_scope_rows() {
+    let wanted = "orbitkv:v2:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let outside = "orbitkv:v2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let (index, _, remote) = setup_scope(1 << 20, InventoryScope::exact([wanted.into()]).unwrap());
+    let view = install(
+        &index,
+        &remote,
+        vec![record_in(wanted, 1, 1, ReplicaMedium::Dram, true)],
+        1,
+    );
+    let wanted_key = record_in(wanted, 1, 1, ReplicaMedium::Dram, true).key;
+    let outside_key = record_in(outside, 1, 1, ReplicaMedium::Dram, true).key;
+    assert_eq!(index.lookup(&[wanted_key])[0].replicas.len(), 1);
+    let outside_row = &index.lookup(&[outside_key])[0];
+    assert!(outside_row.replicas.is_empty());
+    assert_eq!(outside_row.coverage, DiscoveryCoverage::Unavailable);
+    assert_eq!(index.owner_watermark(remote.incarnation), Some((view, 1)));
+
+    let session = Uuid::new_v4();
+    let snapshot = Uuid::new_v4();
+    index
+        .begin_snapshot(remote.incarnation, session, snapshot, Uuid::new_v4(), 1)
+        .unwrap();
+    assert!(
+        index
+            .apply_snapshot_page(
+                remote.incarnation,
+                session,
+                snapshot,
+                0,
+                vec![record_in(outside, 1, 2, ReplicaMedium::Dram, true)],
+            )
+            .is_err()
+    );
+
+    let (empty, _, empty_remote) = setup_scope(1 << 20, InventoryScope::exact(Vec::new()).unwrap());
+    let empty_view = install(&empty, &empty_remote, Vec::new(), 1);
+    assert_eq!(
+        empty.owner_watermark(empty_remote.incarnation),
+        Some((empty_view, 1))
+    );
+    assert_eq!(
+        empty
+            .owner_status(empty_remote.incarnation)
+            .unwrap()
+            .records,
+        0
+    );
+    assert_eq!(
+        empty.status().coverage,
+        DiscoveryCoverage::CompleteAtWatermarks
+    );
+    assert_eq!(
+        empty.lookup(&[record(1, 1, ReplicaMedium::Dram, true).key])[0].coverage,
+        DiscoveryCoverage::Unavailable
+    );
+    let status = empty.status();
+    assert!(status.lookup_lock_samples > 0);
+    assert!(status.update_lock_samples > 0);
+}
+
+#[test]
+fn member_transitions_update_cached_coverage_without_treating_missing_as_empty() {
+    let (index, membership, remote) = setup(1 << 20);
+    install(
+        &index,
+        &remote,
+        vec![record(1, 1, ReplicaMedium::Dram, true)],
+        1,
+    );
+    assert_eq!(
+        index.status().coverage,
+        DiscoveryCoverage::CompleteAtWatermarks
+    );
+    let added = owner(51003);
+    membership.replace_members([
+        ("local".into(), membership.owner().clone()),
+        ("remote".into(), remote.clone()),
+        ("added".into(), added.clone()),
+    ]);
+    index.set_expected_owners(
+        11,
+        [
+            membership.owner().incarnation,
+            remote.incarnation,
+            added.incarnation,
+        ],
+    );
+    let status = index.status();
+    assert_eq!(status.expected_owner_views, 2);
+    assert_eq!(status.installed_owner_views, 1);
+    assert_eq!(status.coverage, DiscoveryCoverage::PartialHints);
+    install(&index, &added, Vec::new(), 1);
+    assert_eq!(
+        index.status().coverage,
+        DiscoveryCoverage::CompleteAtWatermarks
+    );
+
+    let replacement = owner(51004);
+    membership.replace_members([
+        ("local".into(), membership.owner().clone()),
+        ("added".into(), added.clone()),
+        ("remote".into(), replacement.clone()),
+    ]);
+    index.set_expected_owners(
+        12,
+        [
+            membership.owner().incarnation,
+            added.incarnation,
+            replacement.incarnation,
+        ],
+    );
+    index.retire_owner(remote.incarnation);
+    let status = index.status();
+    assert_eq!(status.expected_owner_views, 2);
+    assert_eq!(status.installed_owner_views, 1);
+    assert_eq!(status.coverage, DiscoveryCoverage::PartialHints);
+    install(&index, &replacement, Vec::new(), 1);
+    assert_eq!(
+        index.status().coverage,
+        DiscoveryCoverage::CompleteAtWatermarks
+    );
+    while !index.cleanup_owner(remote.incarnation, 1) {}
+    assert_eq!(
+        index.lookup(&[record(1, 1, ReplicaMedium::Dram, true).key])[0]
+            .replicas
+            .len(),
+        0
+    );
 }
 
 fn install(

@@ -10,8 +10,8 @@ from pathlib import Path
 import requests
 
 
-LEGACY_FORMAT = b"orbitkv/global-index/v2"
-STREAM_PROTOCOL = "orbitkv/inventory-stream/v3"
+ALL_NAMESPACE_PROTOCOL = "orbitkv/inventory-stream/v3"
+SCOPED_PROTOCOL = "orbitkv/inventory-stream/v4"
 
 
 def encode(value: bytes) -> str:
@@ -38,9 +38,9 @@ def decoded(row: dict, field: str) -> bytes:
     return base64.b64decode(row.get(field, ""))
 
 
-def stream_format(cluster_uuid: uuid.UUID) -> bytes:
+def stream_format(protocol: str, cluster_uuid: uuid.UUID) -> bytes:
     return json.dumps(
-        {"protocol": STREAM_PROTOCOL, "cluster_uuid": str(cluster_uuid)},
+        {"protocol": protocol, "cluster_uuid": str(cluster_uuid)},
         separators=(",", ":"),
         sort_keys=True,
     ).encode()
@@ -51,7 +51,7 @@ def main() -> None:
     parser.add_argument("--endpoint", required=True)
     parser.add_argument("--cluster", required=True)
     parser.add_argument(
-        "--direction", choices=("to-stream", "to-legacy"), required=True
+        "--direction", choices=("to-scoped", "to-all-namespaces"), required=True
     )
     parser.add_argument("--cluster-uuid", type=uuid.UUID)
     parser.add_argument("--archive", type=Path, required=True)
@@ -73,25 +73,25 @@ def main() -> None:
     if current is None:
         raise SystemExit("cluster format key is missing")
     current_value = decoded(current, "value")
-    if args.direction == "to-stream":
-        if current_value != LEGACY_FORMAT:
-            raise SystemExit("current format is not the exact legacy format")
-        if args.cluster_uuid is None:
-            raise SystemExit(
-                "--cluster-uuid is required for a reproducible stream cutover"
-            )
-        replacement = stream_format(args.cluster_uuid)
-    else:
-        try:
-            current_stream = json.loads(current_value)
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            current_stream = None
-        if args.cluster_uuid is None or current_stream != {
-            "protocol": STREAM_PROTOCOL,
-            "cluster_uuid": str(args.cluster_uuid),
-        }:
-            raise SystemExit("current format does not match --cluster-uuid exactly")
-        replacement = LEGACY_FORMAT
+    if args.cluster_uuid is None:
+        raise SystemExit("--cluster-uuid is required for a reproducible cutover")
+    current_protocol, replacement_protocol = (
+        (ALL_NAMESPACE_PROTOCOL, SCOPED_PROTOCOL)
+        if args.direction == "to-scoped"
+        else (SCOPED_PROTOCOL, ALL_NAMESPACE_PROTOCOL)
+    )
+    try:
+        current_stream = json.loads(current_value)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        current_stream = None
+    if current_stream != {
+        "protocol": current_protocol,
+        "cluster_uuid": str(args.cluster_uuid),
+    }:
+        raise SystemExit(
+            f"current format is not exact {current_protocol} for --cluster-uuid"
+        )
+    replacement = stream_format(replacement_protocol, args.cluster_uuid)
 
     retired = sorted(
         key

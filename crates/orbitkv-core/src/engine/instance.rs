@@ -891,12 +891,13 @@ impl InstanceContext {
             if let Some(topology) = topology {
                 info!(
                     "Sealed instance topology: instance={}, num_layers={}, tp_size={}, \
-                     world_size={}, total_slots={}",
+                     world_size={}, total_slots={}, storage_namespace={}",
                     self.id,
                     topology.num_layers(),
                     self.tp_size,
                     self.world_size,
-                    topology.total_slots()
+                    topology.total_slots(),
+                    topology.cache_namespace,
                 );
                 state.topology = Some(topology);
             }

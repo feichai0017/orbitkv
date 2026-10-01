@@ -10,11 +10,13 @@ use orbitkv_proto::proto::engine::inventory_client::InventoryClient;
 use orbitkv_proto::proto::engine::inventory_server::Inventory;
 use orbitkv_proto::proto::engine::{
     InventoryAck, InventoryClientFrame, InventoryDelta, InventoryFlushThrough, InventoryOpen,
-    InventoryProgress, InventoryResetRequired, InventoryServerFrame, InventorySnapshotBegin,
-    InventorySnapshotCommit, InventorySnapshotPage, inventory_client_frame, inventory_server_frame,
+    InventoryProgress, InventoryResetRequired, InventoryScopeMode, InventoryServerFrame,
+    InventorySnapshotBegin, InventorySnapshotCommit, InventorySnapshotPage, inventory_client_frame,
+    inventory_server_frame,
 };
 use orbitkv_state::{
-    CacheOwner, INVENTORY_BATCH_RECORDS, INVENTORY_STREAM_PROTOCOL, InventoryFence,
+    CacheOwner, INVENTORY_BATCH_RECORDS, INVENTORY_OPEN_MAX_BYTES, INVENTORY_STREAM_PROTOCOL,
+    InventoryFence, InventoryScope,
 };
 use parking_lot::{Mutex, RwLock};
 use prost::Message;
@@ -50,6 +52,8 @@ pub(crate) struct InventoryRuntimeStatus {
     pub source_node_epoch: u64,
     pub source_incarnation: Uuid,
     pub scope_digest: String,
+    pub scope_kind: &'static str,
+    pub scope_namespaces: usize,
     pub membership_revision: Option<i64>,
     pub source_sessions: u64,
     pub source_sessions_peak: u64,
@@ -90,6 +94,7 @@ struct Shared {
     inventory: Arc<ResidencyInventory>,
     index: Arc<GlobalIndex>,
     membership: Arc<MembershipView>,
+    scope: Arc<InventoryScope>,
     members: RwLock<MemberState>,
     member_changes: watch::Sender<u64>,
     controls: Mutex<HashMap<Uuid, (Uuid, mpsc::Sender<InventoryClientFrame>)>>,
@@ -117,6 +122,7 @@ impl InventoryRuntime {
         index: Arc<GlobalIndex>,
         membership: Arc<MembershipView>,
     ) -> Self {
+        let scope = index.scope();
         Self {
             shared: Arc::new(Shared {
                 format,
@@ -124,6 +130,7 @@ impl InventoryRuntime {
                 inventory,
                 index,
                 membership,
+                scope,
                 members: RwLock::new(MemberState::default()),
                 member_changes: watch::channel(0).0,
                 controls: Mutex::new(HashMap::new()),
@@ -244,8 +251,8 @@ impl InventoryRuntime {
         if timeout.is_zero() || timeout > Duration::from_secs(30) {
             return Err("inventory await timeout must be in 1ns..=30s".into());
         }
-        if scope_digest != all_namespaces_scope_digest() {
-            return Err("requester scope does not match the all-namespace stream".into());
+        if scope_digest != self.shared.scope.digest() {
+            return Err("requester scope does not match the installed inventory scope".into());
         }
         if fence.protocol != INVENTORY_STREAM_PROTOCOL
             || fence.cluster_uuid != self.shared.format.cluster_uuid
@@ -315,7 +322,9 @@ impl InventoryRuntime {
             source_node: self.shared.own.node_id.clone(),
             source_node_epoch: self.shared.own.epoch,
             source_incarnation: self.shared.own.owner.incarnation,
-            scope_digest: hex(&all_namespaces_scope_digest()),
+            scope_digest: hex(&self.shared.scope.digest()),
+            scope_kind: self.shared.scope.label(),
+            scope_namespaces: self.shared.scope.namespaces().map_or(0, <[String]>::len),
             membership_revision: self.shared.members.read().revision,
             source_sessions: counters.source_sessions.load(Ordering::Relaxed),
             source_sessions_peak: counters.source_sessions_peak.load(Ordering::Relaxed),
@@ -366,6 +375,7 @@ impl Inventory for InventoryService {
                 "inventory session must start with Open",
             ));
         };
+        let open = *open;
         let identity = validate_open(&self.runtime, &open)?;
         let (output, response) = mpsc::channel(4);
         let runtime = self.runtime.clone();
@@ -399,16 +409,23 @@ struct OpenIdentity {
     source: Member,
     requester: CacheOwner,
     session_id: Uuid,
+    scope: InventoryScope,
 }
 
 fn validate_open(runtime: &InventoryRuntime, open: &InventoryOpen) -> Result<OpenIdentity, Status> {
+    if open.encoded_len() > INVENTORY_OPEN_MAX_BYTES {
+        return Err(Status::resource_exhausted(
+            "inventory Open exceeds the encoded byte limit",
+        ));
+    }
     let cluster_uuid = uuid_from(&open.cluster_uuid, "cluster UUID")?;
     let source_incarnation = uuid_from(&open.source_incarnation, "source incarnation")?;
     let requester_incarnation = uuid_from(&open.requester_incarnation, "requester incarnation")?;
     let session_id = uuid_from(&open.session_id, "session ID")?;
+    let scope = decode_scope(open)?;
     if open.protocol != INVENTORY_STREAM_PROTOCOL
         || cluster_uuid != runtime.shared.format.cluster_uuid
-        || open.scope_digest != all_namespaces_scope_digest()
+        || open.scope_digest != scope.digest()
         || open.source_node != runtime.shared.own.node_id
         || open.source_epoch != runtime.shared.own.epoch
         || source_incarnation != runtime.shared.own.owner.incarnation
@@ -424,6 +441,7 @@ fn validate_open(runtime: &InventoryRuntime, open: &InventoryOpen) -> Result<Ope
         source: runtime.shared.own.clone(),
         requester: requester.owner,
         session_id,
+        scope,
     })
 }
 
@@ -504,11 +522,11 @@ async fn serve_source(
         _ => None,
     };
     let mut after = if let Some((sequence, _)) = resume {
-        match runtime
-            .shared
-            .inventory
-            .coalesced_changes(sequence, runtime.shared.inventory.sequence())
-        {
+        match runtime.shared.inventory.coalesced_changes_scoped(
+            sequence,
+            runtime.shared.inventory.sequence(),
+            &identity.scope,
+        ) {
             Ok(_) => sequence,
             Err(InventoryReadError::HistoryGap) => {
                 sender
@@ -519,7 +537,7 @@ async fn serve_source(
             Err(error) => return Err(format!("inventory resume: {error:?}")),
         }
     } else {
-        serve_snapshot(&runtime, &mut sender).await?
+        serve_snapshot(&runtime, &mut sender, &identity.scope).await?
     };
 
     let mut changes = runtime.shared.inventory.changed();
@@ -541,7 +559,8 @@ async fn serve_source(
         if head > after {
             let waited = runtime.shared.inventory.wait_to_publish(after).await;
             let head = runtime.shared.inventory.sequence();
-            let delta = match bounded_delta(&runtime.shared.inventory, after, head) {
+            let delta = match bounded_delta(&runtime.shared.inventory, after, head, &identity.scope)
+            {
                 Ok(delta) => delta,
                 Err(InventoryReadError::HistoryGap) => {
                     sender
@@ -598,6 +617,7 @@ async fn serve_source(
 async fn serve_snapshot(
     runtime: &InventoryRuntime,
     sender: &mut FrameSender,
+    scope: &InventoryScope,
 ) -> Result<u64, String> {
     let _permit = runtime
         .shared
@@ -622,50 +642,35 @@ async fn serve_snapshot(
     let mut cursor = None;
     let mut page_number = 0;
     loop {
-        let mut records = runtime
+        let page = runtime
             .shared
             .inventory
-            .page(cursor.as_ref())
+            .scoped_page(cursor.as_ref(), scope)
             .map_err(|error| format!("inventory snapshot page: {error:?}"))?;
-        if records.is_empty() {
-            break;
-        }
-        while (InventorySnapshotPage {
-            snapshot_id: snapshot_id.as_bytes().to_vec(),
-            page_number,
-            records: records.iter().cloned().map(Into::into).collect(),
-        })
-        .encoded_len()
-            > FRAME_BYTES
-        {
-            if records.len() == 1 {
-                return Err("one inventory snapshot record exceeds the encoded frame limit".into());
-            }
-            records.pop();
-        }
-        let last = records.last().ok_or("empty inventory snapshot page")?;
-        cursor = Some((
-            last.key.clone(),
-            last.metadata
-                .ok_or("snapshot record lacks metadata")?
-                .medium,
-        ));
-        let page = sender.frame(inventory_server_frame::Body::SnapshotPage(
-            InventorySnapshotPage {
+        cursor = page.next;
+        if !page.records.is_empty() {
+            let frame = InventorySnapshotPage {
                 snapshot_id: snapshot_id.as_bytes().to_vec(),
                 page_number,
-                records: records.into_iter().map(Into::into).collect(),
-            },
-        ))?;
-        transcript.update(page.encode_to_vec());
-        sender.send(page).await?;
-        page_number += 1;
+                records: page.records.into_iter().map(Into::into).collect(),
+            };
+            if frame.encoded_len() > FRAME_BYTES {
+                return Err("inventory snapshot page exceeds the encoded frame limit".into());
+            }
+            let frame = sender.frame(inventory_server_frame::Body::SnapshotPage(frame))?;
+            transcript.update(frame.encode_to_vec());
+            sender.send(frame).await?;
+            page_number += 1;
+        }
+        if page.complete {
+            break;
+        }
         tokio::task::yield_now().await;
     }
     let end = runtime.shared.inventory.sequence();
     let mut after = start;
     while after < end {
-        let delta = match bounded_delta(&runtime.shared.inventory, after, end) {
+        let delta = match bounded_delta(&runtime.shared.inventory, after, end, scope) {
             Ok(delta) => delta,
             Err(InventoryReadError::HistoryGap) => {
                 sender
@@ -989,22 +994,29 @@ async fn follow_source_once(runtime: InventoryRuntime, source: Member) -> Result
             .index
             .owner_watermark(source.owner.incarnation)
     };
+    let (scope_mode, scope_namespaces) = encode_scope(&runtime.shared.scope);
+    let open = InventoryOpen {
+        protocol: INVENTORY_STREAM_PROTOCOL.into(),
+        cluster_uuid: runtime.shared.format.cluster_uuid.as_bytes().to_vec(),
+        source_node: source.node_id.clone(),
+        source_epoch: source.epoch,
+        source_incarnation: source.owner.incarnation.as_bytes().to_vec(),
+        requester_incarnation: runtime.shared.own.owner.incarnation.as_bytes().to_vec(),
+        scope_digest: runtime.shared.scope.digest().to_vec(),
+        session_id: session_id.as_bytes().to_vec(),
+        resume_sequence: installed.map(|(_, sequence)| sequence),
+        installed_view_id: installed
+            .map(|(view_id, _)| view_id.as_bytes().to_vec())
+            .unwrap_or_default(),
+        scope_mode,
+        scope_namespaces,
+    };
+    if open.encoded_len() > INVENTORY_OPEN_MAX_BYTES {
+        return Err("inventory Open exceeds the encoded byte limit".into());
+    }
     control
         .send(InventoryClientFrame {
-            body: Some(inventory_client_frame::Body::Open(InventoryOpen {
-                protocol: INVENTORY_STREAM_PROTOCOL.into(),
-                cluster_uuid: runtime.shared.format.cluster_uuid.as_bytes().to_vec(),
-                source_node: source.node_id.clone(),
-                source_epoch: source.epoch,
-                source_incarnation: source.owner.incarnation.as_bytes().to_vec(),
-                requester_incarnation: runtime.shared.own.owner.incarnation.as_bytes().to_vec(),
-                scope_digest: all_namespaces_scope_digest().to_vec(),
-                session_id: session_id.as_bytes().to_vec(),
-                resume_sequence: installed.map(|(_, sequence)| sequence),
-                installed_view_id: installed
-                    .map(|(view_id, _)| view_id.as_bytes().to_vec())
-                    .unwrap_or_default(),
-            })),
+            body: Some(inventory_client_frame::Body::Open(Box::new(open))),
         })
         .await
         .map_err(|_| "inventory request stream closed before Open")?;
@@ -1300,10 +1312,18 @@ fn bounded_delta(
     inventory: &ResidencyInventory,
     after: u64,
     through: u64,
+    scope: &InventoryScope,
 ) -> Result<orbitkv_core::InventoryDelta, InventoryReadError> {
     let mut limit = through;
     loop {
-        let delta = inventory.coalesced_changes(after, limit)?;
+        let delta = match inventory.coalesced_changes_scoped(after, limit, scope) {
+            Ok(delta) => delta,
+            Err(InventoryReadError::RecordTooLarge) if limit > after + 1 => {
+                limit = after + (limit - after) / 2;
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
         let encoded = InventoryDelta {
             from_exclusive: after,
             through_inclusive: delta.through,
@@ -1338,10 +1358,52 @@ fn optional_uuid(bytes: &[u8], label: &str) -> Result<Option<Uuid>, String> {
     }
 }
 
+fn encode_scope(scope: &InventoryScope) -> (i32, Vec<Vec<u8>>) {
+    match scope {
+        InventoryScope::AllNamespaces => (
+            InventoryScopeMode::InventoryScopeAllNamespaces as i32,
+            Vec::new(),
+        ),
+        InventoryScope::ExactNamespaces(namespaces) => (
+            InventoryScopeMode::InventoryScopeExactNamespaces as i32,
+            namespaces
+                .iter()
+                .map(|namespace| namespace.as_bytes().to_vec())
+                .collect(),
+        ),
+    }
+}
+
+fn decode_scope(open: &InventoryOpen) -> Result<InventoryScope, Status> {
+    match InventoryScopeMode::try_from(open.scope_mode)
+        .map_err(|_| Status::invalid_argument("unknown inventory scope mode"))?
+    {
+        InventoryScopeMode::InventoryScopeUnspecified => Err(Status::failed_precondition(
+            "inventory client does not declare a scope descriptor",
+        )),
+        InventoryScopeMode::InventoryScopeAllNamespaces if open.scope_namespaces.is_empty() => {
+            Ok(InventoryScope::AllNamespaces)
+        }
+        InventoryScopeMode::InventoryScopeAllNamespaces => Err(Status::invalid_argument(
+            "all-namespace scope carries exact namespaces",
+        )),
+        InventoryScopeMode::InventoryScopeExactNamespaces => InventoryScope::exact(
+            open.scope_namespaces
+                .iter()
+                .map(|namespace| {
+                    std::str::from_utf8(namespace)
+                        .map(str::to_owned)
+                        .map_err(|_| Status::invalid_argument("inventory namespace is not UTF-8"))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        )
+        .map_err(Status::invalid_argument),
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn all_namespaces_scope_digest() -> [u8; 32] {
-    let mut digest = Sha256::new();
-    digest.update(b"orbitkv/inventory-scope/v1\0all-namespaces");
-    digest.finalize().into()
+    InventoryScope::AllNamespaces.digest()
 }
 
 fn hex(bytes: &[u8]) -> String {

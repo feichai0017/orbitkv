@@ -10,6 +10,7 @@ async fn mooncake_initialization_failure_is_returned_to_caller() {
         global_index: Some(std::sync::Arc::new(orbitkv_catalog::GlobalIndex::new(
             membership,
             1 << 20,
+            std::sync::Arc::new(orbitkv_state::InventoryScope::AllNamespaces),
         ))),
         inventory: Some(std::sync::Arc::new(crate::ResidencyInventory::new(
             16 << 10,
@@ -36,6 +37,7 @@ async fn remote_transfer_config_is_ignored_without_feature() {
         global_index: Some(std::sync::Arc::new(orbitkv_catalog::GlobalIndex::new(
             membership,
             1 << 20,
+            std::sync::Arc::new(orbitkv_state::InventoryScope::AllNamespaces),
         ))),
         inventory: Some(std::sync::Arc::new(crate::ResidencyInventory::new(
             16 << 10,

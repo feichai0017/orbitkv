@@ -239,6 +239,25 @@ pub struct Cli {
     #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u64).range(0..=5))]
     pub inventory_stream_coalesce_ms: u64,
 
+    /// Exact storage namespace to subscribe to; repeat for an explicit allowlist.
+    #[arg(
+        long,
+        action = clap::ArgAction::Append,
+        requires = "etcd_endpoints",
+        conflicts_with = "metadata_empty_scope",
+        value_parser = parse_metadata_namespace
+    )]
+    pub metadata_namespace: Vec<String>,
+
+    /// Subscribe to no remote namespaces while retaining local cache service.
+    #[arg(
+        long,
+        default_value_t = false,
+        requires = "etcd_endpoints",
+        conflicts_with = "metadata_namespace"
+    )]
+    pub metadata_empty_scope: bool,
+
     /// HLL sliding-window list for hit-rate estimation. Comma-separated humantime
     /// durations; each becomes a canonical `window` label in metrics (e.g. `15m,1h,1d`).
     /// Slot duration is derived as `clamp(window/24, 1min, 1h)`.
@@ -299,6 +318,14 @@ fn parse_nic_name(s: &str) -> Result<String, String> {
         return Err("--nics contains an empty NIC name".into());
     }
     Ok(name.to_string())
+}
+
+fn parse_metadata_namespace(value: &str) -> Result<String, String> {
+    if orbitkv_state::is_storage_namespace(value) {
+        Ok(value.to_string())
+    } else {
+        Err("--metadata-namespace requires an exact orbitkv:v2 storage namespace".into())
+    }
 }
 
 fn parse_hll_windows_arg(s: &str) -> Result<String, String> {
@@ -621,6 +648,13 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     if cli.nics.as_ref().is_some_and(|nics| !nics.is_empty()) && !peer_control_enabled {
         log::warn!("--nics has no effect without distributed cache configuration");
     }
+    let metadata_scope = Arc::new(if cli.metadata_empty_scope {
+        orbitkv_state::InventoryScope::exact(Vec::new())?
+    } else if cli.metadata_namespace.is_empty() {
+        orbitkv_state::InventoryScope::AllNamespaces
+    } else {
+        orbitkv_state::InventoryScope::exact(cli.metadata_namespace.clone())?
+    });
     let membership_view = if peer_control_enabled {
         let peer_addr = cli.peer_advertise_addr.unwrap_or(cli.addr);
         if peer_addr.ip().is_unspecified() || peer_addr.port() == 0 {
@@ -642,6 +676,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         Arc::new(orbitkv_catalog::GlobalIndex::new(
             view.clone(),
             cli.index_budget,
+            Arc::clone(&metadata_scope),
         ))
     });
     let inventory = membership_view

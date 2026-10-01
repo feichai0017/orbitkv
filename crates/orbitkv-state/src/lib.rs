@@ -26,10 +26,11 @@ pub use discovery::{
 };
 pub use format::{AttentionRole, Scalar16, StateDType, StateFormat, StateLayout, StorageFormat};
 pub use inventory::{
-    INVENTORY_BATCH_BYTES, INVENTORY_BATCH_RECORDS, INVENTORY_STREAM_PROTOCOL, InventoryFence,
-    InventoryRecord,
+    INVENTORY_BATCH_BYTES, INVENTORY_BATCH_RECORDS, INVENTORY_OPEN_MAX_BYTES,
+    INVENTORY_SCOPE_MAX_NAMESPACES, INVENTORY_STREAM_PROTOCOL, InventoryFence, InventoryRecord,
+    InventoryScope,
 };
 pub use key::{
     ContractError, Digest, StateDescriptor, StateKey, StorageSlot, TokenRange, group_hash,
-    storage_namespace,
+    is_storage_namespace, storage_namespace,
 };
