@@ -532,6 +532,10 @@ duplicate queue. Best-effort cache publication explicitly returns false for
 `requires_kv_delivery`. The native MultiConnector consumer is covered by a
 released-engine test. No 0.29/0.30 compatibility alias remains.
 
+The following records the earlier release-upgrade delivery. Its hybrid and
+custom P/D evidence is historical; the current restricted, official native P/D
+profile and its final installed-wheel gates are tracked in S5.4.
+
 The complete CUDA 13 wheel passes build/repair/isolated import. Its installed
 production package passes A100 Qwen3-8B DRAM eager, DRAM graph and forced-io_uring
 SSD eager gates (six checks each; the recurrent-only check is inapplicable).
@@ -582,12 +586,13 @@ optional callbacks. The unused service availability owner and its health thread
 are removed; restore exceptions still retain destinations until native drain.
 SGLang event ownership lives in `events.py`, and disabled-backend plugin/admission
 paths leave native and GPU modules unloaded. Registration conflicts are explicit.
-Prefill and Decode now directly own their P/D worker callbacks and request state;
+In that earlier cleanup, Prefill and Decode directly owned their P/D worker callbacks and request state;
 the intermediate Handlers, class-callback mixin and generic executor facade are
 removed. SGLang cancellation consumes the released cache finish/linker release
 chain instead of a duplicate Scheduler abort Hook. Ordinary cache registration
-has two internal Hooks; enqueue preparation and P/D observation Hooks are opt-in.
-No native P/D replacement is claimed.
+has two internal Hooks; enqueue preparation remains opt-in. The later S5.4
+cutover removes those custom P/D owners and fork observation Hooks entirely;
+the following evidence records the earlier cleanup, not current native P/D support.
 
 The initial cleanup's source-only gate passed 414 tests. With frozen native artifacts, the pinned
 SGLang 0.5.20 admission/event gate passes 22 tests and the vLLM 0.29.0 native

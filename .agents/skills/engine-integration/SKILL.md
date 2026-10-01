@@ -33,8 +33,8 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
 - SGLang 0.5.20 cancellation already reaches the external linker through
   `BasePrefixCache.finish(ABORT)` and `UnifiedRadixCache.release_aborted_request`.
   Keep cancellation/drain in that consumed lifecycle; do not restore a duplicate
-  private Scheduler abort Hook. Queue preparation and P/D observation Hooks are
-  registered only when their startup options are enabled.
+  private Scheduler abort Hook. Queue preparation is opt-in; fork P/D observation
+  Hooks are removed.
 - P/D uses official vLLM NIXL/MultiConnector and SGLang native disaggregation;
   Manager shared-cache traffic still uses TENT. Do not reintroduce fork factories,
   callbacks, custom connectors, handshake/proxy or partial-tail cache modes.
@@ -45,6 +45,10 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
   cache group. Reject V2/recurrent profiles before connection; the runner and
   native-prefix monkey patches are removed. Reopen only after consumed released
   ordering and atomic state hand-off pass GPU/model gates.
+- SGLang native P/D candidate enables released deferred KV release on both P
+  and D, but 0.5.20 still releases on timeout without a full drain ACK. Keep
+  transfer cancellation, peer-loss and delayed-ACK page reuse unqualified;
+  ordinary linker cancellation is a separate cache-owned contract.
 - Run native model composition and lifetime gates separately. Output/restart
   does not prove cancellation, partial-submit, delayed-ACK or page-reuse safety.
   Earlier fork passes remain upstream contribution evidence, not release support.
