@@ -213,6 +213,8 @@ def run(output: Path, duration_seconds: int, schedule_scale: float):
             for label in ("dram", "ssd", "outside"):
                 client = clients.pop((node, label), None)
                 if client is not None:
+                    ok, message = client.unregister_context(f"{node}-{label}")
+                    assert ok, message
                     client.close()
                 tensors.pop((node, label), None)
             torch.cuda.synchronize()
