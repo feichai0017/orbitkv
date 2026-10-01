@@ -160,7 +160,7 @@ def run(output: Path, duration_seconds: int, schedule_scale: float):
                 http_port=find_available_port(),
                 bootstrap_socket=f"/tmp/orbitkv-s210-soak-{ports[node]}.sock",
                 ssd_cache_path=output / "source-ssd" if node == "source" else None,
-                ssd_cache_capacity="256mb",
+                ssd_cache_capacity="128mb",
                 ssd_backend="uring",
                 ssd_read_path="uring" if node == "source" else None,
                 query_budget="32mb",
