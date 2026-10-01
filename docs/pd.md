@@ -1,337 +1,151 @@
 # Prefill/decode transfer
 
-P/D (prefill/decode disaggregation) places the prompt prefill and token decode
-phases on different inference workers. The decode worker needs the prefill
-worker's KV for the *same request* before it can continue. This is a request
-handoff, not a cache lookup for a repeated prefix. A router or proxy also has
-to coordinate the request; a KV transfer connector alone does not route it.
+OrbitKV uses **official vLLM 0.30.0 and SGLang 0.5.20**. Engines own live
+P/D routing, allocation, transfer and release. OrbitKV independently caches
+completed state. Manager-to-Manager sharing continues to use Rust/TENT; live
+P/D does not require the same transport.
 
-NIXL ([NVIDIA Inference Xfer Library](https://github.com/ai-dynamo/nixl)) is a
-data-movement library used by inference systems. The pinned vLLM
-release registers its own `NixlConnector`, `NixlPullConnector`, and
-`NixlPushConnector` for P/D transfer. OrbitKV does not vendor or register a
-NIXL connector. NIXL is not intrinsically vLLM-only: SGLang also documents
-[P/D transfer with NIXL or Mooncake](https://github.com/sgl-project/sglang/blob/main/docs/docs/advanced_features/pd_disaggregation.mdx).
-The NIXL integration described here is
-[vLLM's implementation](https://github.com/vllm-project/vllm/blob/main/docs/features/nixl_connector_usage.md).
+Native P/D plus OrbitKV is a **qualification candidate**, not a generally
+supported deployment. The current status and remaining fault gates are in
+[S5.4](completion-plan.md#s54--official-native-pd-and-independent-cache).
+Ordinary cache serving does not require NIXL, a P/D router, or an engine patch.
 
-| Path | Trigger | KV destination | Discovery/control | OrbitKV status |
-| --- | --- | --- | --- | --- |
-| OrbitKV external cache | Repeated-prefix lookup | Cache Manager DRAM/SSD, then engine HBM | Local index; global location index + exact source grant | GPU-validated locally; multi-node experimental |
-| OrbitKV vLLM split P/D connectors | P-to-D request handoff | Decode worker's GPU KV pages | OrbitKV handshake and proxy; Mooncake TENT moves bytes | A100 same-host TCP output gate passes; H20→A100 byte gate passes, strict output gate fails |
-| OrbitKV SGLang TENT factory (patched 0.5.20) | P-to-D request handoff | Decode worker's GPU KV pages | SGLang 0.5.20 bootstrap/room protocol; OrbitKV Rust/TENT moves bytes | A100 same-host TCP output/restart gate passes; patched cross-host and fault-reclamation profiles remain unqualified |
-| Native vLLM Mooncake + OrbitKV TENT factory | P-to-D request handoff | Decode worker's GPU KV pages | Native MooncakeConnector and vllm-router 0.1.15 | Experimental pinned patches; output gate below, S3 fault/reclamation qualification open |
-| vLLM `NixlConnector` | P-to-D request handoff | Decode worker's GPU KV pages | vLLM's NIXL side channel and request router | Upstream vLLM connector, not OrbitKV code |
-
-The OrbitKV `PdPrefillConnector` and `PdDecodeConnector` live in
-`orbitkv.vllm.pd` and use Mooncake TENT to push KV directly from prefill to
-decode. The old role-selecting `PdConnector` facade has been removed; each
-process declares its role through its connector class instead of encoding it
-again in `engine_id`. The handoff does not require an OrbitKV Cache
-Manager, Catalog, or the remote-cache replica directory for that transfer.
-See [the Mooncake P/D protocol](pd-mooncake-push.md) and the local
-[`run_pd_local.sh`](../scripts/run_pd_local.sh) example. Its local proxy is
-for P/D handoff and testing; it is not the planned KV-aware cache router.
-The script requires an explicit model path, uses `.venv/vllm-release` by default,
-and selects `PREFILL_GPU=0`, `DECODE_GPU=1` with `MC_FORCE_TCP=1`. Override
-`VLLM_PYTHON` for another pinned environment. RDMA testing requires
-`MC_FORCE_TCP=0` plus `PREFILL_NIC` and `DECODE_NIC`; the script does not infer
-GPU/NIC affinity. The launcher translates `MC_FORCE_TCP=0` into an unset native
-environment variable; TENT treats even the string `0` as forcing TCP when present.
-Each child runs in its own process group, startup timeout is
-fatal, and cleanup targets only those groups.
-
-For a focused one-GPU regression, run
-`python -m pytest -m e2e tests/e2e/test_vllm_pd_e2e.py --model /path/to/dense-model --basetemp /var/tmp/orbitkv-pd/run-001`
-from `python/` in the pinned vLLM environment. This needs memory for two model
-copies and validates eager TCP handoff, chunked prefill, native-output equality
-and completion/drain counters. It calls the proxy request builder directly;
-it does not qualify proxy HTTP serving, separate GPUs, RDMA or cache composition.
-
-The decode connector can optionally report the physical handoff completion to
-its node-local Cache Manager. Configure both
-`orbitkv.pd.completion_observation_socket` and
-`orbitkv.pd.completion_observation_instance_id` in the decode connector's
-`kv_connector_extra_config`. The instance must already be registered on that
-Manager and the reported device is taken from the actual decode KV tensor.
-Standalone P/D remains the default and opens no Cache Manager connection.
-
-The report covers decode wait enqueue through generation-fenced TENT terminal
-completion. It carries the prefill control endpoint as a hashed source identity,
-the nonzero transfer generation as freshness evidence (the TENT notification
-scope generation in vLLM), destination
-device, raw logical/wire bytes, target-layout fragments and terminal outcome.
-Request IDs and cache keys never enter the Manager's cost index or metric
-labels. Only admitted completed observations train estimates; failures,
-cancellations and timeouts are diagnostic. This records one side of the future
-choice but does not enable direct-restore-versus-handoff selection. SGLang now
-reports only from its decode-owned commit boundary:
-`DecodeTransferQueue._commit_transfer_to_req` runs after TP polling, metadata
-validation and any required HiCache restore. Source-side `batch_transfer_sync`
-return is never treated as DecodeReady. Terminal receiver failures report from
-`failure_exception`; abort only marks the eventual terminal outcome.
-
-The alternative is vLLM's built-in NIXL connector. The local
-[`run_nixl_local.sh`](../scripts/run_nixl_local.sh) example uses that upstream
-connector and a separate example proxy. You may also compose vLLM's NIXL
-connector with `OrbitKVConnector` in `MultiConnector`: NIXL hands off the live
-request, while OrbitKV can save completed blocks for reuse by later requests.
-The two paths have different ownership and failure modes. See the
-[deployment example](deployment.md).
-
-## Why the adapter sizes differ
-
-OrbitKV currently integrates at different boundaries in the two engines:
-
-| Responsibility | vLLM split connectors | SGLang TENT adapter |
+| Responsibility | vLLM | SGLang |
 | --- | --- | --- |
-| Request bootstrap, destination grants and handoff lifecycle | OrbitKV's scheduler/worker handshake and request state | SGLang's native bootstrap, rooms and request queues |
-| Chunk/layer readiness and rank/layout mapping | OrbitKV's vLLM callbacks and layout plans | SGLang's native disaggregation implementation |
-| Native registration, batch drain and memory lifetime | Shared Rust/TENT owner | The same shared Rust/TENT owner |
-| Request routing | Example OrbitKV P/D proxy or external orchestrator | Separate SGLang router |
+| P/D lifecycle and transfer | Released `NixlConnector` | Released disaggregation queues and selected native backend |
+| Router | `vllm-router==0.1.15` | `sglang-router==0.3.2` |
+| Historical cache | `OrbitKVConnector` via `MultiConnector` | `UnifiedRadixCache` + external `OrbitKVLinker` |
+| Shared cache between Managers | Rust/TENT | Rust/TENT |
 
-SGLang's smaller payload adapter delegates control lifecycle to the pinned
-upstream engine; that lifecycle still exists. Completion observation and plugin
-installation also live outside `sglang/pd.py`. vLLM's adapter currently owns its
-handoff lifecycle, while native 0.30.0 transfer results carry completion and
-failure to the scheduler. There is no separate P/D worker-metadata failure path.
+The custom P/D connectors, handshake/proxy, partial-tail extension and fork-only
+TENT payload adapters are removed. Native P/D carries live prompt tails;
+the independent cache stores complete engine blocks. There is no alternate
+OrbitKV P/D request owner or maintained engine fork.
 
-vLLM 0.30.0 does include its own Mooncake connector. OrbitKV chose a separate
-split push protocol and native lifetime owner, so the extra code is not forced
-by a lack of upstream P/D support. Before replacing it with a thinner adapter,
-check the actual upstream transport contract, cancellation/drain behavior,
-layout coverage and external-cache composition. Moving request bookkeeping to
-Rust alone does not reduce the number of state machines. Keep one authoritative
-handoff lifecycle; engine callbacks own GPU-page allocation and readiness,
-while shared notification delivery, deduplication and native waiting belong to
-the Rust transport owner. Remove obsolete forwarding and duplicate state only
-with all consumers and fault/output gates updated.
+## vLLM NIXL and MultiConnector
 
-## Native P/D with an explicit TENT backend
+This follows the separation used by the
+[LMCache 0.5.5 MP recipe](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/docs/source/mp/disaggregated_prefill.rst).
+The required real-block allocation fix, vLLM #46865, is in 0.30.0. That does not
+transfer LMCache's deployment qualification to OrbitKV.
 
-This S5.4 substage follows the separation used by the
-[LMCache 0.5.5 MP recipe](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/docs/source/mp/disaggregated_prefill.rst):
-the engine and its router own live request handoff; the cache connector owns
-historical reuse. OrbitKV retains TENT for the payload. A factory adapts memory
-registration and synchronous batch completion without copying bootstrap,
-request tables or router logic into another OrbitKV Python package.
+Install the official vLLM release, its `nixl==1.4.1` dependency (including the
+matching CUDA backend), the router, and the OrbitKV wheel. Use
+`VLLM_USE_V2_MODEL_RUNNER=0`: the released V1 runner drains preempted saves before
+page updates. OrbitKV rejects V2 and multi-group/recurrent models until their
+required lifecycle boundaries have a safe released implementation.
 
-These are experimental engine revisions, not APIs shipped in vLLM 0.30.0 or
-SGLang 0.5.20. Use separate environments and match both workers to the same
-revision. Optional dependency pins and engine submodules still select official
-releases for ordinary cache serving.
-
-| Component | Exact source |
-| --- | --- |
-| vLLM receive lifecycle fix | [`685310b2`](https://github.com/feichai0017/vllm/commit/685310b2c95c41aa423e051495640c7691274245), based on upstream main `91dab0eb` |
-| vLLM payload factory, including that fix | [`b348b054`](https://github.com/feichai0017/vllm/commit/b348b054bb3de88aedf44945bed5cdaf4f5ba042) |
-| SGLang payload factory | [`bee89684`](https://github.com/feichai0017/sglang/commit/bee896846cbbdda0d003cef520ff6a26b07c1556), based on official 0.5.20 `94602c9c` |
-| Native vLLM router | [`vllm-router 0.1.15`](https://github.com/vllm-project/router/tree/1fbcde7443d75b36befb61bc081f64c2a1f13a4b) |
-
-Build/install the selected engine revision using that engine's instructions,
-then install the OrbitKV wheel. Do not install an OrbitKV engine extra afterward:
-it would replace the experimental engine with the official release pin.
-
-For native vLLM, use this KV configuration on P and D, changing `kv_role` to
-`kv_consumer` and `engine_id` to `decode` for D:
+The candidate profile uses a read/write cache on P and a save-only cache on D:
 
 ```json
 {
-  "kv_connector": "MooncakeConnector",
-  "kv_role": "kv_producer",
-  "engine_id": "prefill",
+  "kv_connector": "MultiConnector",
+  "kv_role": "kv_both",
+  "kv_load_failure_policy": "fail",
   "kv_connector_extra_config": {
-    "mooncake_protocol": "tcp",
-    "transfer_engine_factory": "orbitkv.vllm.transport.TentTransferEngine"
+    "connectors": [
+      {
+        "kv_connector": "NixlConnector",
+        "kv_role": "kv_consumer",
+        "kv_load_failure_policy": "fail",
+        "kv_connector_extra_config": {"backends": ["UCX"]}
+      },
+      {
+        "kv_connector": "OrbitKVConnector",
+        "kv_connector_module_path": "orbitkv.vllm",
+        "kv_role": "kv_both",
+        "kv_connector_extra_config": {
+          "orbitkv.bootstrap_socket": "/tmp/orbitkv-decode.sock",
+          "orbitkv.mode": "save_only"
+        }
+      }
+    ]
   }
 }
 ```
 
-Set `MC_FORCE_TCP=1` and `VLLM_MOONCAKE_BOOTSTRAP_PORT=8998` on the workers.
-After P and D listen on ports 8100 and 8200, respectively, start the upstream
-router in its own environment:
+For P, set the NIXL role to `kv_producer`, put the cache child first, select
+`read_write`, and provide its local Manager socket. Let vLLM generate fresh
+engine IDs. Give each process a distinct `VLLM_NIXL_SIDE_CHANNEL_PORT` and an
+appropriate `VLLM_NIXL_SIDE_CHANNEL_HOST`.
+
+The [local launcher](../scripts/run_pd_local.sh) takes `PREFILL_CACHE_SOCKET`,
+`DECODE_CACHE_SOCKET`, `VLLM_PYTHON` (default `.venv/vllm-release/bin/python`),
+`PREFILL_GPU` and `DECODE_GPU`. It starts official vLLM and `vllm-router` on two
+local GPUs. It does not start Managers or install engines. Separate Managers
+are recommended for capacity isolation; sharing one needs a contention gate.
+NIXL/UCX chooses the data transport. Do not label a run TCP or GPUDirect RDMA
+without recording its actual backend and devices.
+
+D's cache never queries or restores in this profile. Native NIXL owns incoming
+pages while both children may retain completed pages for sending/saving.
+`MultiConnector` aggregates their completion before block release. P cache
+publication remains best effort and cannot weaken reliable P/D delivery.
+Read/write cache selection on D, both connector orders, concurrent requests,
+restart and pressure are separate test candidates, not default guarantees.
+
+## SGLang native P/D
+
+Use the official engine and router with its native transfer dependency. The
+current candidate exercises `--disaggregation-transfer-backend mooncake` with
+the released `mooncake-transfer-engine` package, not OrbitKV's bundled TENT.
+No transfer-engine class substitution, factory patch or fork callback is used.
+
+Add `--radix-cache-backend orbitkv`, `--enable-unified-cache-external-linker`
+and `ORBITKV_SGLANG_ENDPOINT=unix:///path/to/local-manager.sock` to each worker.
+Select `--disaggregation-mode prefill` or `decode`; D also needs
+`--disaggregation-decode-enable-radix-cache`. The native router owns bootstrap
+and routing. P restores historical state, D only publishes completed state;
+`RecoveryLinkerWrapper` disables external loads on D. Host-pool retraction,
+DSA/draft/unknown auxiliary layouts remain rejected.
+
+Enable `SGLANG_DISAGGREGATION_DEFERRED_DECODE_KV_RELEASE=1` on both P and D
+for the candidate; leave its timeout at 30 seconds. In official 0.5.20 this
+protection defaults off. Even when enabled, the native queue releases pages
+on timeout without a full drain acknowledgement. Therefore in-flight transfer
+cancellation, peer loss and delayed-ACK page reuse remain unsupported by this
+candidate; enabling the flag does not qualify them. The model test cancels an
+already-running decode request and does not claim to exercise this DMA boundary.
+See the [release audit](engine-release-audit.md#native-pd-release-limits).
+
+The ordinary cache has two version-coupled internal Hooks, plus optional queue
+preparation. Their purpose and removal conditions are documented in
+[the adapter audit](engine-release-audit.md#remaining-hook-contracts).
+They are not P/D lifecycle Hooks. Native P/D cancellation/retraction correctness
+must be established against the release itself; the earlier fork's drain/ACK
+fixes are not assumed present.
+
+## Qualification and reproduction
+
+Run from `python/` with a frozen installed wheel and clean official engines:
 
 ```bash
-uv pip install 'vllm-router==0.1.15'
-vllm-router --vllm-pd-disaggregation --kv-connector mooncake \
-  --prefill http://127.0.0.1:8100 8998 --decode http://127.0.0.1:8200 \
-  --host 127.0.0.1 --port 8000
-```
-
-The factory exchanges TENT's actual endpoint and rejects mismatched factories.
-Import/construction errors fail startup. OrbitKV neither replaces a vLLM module
-class nor runs its custom P/D connector or proxy in this profile. Cache
-composition with `MultiConnector` remains unqualified; do not give both the
-cache connector and live handoff authority to write the same D pages.
-
-Run the maintained model gate from `python/`, with that router on `PATH`:
-
-```bash
+python -m pytest -m integration tests/integration/test_vllm_connector_contract.py
 python -m pytest -m e2e tests/e2e/test_vllm_native_pd_e2e.py \
-  --model /path/to/dense-model --basetemp /var/tmp/orbitkv-native-pd/run-001
+  --model /path/to/dense-model --basetemp /var/tmp/orbitkv-native-pd/vllm-001
+python -m pytest -m e2e tests/e2e/test_sglang_pd_e2e.py \
+  --model /path/to/dense-model --basetemp /var/tmp/orbitkv-native-pd/sglang-001
 ```
 
-It compares monolithic and routed native P/D output for 129-, 257- and 769-token
-prompts, checks actual transferred bytes, and proves both workers selected TENT.
-Two TP=1 processes share one GPU using eager execution and TCP. This gate is not
-a performance comparison or a multi-GPU/RDMA/fault-recovery qualification.
+Model gates compare exact output with monolithic controls, require cache bytes
+and restart reuse, and exercise observed preemption or retraction. These are
+separate from delayed-ACK, partial-submit, cancellation during DMA and page-reuse
+fault gates. A successful output test alone does not qualify those failures.
+No cross-host HA, GPUDirect RDMA, heterogeneous rank/GPU, hybrid P/D or native
+GDS claim follows from same-host dense-model evidence.
 
-The receive fix waits for all participating producers, ignores duplicate
-terminal results, keeps destination pages after a receive timeout, and reports
-failed/finished receives in the same poll. It does not prove remote termination
-after permanent peer loss or fix nonblocking sender shutdown. SGLang 0.5.20's
-`DecodeTransferQueue.resolve_deferred_releases` also releases after its hold
-timeout without a complete drain acknowledgement. These remain S3/S5.4 blockers;
-a successful synchronous TENT call or a completion-observation Hook does not
-close them. Keep the existing vLLM generation/grant owners until their native
-replacements pass cancellation, partial-submit, restart and page-reuse gates.
+Current evidence is retained outside the checkout at
+`/root/orbitkv-artifacts/release-native-pd-20261001/`; the final handoff records
+exact engine/wheel hashes, failed attempts, test coverage and remaining limits.
+Engine installed-file hashes are checked before and after qualification.
 
-On 2026-09-30, the A100 same-GPU TCP model gates passed for these patched
-profiles: native vLLM matched all three monolithic outputs, and SGLang matched
-both initial and continuation outputs while restoring 576 tokens after restart.
-The final wheel's 40 native files match the tested runtime byte for byte.
-Full commands, hashes, controls and limitations are maintained in
-`/root/orbitkv-artifacts/native-pd-tent-20260930/HANDOFF.md`. These local results
-await independent review and do not qualify the unresolved fault paths above.
+## Preserved upstream contribution material
 
-## SGLang P/D over TENT
-
-SGLang `0.5.20` already owns the hard framework-specific
-parts of disaggregation: bootstrap rooms, decode-page grants, TP/PP/CP mapping,
-chunking, staging, request polling and terminal failure propagation. OrbitKV
-does not copy that state machine. When `SGLANG_MOONCAKE_TRANSFER_ENGINE=orbitkv`, the SGLang
-plugin registers `orbitkv.sglang.pd.SGLangTentTransferEngine` through the
-explicit factory API in the patched revision above. SGLang lazily creates its
-process-wide transfer engine; its module-global class is never replaced.
-Official 0.5.20 lacks that API, so selecting this profile on the unpatched
-release stops startup instead of silently using the legacy engine. SGLang's control plane remains in
-place while its registered HBM/host regions and every payload batch are handed
-to the same Rust TENT owner used by the rest of OrbitKV.
-
-The upstream CLI value remains `--disaggregation-transfer-backend mooncake`
-because that is SGLang's fixed backend routing key. It does **not** select the
-legacy Transfer Engine when the OrbitKV opt-in is set: the wheel loads only
-`libtent_shared.so`, and startup fails if TENT is unavailable. Registration is
-RAII-owned in Rust. A synchronous SGLang batch returns success only after every
-TENT task is terminal; timeout and partial-submit paths request cancellation,
-drain the batch, retain the source/destination regions until the drain ends,
-and invalidate the failed peer segment before SGLang marks the room failed.
-
-For a same-host, two-GPU correctness run, enable TENT's TCP path and launch the
-patched SGLang processes with the OrbitKV plugin installed. The router is a separate package; the pinned SGLang source
-uses `sglang-router 0.3.2`. Install it in the environment that runs the router:
-
-```bash
-uv pip install 'sglang-router==0.3.2'
-export SGLANG_MOONCAKE_TRANSFER_ENGINE=orbitkv
-export MC_FORCE_TCP=1
-
-python -m sglang.launch_server --model-path /path/to/model \
-  --host 127.0.0.1 --port 31000 --base-gpu-id 0 \
-  --disaggregation-mode prefill --disaggregation-bootstrap-port 31500 \
-  --disaggregation-transfer-backend mooncake
-
-python -m sglang.launch_server --model-path /path/to/model \
-  --host 127.0.0.1 --port 32000 --base-gpu-id 1 \
-  --disaggregation-mode decode --disaggregation-bootstrap-port 31500 \
-  --disaggregation-transfer-backend mooncake
-
-python -m sglang_router.launch_router --pd-disaggregation --mini-lb \
-  --prefill http://127.0.0.1:31000 31500 --decode http://127.0.0.1:32000 \
-  --host 127.0.0.1 --port 30000
-```
-
-For RDMA, unset `MC_FORCE_TCP` and pass the appropriate
-`--disaggregation-ib-device` value on both workers; the adapter resolves
-SGLang's per-GPU mapping and supplies it as TENT's NIC filter. A transfer
-timeout defaults to 30 seconds and can be changed with
-`ORBITKV_SGLANG_TENT_TIMEOUT_S`. SGLang's optional failed-session background
-probe must remain disabled for this revision (it is disabled by default): the
-current TENT C ABI does not expose its peer-liveness probe, and OrbitKV rejects
-startup if `SGLANG_ENABLE_FAILED_SESSION_PROBE=1`. Local batch failure drains submitted TENT work before returning. Remote abort
-and page reclamation still have the hold-timeout gap described above and must
-not be claimed as qualified fault recovery.
-
-The model correctness gate supports two GPUs, or two TP=1 replicas on one GPU:
-
-```bash
-cd python
-../.venv/sglang-release/bin/python -m pytest -m e2e \
-  tests/e2e/test_sglang_pd_e2e.py --model /path/to/model
-```
-
-The gate gives its Manager an explicit 512MB DRAM budget; a default 100MB pool
-can evict the tested continuation before restart. It compares greedy P/D output with a monolithic SGLang control and asserts that
-both P and D processes installed OrbitKV's Rust/TENT engine. The gate also
-starts a Cache Manager and enables the OrbitKV external linker on both workers.
-After a P/D restart, a continuation must recover past the last page boundary
-that the original prefill alone could publish, proving that decode-produced
-state was published and reused by the next prefill. Cache Manager load bytes
-must increase. Run forced TCP first, then repeat the deployment on two hosts
-with RDMA and external NIC counters before claiming GPUDirect.
-
-### Historical SGLang qualification on 2026-09-28
-
-These runs used the former class-substitution adapter and do not qualify the
-new factory patch. Their original evidence is retained.
-
-Qwen3-8B revision `b968826d9c46dd6066d109eabc6255188de91218`, SGLang 0.5.20,
-BF16, TP=1, 64-token pages, eager deterministic inference and forced TCP were
-used with one Manager per worker. The 513-token natural-language prompt
-produced 64 tokens with `ignore_eos=true`; both engines then restarted while
-the Managers retained their caches. A follow-up appended those token IDs and
-three additional tokens, and requested eight more output tokens.
-
-| Deployment | Initial 64-token output vs A100 monolithic | Restarted 8-token continuation | Cache evidence |
-| --- | --- | --- | --- |
-| Two replicas on the same A100 | Exact token IDs and text | Exact token IDs and text | 576 cached tokens; 81 MiB Prefill H2D, including 9 MiB fetched from the Decode Manager; zero Decode H2D |
-| H20 Prefill → A100 Decode | Differs at output index 20, after the first EOS, in `violet`/`Violet` casing | Exact token IDs and text | Same 576-token, 81 MiB H2D and 9 MiB remote-read evidence; zero Decode H2D |
-
-The H20→A100 run passes the exercised restart/reuse path but **fails** the full
-64-token equality gate. It is not a blanket heterogeneous-GPU correctness pass.
-The same-A100 run drained request/source resources and passed both strict
-output comparisons. Neither deployment establishes RDMA, throughput gains,
-TP/PP behavior or mid-transfer fault recovery.
-
-Raw outputs, launch commands, retained failure logs and driver snapshots are in
-`/root/orbitkv-artifacts/s1-evidence-20260929/legacy-results/runs/two-host-natural-20260928/sglang-pd/` and
-`sglang-pd-same-a100/`. The production fix keeps external hits out of Decode's
-HiCache-only restore state machine; the maintained E2E also checks the actual
-TENT engine-ready marker and passes the router's explicit bootstrap port.
-The final normal release with bounded Restore partitioning repeats the
-same-A100 gate successfully; its matching native hashes and outputs are under
-`/root/orbitkv-artifacts/s1-evidence-20260929/legacy-results/runs/partitioned-restore-20260928/sglang-pd-same-a100/`,
-with hashes in the parent directory.
-
-To compose P/D with the external cache manually, point both workers at the same
-node-local Manager and add these flags to both server commands:
-
-```bash
-export ORBITKV_SGLANG_ENDPOINT=unix:///run/orbitkv/orbitkv.sock
-
---radix-cache-backend orbitkv \
---enable-unified-cache-external-linker
-```
-
-The decode worker additionally needs
-`--disaggregation-decode-enable-radix-cache`. OrbitKV rejects a composed P/D
-configuration unless its live-transfer backend is the SGLang `mooncake` route
-with `SGLANG_MOONCAKE_TRANSFER_ENGINE=orbitkv`; this prevents a deployment from silently sending
-the live request through NIXL or the legacy Python Transfer Engine. P and D
-share cache bytes only when their model, computation, TP/PP/CP and physical
-layout identities match.
-
-This first composition keeps the planner boundaries explicit. An external hit
-is restored into prefill HBM, SGLang computes any missing suffix and hands the
-request to decode through TENT, and completed decode state can be published for
-a later prefill. Decode advertises only its resident HBM prefix and performs no
-external lookup or restore; this keeps offloaded hits out of SGLang 0.5.20's
-HiCache-only decode restore state machine. Its normal radix-cache retention and
-write-through publication remain enabled. It does not yet let one cost decision choose between restoring
-directly into decode HBM and routing through prefill; that requires comparable
-completion targets and resource-admission evidence on both alternatives.
-
-Neither OrbitKV's P/D paths nor the current global index provides production KV-aware
-request routing. Production qualification still needs real multi-GPU and
-cross-machine correctness, cancellation/restart tests, and throughput/latency
-comparison against the vLLM NIXL baseline.
+The former fork profile and its exact patches remain in
+[the immutable pre-retirement guide](https://github.com/feichai0017/orbitkv/blob/9aee895ebe0ae2fb97279a477f00452b32025480/docs/pd.md).
+Its original code/tests remain at that commit; its frozen results remain under
+`/root/orbitkv-artifacts/native-pd-cutover-20260930/HANDOFF.md` and
+`/root/orbitkv-artifacts/native-pd-tent-20260930/HANDOFF.md`.
+These are upstream contribution/reproduction material, not supported runtime
+installation instructions or evidence that official releases passed the same gates.
+The [retired protocol history](pd-mooncake-push.md) preserves earlier evidence.

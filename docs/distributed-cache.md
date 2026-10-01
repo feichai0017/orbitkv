@@ -1,18 +1,107 @@
 # Distributed cache design
 
-Distributed discovery now uses a complete local global index on every Manager,
-with block locations and membership replicated by etcd. Publication and
-snapshot/Watch synchronization run in the background. Cold and warm discovery
-perform local reads; source grants and completion remain OrbitKV gRPC, and
-Mooncake TENT carries the payload. There is one implementation: the sharded
-Catalog, fixed placement, TTL hints and directory RPCs have been removed.
+The current S2.8 candidate keeps only protocol identity, persistent node epochs
+and leased membership in etcd. Managers exchange bounded owner inventory
+snapshots and deltas on the existing peer listener, then query the same local
+`GlobalIndex` as before. `ResidencyInventory` remains the only source-side
+residency truth; the stream has bounded frame credit and hidden snapshot staging,
+not another Catalog. Source grants and completion remain OrbitKV gRPC, and
+Mooncake TENT carries payload bytes.
 
-This cutover changes metadata availability, not payload durability. Broad RDMA,
-physical multi-host failure, large-cluster churn and permanently orphaned
-transfer reclamation still require qualification. The new path passes same-host
-and H20/A100 TCP serving, restart and forced-source-SSD gates on both engines;
-see [shared-cache qualification](shared-cache-qualification.md) for its scope
-and the separately labeled historical results.
+This is a coordinated pre-1.0 protocol cutover. New Managers require
+`orbitkv/inventory-stream/v3` and reject the frozen etcd-block format. Stop every
+Manager and use `scripts/migrate-metadata-format.py` to dry-run, archive and CAS
+the namespace before switching or rolling back. Mixed-version operation and a
+second production metadata path are not supported.
+
+The all-namespace implementation is independently accepted at `ad5bb8e6`. Its
+evidence is same-host TCP and synthetic all-to-all stream capacity; physical
+cross-host, independent failure domains, native engine serving, RDMA, native GDS
+and S2.10 long live-store/soak cells remain open.
+
+## Current owner inventory-stream protocol
+
+```mermaid
+flowchart TB
+    E[etcd quorum: format, epochs, leased members]
+    subgraph A[Manager A]
+        SA[ResidencyInventory A] -.->|bounded snapshot / delta| IB[GlobalIndex B]
+        IA[GlobalIndex A] --> QA[local query planning]
+    end
+    subgraph B[Manager B]
+        SB[ResidencyInventory B] -.->|bounded snapshot / delta| IA
+        IB --> QB[local query planning]
+    end
+    E --> A
+    E --> B
+    QA -->|exact generation grant and pin| B
+    QB -->|exact generation grant and pin| A
+    A <-->|TENT payload READ| B
+```
+
+Each directed all-namespace session binds the cluster UUID, source node epoch and
+incarnation, requester incarnation, scope digest and random session ID. Frames
+are ordered and bounded. A receiver stages every snapshot page and contiguous
+journal replay out of view, validates its transcript and page count, then swaps
+the complete owner view into `GlobalIndex` atomically. Frame-consumption ACKs
+return bounded byte credit; they never advance the installed watermark.
+
+Normal deltas cover a contiguous source interval, coalesce exact `(StateKey,
+medium)` identities and update one owner view atomically. Duplicates are
+idempotent. Overlap, gaps, conflicting generations, invalid identity or size and
+missing snapshot pages fail without partial installation. Stream interruption
+keeps valid positive hints while coverage becomes `partial_hints`; membership
+removal excludes that incarnation immediately and cleans its reverse-index rows
+in bounded batches.
+
+The current limits are 1,024 records and 512 KiB encoded/decoded content per
+frame, 1 MiB gRPC messages and per-stream outstanding credit, 32 MiB aggregate
+outbound credit, 128 sessions in each direction, two served and received
+snapshots, 64 concurrent fence awaiters, 16 MiB/s aggregate source pacing with a
+1 MiB burst, and 100 ms to 3 s reconnect backoff. `--index-budget` charges active
+and hidden staging views together.
+
+`POST /cache/sync` waits for submitted saves and returns an `inventory_fence`
+containing protocol, cluster UUID, source epoch/incarnation and source sequence.
+It does not wait for any requester. A controlled requester calls
+`POST /cache/metadata/await` with that fence, its exact scope digest and a timeout
+of at most 30 seconds. Success requires a committed matching owner view at the
+target sequence and still-valid membership. Ordinary queries remain local and
+never issue this HTTP barrier or an on-demand directory RPC.
+Standalone `/cache/sync` still drains submitted local saves and returns
+`local_flush_complete`; it never fabricates an inventory fence.
+
+`GET /cache/metadata` reports membership revision/validity, explicit coverage,
+active/staging/accounted index bytes, expected and installed owner-view counts,
+local journal state, stream bytes/frames, session counts, queue high-water marks,
+cluster identity and the all-namespace scope digest. Etcd traffic no longer grows
+with block churn; inspect stream diagnostics separately from membership traffic.
+
+The frozen same-host A100 candidate uses native commit `344ef6c9` and benchmark
+harness `53314d52`. A 16-owner, 60-second all-to-all run applies 245,760 changes
+at 4,083.12 changes/s, with 29.53 ms installed-visibility p99, a 7,929,600-byte
+index, 697,538-byte aggregate queue peak and zero etcd database growth during
+churn. Five independent full-Manager runs each at 0 and 2 ms show median stream
+bytes of 500,775 and 82,265 (83.57% lower) and visibility p95 of 1.68 and 5.17 ms.
+Both profiles have zero etcd revision change during block churn and 100% exact
+post-visibility GPU restores; model inference latency is not measured.
+
+The same package passes stream partition/journal-overflow snapshot recovery,
+membership restart/leader/quorum gates, full-Manager DRAM/io_uring fault recovery,
+live DRAM metadata-loss recovery and a 260-block TCP P2P restore. The migration
+tool's dry-run/apply/rollback retains epoch keys and removes retired block/cursor
+keys. Evidence and failed development controls are under
+`/root/orbitkv-artifacts/s2-s51-20260930/s2-8-inventory-streams/` and the matching
+A100 path `/workspace/orbitkv-three-host-20260930/s2-8-inventory-streams/`.
+Independent review accepted the S2.8 scope at `ad5bb8e6`; no cross-host or
+serving result is inferred.
+
+## Historical S2.1–S2.7 etcd-block path
+
+The remainder of this page through the S2.7 acceptance record describes the
+frozen pre-cutover implementation and remains only as evidence/reproduction
+context. Its `published_revision`, block-key Watch and old coalescing flag are not
+callable interfaces in the S2.8 candidate.
 
 ## Local global index and etcd metadata
 
@@ -117,6 +206,15 @@ half the acknowledged lease TTL, measured from request send time. Expired or
 fenced runtimes cannot revive; restart for a new UUID. Own-record replacement,
 removal or coordinator identity change fences remote work. Local DRAM/SSD remains
 usable. Metadata expiry never proves that a native payload transfer has drained.
+
+On shutdown the Manager fences its membership before waiting for gRPC to stop.
+Inventory streams stop publishing from the fenced owner, allowing their RPCs to
+finish; normal channel/lifecycle drain and lease revocation then complete. This
+ordering prevents long-lived inventory streams from holding shutdown open while
+keepalive still renews the old registration. After an abrupt stop, wait for the
+old member key to disappear before reusing its node ID; the new process must
+have a higher epoch and a different incarnation. Fencing metadata does not
+release payload pins or GPU destinations before their existing owners drain.
 
 ### Request path and bounded work
 

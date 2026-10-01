@@ -65,8 +65,9 @@ Multi-node cache sharing is experimental. Interfaces may change before 1.0.
   timelines, and reproduce the published latency and throughput measurements.
   Opt-in cost observations compare matching copy/SSD-route evidence in shadow,
   with resource identity and uncertainty checks before suggesting a change.
-- **Experimental shared cache.** Complete local global indexes locate peer replicas;
-  etcd replicates locations and membership, and Mooncake TENT moves bytes.
+- **Experimental shared cache.** Local global indexes locate peer replicas;
+  etcd keeps protocol identity and leased membership, bounded Manager inventory
+  streams synchronize residency views, and Mooncake TENT moves bytes.
   Source allocations remain budgeted through timeout; bounded completion records
   reconcile lost authorization replies and retry completion acknowledgements
   using reusable windows and generation-fenced tickets. Before the metadata cutover, both engines passed the
@@ -74,12 +75,11 @@ Multi-node cache sharing is experimental. Interfaces may change before 1.0.
   with cross-GPU numerical and RDMA limits documented separately. Peer SSD reads use
   exact-generation, bounded source-side io_uring staging before the same
   Mooncake transfer path; physical two-host qualification remains open.
-- **Experimental P/D handoff.** An explicit TENT payload factory can use the
-  engines' native P/D lifecycle and router. This requires the pinned experimental
-  engine patches in [P/D setup](docs/pd.md#native-pd-with-an-explicit-tent-backend);
-  official engine releases do not yet provide these factories. The vLLM custom
-  path remains until cancellation, generation and drain equivalence is qualified.
-  RDMA and heterogeneous-GPU strict-output qualification remain open.
+- **Native P/D composition candidates.** Official vLLM uses NIXL and
+  MultiConnector; official SGLang uses native disaggregation. OrbitKV supplies
+  independent cache adapters and keeps Manager shared-cache traffic on TENT.
+  No maintained engine fork or custom P/D proxy is required. The
+  [P/D guide](docs/pd.md) records ownership and remaining fault qualification.
 
 See [supported deployments](docs/deployment.md) and
 [model qualification](docs/models.md) before selecting a checkpoint and topology.

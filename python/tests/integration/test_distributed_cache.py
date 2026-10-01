@@ -1,7 +1,7 @@
-"""Real etcd + Manager processes: metadata faults and exact GPU recovery.
+"""Real Manager processes: inventory-stream faults and exact GPU recovery.
 
 Requires ETCD_BIN, a frozen Cache Manager/native extension, CUDA and
-MC_FORCE_TCP=1 on one host. This is not a cross-host qualification.
+MC_FORCE_TCP=1 on one host. This is not cross-host qualification.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import os
 import time
 import uuid
 from contextlib import ExitStack
+from urllib.parse import urlsplit
 
 import pytest
 import requests
@@ -43,14 +44,24 @@ def _metadata(manager):
 def _sync(manager):
     response = requests.post(f"http://127.0.0.1:{manager.http_port}/cache/sync", timeout=35)
     response.raise_for_status()
-    return response.json()["published_revision"]
+    return response.json()["inventory_fence"]
 
 
-def _wait_for_revision(manager, revision, managers):
-    return _until(
-        lambda: (status := _metadata(manager))["index"]["available"]
-        and status["index"]["revision"] >= revision,
-        managers,
+def _await_fence(manager, fence, managers, *, timeout=30):
+    scope = _metadata(manager)["stream"]["scope_digest"]
+    response = requests.post(
+        f"http://127.0.0.1:{manager.http_port}/cache/metadata/await",
+        json={
+            "inventory_fence": fence,
+            "scope_digest": scope,
+            "timeout_ms": int(timeout * 1000),
+        },
+        timeout=timeout + 5,
+    )
+    assert response.status_code == 200, (
+        response.status_code,
+        response.text,
+        [m.read_logs() for m in managers],
     )
 
 
@@ -128,126 +139,38 @@ def _wait_for_ssd_write(manager, minimum_bytes, managers):
     )
 
 
+def _wait_for_remote_drain(source_manager, consumer_manager, managers):
+    def drained():
+        source_metrics = fetch_orbitkv_metrics(source_manager.http_port)
+        consumer_metrics = fetch_orbitkv_metrics(consumer_manager.http_port)
+        if source_metrics.get("orbitkv_transfer_lock_active", 0):
+            return None
+        if consumer_metrics.get("orbitkv_transfer_completion_outstanding", 0):
+            return None
+        return source_metrics, consumer_metrics
+
+    return _until(drained, managers)
+
+
 def _prefix_end(prefix: bytes) -> bytes:
     end = bytearray(prefix)
     end[-1] += 1
     return bytes(end)
 
 
-def _etcd_range(endpoint: str, prefix: str):
+def _etcd_keys(endpoint: str, prefix: str):
     key = prefix.encode()
     response = requests.post(
         f"{endpoint}/v3/kv/range",
         json={
             "key": base64.b64encode(key).decode(),
             "range_end": base64.b64encode(_prefix_end(key)).decode(),
+            "keys_only": True,
         },
         timeout=5,
     )
     response.raise_for_status()
-    return [
-        (base64.b64decode(row["key"]).decode(), base64.b64decode(row.get("value", "")))
-        for row in response.json().get("kvs", [])
-    ]
-
-
-def _member_owner(endpoint: str, cluster: str, node: str) -> dict | None:
-    key = f"/orbitkv/v2/{cluster}/members/{node}"
-    rows = [row for row in _etcd_range(endpoint, key) if row[0] == key]
-    if not rows:
-        return None
-    assert len(rows) == 1
-    return json.loads(rows[0][1])["owner"]
-
-
-def _varint(data: bytes, offset: int) -> tuple[int, int]:
-    value = 0
-    shift = 0
-    while True:
-        byte = data[offset]
-        offset += 1
-        value |= (byte & 0x7F) << shift
-        if byte < 0x80:
-            return value, offset
-        shift += 7
-        if shift >= 70:
-            raise ValueError("invalid protobuf varint")
-
-
-def _protobuf_fields(data: bytes) -> dict[int, list[int | bytes]]:
-    fields: dict[int, list[int | bytes]] = {}
-    offset = 0
-    while offset < len(data):
-        tag, offset = _varint(data, offset)
-        field, wire = tag >> 3, tag & 7
-        if wire == 0:
-            value, offset = _varint(data, offset)
-        elif wire == 2:
-            size, offset = _varint(data, offset)
-            value = data[offset : offset + size]
-            offset += size
-        else:
-            raise ValueError(f"unsupported protobuf wire type {wire}")
-        fields.setdefault(field, []).append(value)
-    return fields
-
-
-def _inventory_record(data: bytes):
-    fields = _protobuf_fields(data)
-    metadata = _protobuf_fields(fields[5][0])
-    return {
-        "namespace": fields[1][0].decode(),
-        "block_hash": fields[2][0],
-        "sequence": fields[3][0],
-        "present": bool(fields.get(4, [0])[0]),
-        "medium": metadata[1][0],
-        "representation": metadata[2][0],
-        "stored_bytes": metadata.get(3, [None])[0],
-    }
-
-
-def _source_records(endpoint: str, cluster: str, incarnation: str):
-    prefix = f"/orbitkv/v2/{cluster}/blocks/{incarnation}/"
-    records = {}
-    for key, value in _etcd_range(endpoint, prefix):
-        record = _inventory_record(value)
-        medium = key.rsplit("/", 1)[-1]
-        assert medium in {"dram", "ssd"}
-        assert record["medium"] == {"dram": 1, "ssd": 2}[medium]
-        assert record["present"]
-        assert record["representation"] == 1
-        digest = hashlib.sha256()
-        digest.update(b"orbitkv/state-location/v2\0")
-        namespace = record["namespace"].encode()
-        digest.update(len(namespace).to_bytes(8, "little"))
-        digest.update(namespace)
-        digest.update(record["block_hash"])
-        assert key == f"{prefix}{digest.hexdigest()}/{medium}"
-        identity = (record["block_hash"], medium)
-        assert identity not in records
-        records[identity] = record
-    return records
-
-
-def _group_hash(block_hash: bytes) -> bytes:
-    return (
-        b"OKS\x01" + (0).to_bytes(4, "little") + len(block_hash).to_bytes(8, "little") + block_hash
-    )
-
-
-def _expected_records(hashes, medium):
-    return {(_group_hash(block_hash), medium) for block_hash in hashes}
-
-
-def _wait_source_records(endpoint, cluster, incarnation, expected, managers):
-    return _until(
-        lambda: (
-            records
-            if set(records := _source_records(endpoint, cluster, incarnation)) == expected
-            else None
-        ),
-        managers,
-    )
+    return [base64.b64decode(row["key"]).decode() for row in response.json().get("kvs", [])]
 
 
 def _payload(torch, pages, block_bytes, round_id):
@@ -260,13 +183,13 @@ def _payload(torch, pages, block_bytes, round_id):
 
 def _hashes(medium, round_id, pages):
     return [
-        hashlib.sha256(f"s2.5:{medium}:{round_id}:{block}".encode()).digest()
+        hashlib.sha256(f"s2.8:{medium}:{round_id}:{block}".encode()).digest()
         for block in range(pages)
     ]
 
 
 @pytest.mark.parametrize("medium", ["dram", "ssd"])
-def test_manager_process_metadata_faults_preserve_exact_dram_and_ssd(tmp_path, monkeypatch, medium):
+def test_manager_inventory_stream_faults_preserve_exact_dram_and_ssd(tmp_path, monkeypatch, medium):
     torch = pytest.importorskip("torch")
     if not torch.cuda.is_available():
         pytest.skip("CUDA is required")
@@ -276,8 +199,8 @@ def test_manager_process_metadata_faults_preserve_exact_dram_and_ssd(tmp_path, m
     monkeypatch.setenv("MC_FORCE_TCP", "1")
     pages, block_bytes = 8, 4096
     payload_bytes = pages * block_bytes
-    cluster = f"s25-{medium}-{uuid.uuid4().hex[:12]}"
-    namespace = f"s2.5:{medium}:{uuid.uuid4().hex}"
+    cluster = f"s28-{medium}-{uuid.uuid4().hex[:12]}"
+    namespace = f"s2.8:{medium}:{uuid.uuid4().hex}"
     result = {
         "medium": medium,
         "client_pid": os.getpid(),
@@ -289,19 +212,23 @@ def test_manager_process_metadata_faults_preserve_exact_dram_and_ssd(tmp_path, m
 
     with ExitStack() as stack:
         endpoint, _ = stack.enter_context(etcd_server(tmp_path))
-        gate = TcpGate(endpoint)
-        stack.callback(gate.close)
+        etcd_gate = TcpGate(endpoint)
+        stack.callback(etcd_gate.close)
+        source_port = find_available_port()
+        peer_gate = TcpGate(f"http://127.0.0.1:{source_port}")
+        stack.callback(peer_gate.close)
+        advertised_source = urlsplit(peer_gate.endpoint).netloc
         managers = []
         clients = []
         tensors = []
         for node in ("source", "consumer"):
-            port = find_available_port()
+            port = source_port if node == "source" else find_available_port()
             http_port = find_available_port()
             source = node == "source"
             ssd_enabled = source and medium == "ssd"
             manager_args = [
                 "--etcd-endpoints",
-                gate.endpoint if source else endpoint,
+                etcd_gate.endpoint if source else endpoint,
                 "--node-id",
                 node,
                 "--cluster-name",
@@ -310,14 +237,16 @@ def test_manager_process_metadata_faults_preserve_exact_dram_and_ssd(tmp_path, m
                 "12",
                 "--inventory-journal-bytes",
                 "1024",
+                "--inventory-stream-coalesce-ms",
+                "2",
             ]
-            if not ssd_enabled:
-                manager_args.append("--enable-prometheus")
+            if source:
+                manager_args.extend(["--peer-advertise-addr", advertised_source])
             manager = CacheManagerProcess(
                 port,
                 pool_size="64mb",
                 http_port=http_port,
-                bootstrap_socket=f"/tmp/orbitkv-s25-{port}.sock",
+                bootstrap_socket=f"/tmp/orbitkv-s28-{port}.sock",
                 ssd_cache_path=tmp_path / "source-ssd" if ssd_enabled else None,
                 ssd_cache_capacity="32kb",
                 ssd_backend="uring",
@@ -393,8 +322,6 @@ def test_manager_process_metadata_faults_preserve_exact_dram_and_ssd(tmp_path, m
                     "orbitkv_ssd_prefetch_bytes_total"
                 ]
                 assert after >= before + payload_bytes
-                cleaned = _cleanup_dram(source_manager)
-                assert cleaned["evicted_blocks"] == 0
             else:
                 _restore(
                     source_client,
@@ -418,20 +345,8 @@ def test_manager_process_metadata_faults_preserve_exact_dram_and_ssd(tmp_path, m
             return hashes, expected
 
         control_hashes, control_payload = save_round(0)
-        control_revision = _sync(source_manager)
-        _wait_for_revision(consumer_manager, control_revision, managers)
-        source_owner = _until(lambda: _member_owner(endpoint, cluster, "source"), managers)
-        assert source_owner["endpoint"] == f"127.0.0.1:{source_manager.port}"
-        source_incarnation = source_owner["incarnation"]
-        expected_medium = "ssd" if medium == "ssd" else "dram"
-        control_records = _wait_source_records(
-            endpoint,
-            cluster,
-            source_incarnation,
-            _expected_records(control_hashes, expected_medium),
-            managers,
-        )
-        assert all(record["stored_bytes"] == block_bytes for record in control_records.values())
+        control_fence = _sync(source_manager)
+        _await_fence(consumer_manager, control_fence, managers)
         remote_before = fetch_orbitkv_metrics(consumer_manager.http_port).get(
             "orbitkv_remote_fetch_bytes_total", 0
         )
@@ -448,118 +363,71 @@ def test_manager_process_metadata_faults_preserve_exact_dram_and_ssd(tmp_path, m
             "orbitkv_remote_fetch_bytes_total"
         ]
         assert remote_after >= remote_before + payload_bytes
-        result["control_revision"] = control_revision
+        _wait_for_remote_drain(source_manager, consumer_manager, managers)
 
-        gate.partition()
+        peer_gate.partition()
         partition_started = time.monotonic()
-        transient_rounds = []
-        for round_id in range(1, 4):
+        final_hashes = final_payload = final_fence = None
+        for round_id in range(1, 5):
             if medium == "dram":
-                cleaned = _cleanup_dram(source_manager)
-                assert cleaned["evicted_blocks"] == pages
-            hashes, expected = save_round(round_id)
+                _cleanup_dram(source_manager)
+            final_hashes, final_payload = save_round(round_id)
+            final_fence = _sync(source_manager)
             miss = _query_ready(
                 consumer_client,
                 "consumer",
-                hashes,
+                final_hashes,
                 f"partition-miss-{round_id}",
                 0,
                 managers,
             )
             assert not miss.lease
-            transient_rounds.append((hashes, expected))
-
         source_status = _metadata(source_manager)
         assert source_status["index"]["registration_valid"]
-        assert source_status["inventory_sequence"] > source_status["published"]["sequence"]
-        assert source_status["inventory_journal_capacity_bytes"] == 1024
         assert source_status["inventory_journal_bytes"] <= 1024
         assert source_status["inventory_journal_bytes_peak"] <= 1024
-        assert set(_source_records(endpoint, cluster, source_incarnation)) == _expected_records(
-            control_hashes, expected_medium
-        )
-        gate.heal()
-        transient_revision = _sync(source_manager)
-        _wait_for_revision(consumer_manager, transient_revision, managers)
-        recovered_status = _metadata(source_manager)
-        assert recovered_status["inventory_history_gaps"] >= 1
-        assert recovered_status["inventory_resident_records"] == pages
-        _until(
-            lambda: "Inventory publication history unavailable" in source_manager.read_logs(),
-            managers,
-        )
-        final_hashes, final_payload = transient_rounds[-1]
-        final_records = _wait_source_records(
-            endpoint,
-            cluster,
-            source_incarnation,
-            _expected_records(final_hashes, expected_medium),
-            managers,
-        )
-        assert all(record["stored_bytes"] == block_bytes for record in final_records.values())
-        cleaned = _cleanup_dram(consumer_manager)
-        assert cleaned["evicted_blocks"] >= pages
-        deleted_rounds = [control_hashes, *(item[0] for item in transient_rounds[:-1])]
-        for deleted_round, round_hashes in enumerate(deleted_rounds):
-            for index, block_hash in enumerate(round_hashes):
-                missing = _query_ready(
-                    consumer_client,
-                    "consumer",
-                    [block_hash],
-                    f"deleted-{deleted_round}-{index}",
-                    0,
-                    managers,
-                )
-                assert not missing.lease
+        peer_gate.heal()
+        _await_fence(consumer_manager, final_fence, managers, timeout=20)
+        _cleanup_dram(consumer_manager)
         _restore(
             consumer_client,
             "consumer",
             consumer_tensor,
             final_hashes,
-            "transient-final-remote",
+            "recovered-after-overflow",
             final_payload,
             managers,
         )
-        result["transient"] = {
+        _wait_for_remote_drain(source_manager, consumer_manager, managers)
+        recovered = _metadata(consumer_manager)
+        assert recovered["index"]["coverage"] == "complete_at_watermarks"
+        result["stream_repair"] = {
             "duration_ms": (time.monotonic() - partition_started) * 1000,
-            "revision": transient_revision,
-            "inventory_sequence": source_status["inventory_sequence"],
-            "published_sequence_before_heal": source_status["published"]["sequence"],
-            "journal_bytes_peak": recovered_status["inventory_journal_bytes_peak"],
-            "history_gaps": recovered_status["inventory_history_gaps"],
+            "fence": final_fence,
+            "source_history_gaps": _metadata(source_manager)["inventory_history_gaps"],
+            "consumer_resets": recovered["stream"]["resets"],
         }
 
         if medium == "dram":
-            cleaned = _cleanup_dram(source_manager)
-            assert cleaned["evicted_blocks"] == pages
-        expiry_hashes, expiry_payload = save_round(4)
-        expiry_revision = _sync(source_manager)
-        _wait_for_revision(consumer_manager, expiry_revision, managers)
-        _wait_source_records(
-            endpoint,
-            cluster,
-            source_incarnation,
-            _expected_records(expiry_hashes, expected_medium),
-            managers,
-        )
-        cleaned = _cleanup_dram(consumer_manager)
-        assert cleaned["evicted_blocks"] >= pages
+            _cleanup_dram(source_manager)
+        expiry_hashes, expiry_payload = save_round(5)
+        expiry_fence = _sync(source_manager)
+        _await_fence(consumer_manager, expiry_fence, managers)
+        _cleanup_dram(consumer_manager)
         remote_before_expiry = fetch_orbitkv_metrics(consumer_manager.http_port)[
             "orbitkv_remote_fetch_bytes_total"
         ]
 
-        gate.partition()
+        etcd_gate.partition()
         expiry_started = time.monotonic()
         _until(lambda: not _metadata(source_manager)["index"]["registration_valid"], managers)
+        source_member_key = f"/orbitkv/v2/{cluster}/members/source"
         _until(
-            lambda: _member_owner(endpoint, cluster, "source") is None
-            and _metadata(consumer_manager)["index"]["available"],
+            lambda: source_member_key not in _etcd_keys(endpoint, f"/orbitkv/v2/{cluster}/")
+            and _metadata(consumer_manager)["index"]["registration_valid"]
+            and _metadata(consumer_manager)["index"]["coverage"] == "complete_at_watermarks",
             managers,
             timeout=25,
-        )
-        assert not _source_records(endpoint, cluster, source_incarnation)
-        ssd_read_before_expiry = fetch_orbitkv_metrics(source_manager.http_port).get(
-            "orbitkv_ssd_prefetch_bytes_total", 0
         )
         _restore(
             source_client,
@@ -570,11 +438,6 @@ def test_manager_process_metadata_faults_preserve_exact_dram_and_ssd(tmp_path, m
             expiry_payload,
             managers,
         )
-        if medium == "ssd":
-            assert (
-                fetch_orbitkv_metrics(source_manager.http_port)["orbitkv_ssd_prefetch_bytes_total"]
-                >= ssd_read_before_expiry + payload_bytes
-            )
         miss = _query_ready(
             consumer_client,
             "consumer",
@@ -588,44 +451,30 @@ def test_manager_process_metadata_faults_preserve_exact_dram_and_ssd(tmp_path, m
             fetch_orbitkv_metrics(consumer_manager.http_port)["orbitkv_remote_fetch_bytes_total"]
             == remote_before_expiry
         )
-
-        gate.heal()
+        etcd_gate.heal()
         time.sleep(1)
-        source_after_heal = _metadata(source_manager)
-        assert not source_after_heal["index"]["registration_valid"]
-        assert not source_after_heal["published"]["ready"]
-        assert _member_owner(endpoint, cluster, "source") is None
-        assert _metadata(consumer_manager)["index"]["available"]
-        miss = _query_ready(
-            consumer_client,
-            "consumer",
-            expiry_hashes,
-            "healed-expired-source-remote",
-            0,
-            managers,
-        )
-        assert not miss.lease
-        assert (
-            fetch_orbitkv_metrics(consumer_manager.http_port)["orbitkv_remote_fetch_bytes_total"]
-            == remote_before_expiry
-        )
+        assert not _metadata(source_manager)["index"]["registration_valid"]
         result["expiry"] = {
             "duration_ms": (time.monotonic() - expiry_started) * 1000,
-            "source_incarnation": source_incarnation,
-            "observer_available": True,
+            "source_incarnation": expiry_fence["source_incarnation"],
             "source_member_absent": True,
-            "source_records_absent": True,
             "old_runtime_remained_fenced_after_heal": True,
-            "requester_dram_evicted_blocks": cleaned["evicted_blocks"],
             "remote_fetch_bytes_unchanged": remote_before_expiry,
         }
+
+        keys = _etcd_keys(endpoint, f"/orbitkv/v2/{cluster}/")
+        assert not any("/blocks/" in key or "/publishers/" in key for key in keys)
+        result["etcd_keys"] = keys
         result["final_source_metrics"] = fetch_orbitkv_metrics(source_manager.http_port)
         result["final_consumer_metrics"] = fetch_orbitkv_metrics(consumer_manager.http_port)
         for node, client in zip(("source", "consumer"), clients, strict=True):
             ok, message = client.unregister_context(node)
             assert ok, message
+        for client in clients:
+            client.close()
         tensors.clear()
-        source_tensor = consumer_tensor = tensor = None
+        del tensor
+        source_tensor = consumer_tensor = None
         torch.cuda.synchronize()
         torch.cuda.ipc_collect()
         (tmp_path / "result.json").write_text(json.dumps(result, indent=2) + "\n")

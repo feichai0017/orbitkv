@@ -50,10 +50,7 @@ class _QueryProbe:
 
     * ``computed_blocks`` — blocks already computed locally when the query was
       issued
-    * ``query_hashes`` — remaining full-block hashes plus at most one derived
-      tail key sent to the backend
-    * ``tail_tokens`` — valid rows in that tail block, used for token accounting
-      and request-drift validation
+    * ``query_hashes`` — remaining complete engine block hashes
 
     If the request keeps making local progress while the backend is loading,
     the current query key may drift.  A *Ready* result is accepted only if the
@@ -63,7 +60,6 @@ class _QueryProbe:
     computed_blocks: int
     query_hashes: tuple[bytes, ...]
     native_hashes: BlockHashes = field(init=False)
-    tail_tokens: int = 0
     started_at: float = field(default_factory=time.monotonic)
 
     # ``None`` means the backend is still loading.
@@ -94,13 +90,8 @@ class _QueryProbe:
         self,
         computed_blocks: int,
         query_hashes: tuple[bytes, ...],
-        tail_tokens: int,
     ) -> bool:
-        return (
-            self.computed_blocks == computed_blocks
-            and self.query_hashes == query_hashes
-            and self.tail_tokens == tail_tokens
-        )
+        return self.computed_blocks == computed_blocks and self.query_hashes == query_hashes
 
     def mark_ready(self, ready: ShardedQueryReady) -> None:
         hit_blocks = ready.num_hit_blocks
@@ -133,9 +124,6 @@ class SchedulerAdapter:
         self,
         context: ConnectorContext,
         clients: tuple[CacheManagerClient, ...] | None = None,
-        pd_tail_save: bool = False,
-        pd_tail_load: bool = False,
-        vllm_config=None,
         kv_cache_config=None,
     ):
         self._ctx = context
@@ -149,8 +137,6 @@ class SchedulerAdapter:
         self._clients = clients
         self._queued_at: dict[str, float] = {}
         self._cache_groups = CacheGroupLayout.from_config(kv_cache_config)
-        if self._cache_groups.group_count > 1 and (pd_tail_save or pd_tail_load):
-            raise ValueError("P/D tail-block caching is not supported with HMA")
         self._recovery = None
         if self._cache_groups.group_count > 1:
             from orbitkv import RecoveryContract
@@ -159,52 +145,6 @@ class SchedulerAdapter:
                 context.namespace, context.virtual_block_size, self._cache_groups.recovery_groups
             )
         self._gpu_block_pool = None
-
-        # P/D tail-block extension (`orbitkv.pd_tail_save`): vLLM only hashes
-        # full blocks, so a prompt's partial tail block never enters the tier
-        # and a strict no-prefill decode peer would have to recompute it.
-        # When enabled, the step that schedules the final prompt chunk also
-        # saves the partial tail block under a key derived with vLLM's OWN
-        # hash function over (last_full_hash, tail_prompt_token_ids, None) —
-        # well-defined, and independently derivable by the decode peer.
-        # vLLM derives NONE_HASH from PYTHONHASHSEED when it is set. A fixed
-        # seed makes the configured hash function reproducible across the
-        # scheduler processes participating in the transfer.
-        self._tail_save_enabled = pd_tail_save
-        self._tail_load_enabled = pd_tail_load
-        self._tail_hash_fn = None
-        if pd_tail_save or pd_tail_load:
-            assert vllm_config is not None
-            algo = vllm_config.cache_config.prefix_caching_hash_algo
-            if os.environ.get("PYTHONHASHSEED") is None:
-                enabled_options = ", ".join(
-                    option
-                    for enabled, option in (
-                        (pd_tail_save, "orbitkv.pd_tail_save"),
-                        (pd_tail_load, "orbitkv.pd_tail_load"),
-                    )
-                    if enabled
-                )
-                raise ValueError(
-                    "P/D tail-block caching requires a fixed PYTHONHASHSEED "
-                    f"across vLLM processes; enabled options: {enabled_options}"
-                )
-            from vllm.utils.hashing import get_hash_fn_by_name
-            from vllm.v1.core import kv_cache_utils
-
-            self._tail_hash_fn = get_hash_fn_by_name(algo)
-            self._hash_block_tokens = kv_cache_utils.hash_block_tokens
-            # NONE_HASH is only assigned by vLLM's init_none_hash(), which
-            # runs after connector construction — it must be read lazily
-            # through the module, never imported by name here.
-            self._kv_cache_utils = kv_cache_utils
-            logger.info(
-                "[OrbitKVConnector] P/D tail-block cache enabled (save=%s load=%s algo=%s)",
-                pd_tail_save,
-                pd_tail_load,
-                algo,
-            )
-        self._tail_saved: set[str] = set()
 
         # Load state
         self._pending_load_intents: dict[str, LoadIntent] = {}
@@ -247,16 +187,6 @@ class SchedulerAdapter:
 
     def bind_gpu_block_pool(self, gpu_block_pool) -> None:
         self._gpu_block_pool = gpu_block_pool
-        if self._cache_groups.group_count <= 1:
-            return
-
-        # vLLM can cache an async-loaded dense group and expose it to a sibling
-        # before the sparse group has a usable state. OrbitKV is the sole HMA
-        # prefix index until vLLM exposes an atomic all-group cache hook.
-        def no_local_hma_prefix_hit(*_args, **_kwargs) -> None:
-            return None
-
-        gpu_block_pool.get_cached_block = no_local_hma_prefix_hit
 
     def _request_block_hashes(self, request: "Request") -> tuple[bytes, ...]:
         """Per-block keys from `Request.block_hashes` (see `ConnectorContext.hash_scale`).
@@ -298,14 +228,7 @@ class SchedulerAdapter:
             or self._cache_groups.group_count > 1
             or (not prepare and os.environ.get("ORBITKV_QUEUE_WARMUP") != "1")
             or (prepare and len(self._queued_at) > 4)
-            or (
-                prepare
-                and (
-                    self._ctx.wait_for_full_prefix
-                    or self._tail_load_enabled
-                    or self._tail_save_enabled
-                )
-            )
+            or (prepare and self._ctx.wait_for_full_prefix)
         ):
             return
         # Warm the same whole pages admission will query, including a page
@@ -349,7 +272,7 @@ class SchedulerAdapter:
             return (0, False)
 
         computed_blocks = num_computed_tokens // self._ctx.virtual_block_size
-        query_hashes, tail_tokens = self._build_query(request, computed_blocks)
+        query_hashes = self._request_block_hashes(request)[computed_blocks:]
 
         # Nothing remains to query remotely.
         if not query_hashes:
@@ -361,7 +284,7 @@ class SchedulerAdapter:
 
         probe = self._pending_query_probes.get(req_id)
 
-        if probe is not None and not probe.matches(computed_blocks, query_hashes, tail_tokens):
+        if probe is not None and not probe.matches(computed_blocks, query_hashes):
             self._release_pending_query_probe(req_id)
             probe = None
         if probe is not None and probe.is_ready:
@@ -373,7 +296,6 @@ class SchedulerAdapter:
             probe = _QueryProbe(
                 computed_blocks=computed_blocks,
                 query_hashes=query_hashes,
-                tail_tokens=tail_tokens,
             )
             self._pending_query_probes[req_id] = probe
 
@@ -479,11 +401,7 @@ class SchedulerAdapter:
         hit_blocks = probe.require_hit_blocks()
         computed_blocks = probe.computed_blocks
         vbs = self._ctx.virtual_block_size
-        tail_hit = probe.tail_tokens > 0 and hit_blocks == len(probe.query_hashes)
-        # _build_query appends the tail key last and the backend reports prefix
-        # hits, so a full query hit makes the final block the partial tail.
-        last_block_tokens = probe.tail_tokens if tail_hit else vbs
-        hit_tokens = (hit_blocks - 1) * vbs + last_block_tokens
+        hit_tokens = hit_blocks * vbs
 
         # A request still needs one forward token to produce logits. The last
         # loaded page may contain that token's KV, but vLLM must recompute and
@@ -501,30 +419,24 @@ class SchedulerAdapter:
                 self._release_pending_query_probe(req_id)
             return (0, False)
 
-        # Cacheable tails contain at least two tokens, so recomputing the final
-        # prompt token cannot remove the last leased block from the load.
         loaded_blocks = (hit_tokens + vbs - 1) // vbs
         self._external_matched_blocks[req_id] = computed_blocks + loaded_blocks
 
         if reused:
             logger.debug(
                 "[OrbitKVConnector] req=%s cache_lookup_reuse: hit_blocks=%d "
-                "computed_blocks=%d hit_tokens=%d num_tokens=%d total_query_hashes=%d "
-                "tail_hit=%s tail_tokens=%d",
+                "computed_blocks=%d hit_tokens=%d num_tokens=%d total_query_hashes=%d",
                 req_id,
                 hit_blocks,
                 computed_blocks,
                 hit_tokens,
                 num_tokens,
                 len(probe.query_hashes),
-                tail_hit,
-                probe.tail_tokens,
             )
         else:
             logger.info(
                 "[OrbitKVConnector] req=%s cache_lookup: hit_blocks=%d computed_blocks=%d "
-                "hit_tokens=%d num_tokens=%d lookup_us=%.0f total_query_hashes=%d "
-                "tail_hit=%s tail_tokens=%d",
+                "hit_tokens=%d num_tokens=%d lookup_us=%.0f total_query_hashes=%d",
                 req_id,
                 hit_blocks,
                 computed_blocks,
@@ -532,8 +444,6 @@ class SchedulerAdapter:
                 num_tokens,
                 lookup_us or 0.0,
                 len(probe.query_hashes),
-                tail_hit,
-                probe.tail_tokens,
             )
 
         if hit_tokens <= 0:
@@ -551,6 +461,13 @@ class SchedulerAdapter:
         num_external_tokens: int,
     ) -> None:
         req_id = request.request_id
+
+        if num_external_tokens == 0:
+            probe = self._pending_query_probes.get(req_id)
+            if probe is not None:
+                # MultiConnector assigned the target pages to another loader.
+                self._external_matched_blocks[req_id] = probe.computed_blocks
+                self._release_pending_query_probe(req_id)
 
         # Keep a live reference so we can refresh block_hashes during decode
         # (Request.block_hashes grows as new full blocks are completed).
@@ -584,8 +501,8 @@ class SchedulerAdapter:
             vbs = self._ctx.virtual_block_size
             num_load_blocks = (num_external_tokens + vbs - 1) // vbs
             try:
-                query_hashes, tail_tokens = self._build_query(request, num_computed_blocks)
-                if not pending_probe.matches(num_computed_blocks, query_hashes, tail_tokens):
+                query_hashes = self._request_block_hashes(request)[num_computed_blocks:]
+                if not pending_probe.matches(num_computed_blocks, query_hashes):
                     raise RuntimeError(f"req {req_id} query identity changed before external load")
                 if pending_probe.recovery_hold is not None and (
                     num_external_tokens != pending_probe.require_hit_blocks() * vbs
@@ -670,20 +587,14 @@ class SchedulerAdapter:
             # rebase is a no-op.
             self._rebase_resumed_request(req_id)
 
-            if self._ctx.read_enabled:
-                self._scheduled_tokens[req_id] += num_tokens
-            else:
-                self._scheduled_tokens[req_id] = max(
-                    self._scheduled_tokens.get(req_id, 0),
-                    req.num_computed_tokens + num_tokens,
-                )
+            self._scheduled_tokens[req_id] = max(
+                0,
+                req.num_computed_tokens
+                + num_tokens
+                - self._block_index_offsets[req_id] * self._ctx.virtual_block_size,
+            )
 
-            # Positions with valid KV after this step, from the scheduler's
-            # own invariant (num_computed_tokens covers prefix-cache hits and
-            # is reset on preemption — no connector-side bookkeeping can be
-            # trusted across a preempt/resume cycle).
-            written = req.num_computed_tokens + num_tokens
-            if save_intent := self._consume_save_intent(req_id, written):
+            if save_intent := self._consume_full_block_saves(req_id):
                 potential_saves[req_id] = save_intent
 
         # Process cached (running) requests
@@ -717,17 +628,14 @@ class SchedulerAdapter:
                 ):
                     allocated.extend(new_group)
 
-            if self._ctx.read_enabled:
-                self._scheduled_tokens[req_id] += num_tokens
-            else:
-                prior_computed_tokens = cached_reqs.num_computed_tokens[idx]
-                self._scheduled_tokens[req_id] = max(
-                    self._scheduled_tokens.get(req_id, 0),
-                    prior_computed_tokens + num_tokens,
-                )
+            self._scheduled_tokens[req_id] = max(
+                0,
+                cached_reqs.num_computed_tokens[idx]
+                + num_tokens
+                - self._block_index_offsets[req_id] * self._ctx.virtual_block_size,
+            )
 
-            written = cached_reqs.num_computed_tokens[idx] + num_tokens
-            if save_intent := self._consume_save_intent(req_id, written):
+            if save_intent := self._consume_full_block_saves(req_id):
                 potential_saves[req_id] = save_intent
 
         save_intents = potential_saves
@@ -890,132 +798,12 @@ class SchedulerAdapter:
         """
         return bool(self._pinned_boundary_jobs)
 
-    def _consume_save_intent(
-        self,
-        req_id: str,
-        written: int,
-    ) -> SaveIntent | None:
-        """Calculate and return SaveIntent for new blocks that need saving.
-
-        `written` = positions with valid KV once this step's schedule runs
-        (scheduler-authoritative num_computed_tokens + this step's tokens).
-        Recurrent checkpoints arrive separately through per-step boundary
-        handoffs; full and window pages use the positional save path here.
-        """
-        regular = self._consume_full_block_saves(req_id)
-        tail = self._consume_tail_save(req_id, written)
-        if tail is None:
-            return regular
-        if regular is None:
-            return tail
-        return SaveIntent(
-            block_ids_by_group=tuple(
-                regular_ids + tail_ids
-                for regular_ids, tail_ids in zip(
-                    regular.block_ids_by_group,
-                    tail.block_ids_by_group,
-                    strict=True,
-                )
-            ),
-            block_hashes=regular.block_hashes + tail.block_hashes,
-        )
-
-    def _consume_tail_save(self, req_id: str, written: int) -> SaveIntent | None:
-        """P/D tail extension: save the prompt's partial tail block once its
-        prompt rows are final (the step scheduling the final prompt chunk).
-
-        The saved page may contain rows past the prompt (the first generated
-        token lands in it on the next step, racing the async D2H) — harmless:
-        the key covers only the tail *prompt* tokens, and the decode peer
-        recomputes every position past them anyway.
-        """
-        if not self._tail_save_enabled or req_id in self._tail_saved:
-            return None
-        req = self._requests.get(req_id)
-        if req is None:
-            return None
-        vbs = self._ctx.virtual_block_size
-        prompt_len = req.num_prompt_tokens
-        tail = self._derive_tail_block(req)
-        if tail is None:
-            return None
-        tail_key, tail_len = tail
-        if written < prompt_len:
-            return None  # tail prompt rows not written yet
-        tail_idx = prompt_len // vbs
-        allocated = self._allocated_blocks.get(req_id, [])
-        block_hashes = self._block_hashes.get(req_id) or ()
-        if (
-            not allocated
-            or any(tail_idx >= len(group) for group in allocated)
-            or tail_idx > len(block_hashes)
-        ):
-            return None  # tail block not allocated / full-block hashes lagging
-        self._tail_saved.add(req_id)
-        logger.info(
-            "[OrbitKVConnector] req=%s pd_tail_save: block_id=%d tail_tokens=%d key=%s",
-            req_id,
-            allocated[self._cache_groups.hash_group_index][tail_idx],
-            tail_len,
-            tail_key.hex(),
-        )
-        return SaveIntent(
-            block_ids_by_group=tuple((group[tail_idx],) for group in allocated),
-            block_hashes=(tail_key,),
-        )
-
-    def _derive_tail_block(self, request: "Request") -> tuple[bytes, int] | None:
-        if self._tail_hash_fn is None:
-            return None
-        # The tail key carries no extra_keys. Reusing it for salted, LoRA, or
-        # multimodal requests would alias distinct vLLM cache identities.
-        if request.lora_request is not None or request.cache_salt or request.mm_features:
-            return None
-        vbs = self._ctx.virtual_block_size
-        prompt_len = request.num_prompt_tokens
-        tail_len = prompt_len % vbs
-        # vLLM must recompute the final prompt token to produce logits. A
-        # one-token tail therefore cannot reduce local work; treating it as a
-        # hit would also lease one more hash than vLLM allocates load blocks.
-        if tail_len <= 1:
-            return None
-        tail_idx = prompt_len // vbs
-        block_hashes = self._request_block_hashes(request)
-        if tail_idx > len(block_hashes):
-            raise RuntimeError(
-                f"req {request.request_id} missing parent hash for tail block: "
-                f"tail_idx={tail_idx} full_hashes={len(block_hashes)}"
-            )
-        parent = block_hashes[tail_idx - 1] if tail_idx > 0 else self._kv_cache_utils.NONE_HASH
-        tail_tokens = list(request.prompt_token_ids[tail_idx * vbs : prompt_len])
-        tail_key = bytes(self._hash_block_tokens(self._tail_hash_fn, parent, tail_tokens, None))
-        return tail_key, tail_len
-
-    def _build_query(
-        self, request: "Request", computed_blocks: int
-    ) -> tuple[tuple[bytes, ...], int]:
-        query_hashes = self._request_block_hashes(request)[computed_blocks:]
-        if not self._tail_load_enabled:
-            return query_hashes, 0
-
-        tail = self._derive_tail_block(request)
-        if tail is None:
-            return query_hashes, 0
-        return query_hashes + (tail[0],), tail[1]
-
     def _rebase_resumed_request(self, req_id: str) -> None:
         """Restart connector-side bookkeeping when vLLM resumes a preempted request.
 
-        Preemption frees the request's blocks and resets vLLM's
-        `num_computed_tokens`; on resume the request goes back through the
-        waiting queue, so `get_num_new_matched_tokens` has already refreshed
-        `_external_matched_blocks` and the block table mirror was rebuilt from
-        the resume step. Everything derived from the first life is stale:
-        the scheduled-token accumulator would place blocks the new table does
-        not hold yet (and, worse, mark a partially recomputed block as
-        saveable), and the offset of the first locally computed block may
-        have moved. Blocks already stored keep their progress: hashes did
-        not change, so `_next_stored_block_idx` only ever advances.
+        Preemption resets the engine's computed extent and block table. Rebase
+        the cache offset from the fresh lookup before deriving saveable pages.
+        Hashes already stored keep their progress across the new allocation.
         """
         base_block_idx = self._external_matched_blocks.get(req_id, 0)
         self._block_index_offsets[req_id] = base_block_idx
@@ -1205,7 +993,6 @@ class SchedulerAdapter:
         self._next_stored_block_idx.pop(req_id, None)
         self._saved_boundaries.pop(req_id, None)
         self._pending_saves.discard(req_id)
-        self._tail_saved.discard(req_id)
 
     def _query_recovery(
         self, req_id: str, probe: _QueryProbe, limit: int

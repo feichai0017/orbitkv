@@ -15,55 +15,7 @@ def register() -> None:
 
     from .admission import admit_request, enqueue_request
     from .events import initialize_layer_counter
-    from .pd import register_sglang_tent_backend
 
-    try:
-        tent_registered = register_sglang_tent_backend()
-    except Exception as error:
-        # SGLang logs and ignores ordinary plugin exceptions. A selected payload
-        # engine must stop startup when its required factory is unavailable.
-        raise SystemExit(f"Cannot select OrbitKV TENT payload engine: {error}") from error
-
-    if tent_registered:
-        from .completion import (
-            capture_decode_pages,
-            capture_handoff_admission,
-            mark_decode_abort,
-            observe_decode_failure,
-            observe_decode_ready,
-            observe_deferred_release,
-        )
-
-        HookRegistry.register(
-            "sglang.srt.disaggregation.mooncake.conn.MooncakeKVReceiver.send_metadata",
-            capture_decode_pages,
-            HookType.AFTER,
-        )
-        HookRegistry.register(
-            "sglang.srt.disaggregation.decode.DecodeTransferQueue.add",
-            capture_handoff_admission,
-            HookType.AFTER,
-        )
-        HookRegistry.register(
-            "sglang.srt.disaggregation.decode.DecodeTransferQueue._commit_transfer_to_req",
-            observe_decode_ready,
-            HookType.AROUND,
-        )
-        HookRegistry.register(
-            "sglang.srt.disaggregation.mooncake.conn.MooncakeKVReceiver.abort",
-            mark_decode_abort,
-            HookType.AFTER,
-        )
-        HookRegistry.register(
-            "sglang.srt.disaggregation.mooncake.conn.MooncakeKVReceiver.failure_exception",
-            observe_decode_failure,
-            HookType.AROUND,
-        )
-        HookRegistry.register(
-            "sglang.srt.disaggregation.decode.DecodeTransferQueue._do_release",
-            observe_deferred_release,
-            HookType.AROUND,
-        )
     HookRegistry.register(
         "sglang.srt.managers.tp_worker.TpModelWorker.init_cuda_graphs",
         initialize_layer_counter,
@@ -89,8 +41,6 @@ def create_cache(ctx: Any) -> UnifiedRadixCache:
     from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
     from sglang.srt.runtime_context import get_disagg, get_memory
 
-    from .pd import validate_pd_cache_transport
-
     if ctx.disable_radix_cache:
         raise ValueError("OrbitKV direct GPU linker requires RadixCache")
     if ctx.enable_hierarchical_cache:
@@ -107,10 +57,6 @@ def create_cache(ctx: Any) -> UnifiedRadixCache:
             "select a backend with a complete recovery contract for that model"
         )
     disaggregation = get_disagg()
-    validate_pd_cache_transport(
-        disaggregation.disaggregation_mode,
-        disaggregation.disaggregation_transfer_backend,
-    )
     if not get_memory().enable_unified_cache_external_linker:
         raise ValueError(
             "OrbitKV direct GPU linker requires --enable-unified-cache-external-linker "

@@ -38,14 +38,14 @@ hybrid recovery E2Es continue to qualify ordinary selected-range reads.
 | --- | --- | --- | --- |
 | Connector helper math, scheduler state, worker load failure handling, GPU registration | Default unit | `uv run --group test pytest` | Python contract or local connector state-machine regression |
 | Clean source-only Python changes, docs touching test layout, CI test dependency changes | Source-only default | `uv run --isolated --no-project --with pytest --with numpy --with 'requests>=2.26.0' pytest` | Default test accidentally depends on torch, vLLM, CUDA, or native extension |
-| vLLM release upgrade, transfer results or MultiConnector delivery semantics | Released connector contract | `../.venv/vllm-release/bin/python -m pytest -m integration tests/integration/test_vllm_connector_contract.py` | Real ActiveKVConnector/MultiConnector consumers receive completion and failure together; ordinary cache cannot weaken reliable P/D delivery. Uses controlled transport completion, not GPU DMA. |
+| vLLM upgrade or MultiConnector delivery semantics | Native connector contract | `python -m pytest -m integration tests/integration/test_vllm_connector_contract.py` | Use the selected native P/D engine revision; ordinary cache must not weaken reliable P/D delivery. |
 | Server client, native extension, CUDA IPC registration, session lifecycle | Integration | `uv run --group test pytest -m integration` | Server/native/GPU lifecycle regression |
 | Distributed startup, placement, embedded catalog protocol and packaged Manager | Distributed process gate | `ETCD_BIN=/path/to/etcd pytest -m integration tests/integration/test_distributed_cache.py` | Starts two Managers and real etcd, checks remote Mooncake/GPU bytes and local recovery after coordinator loss; requires built native artifacts and CUDA. |
 | Peer transfer, source ownership, catalog recovery or either engine adapter | Shared-replica serving gate | `ETCD_BIN=/path/to/etcd ORBITKV_CACHE_MANAGER_BINARY=/path/to/manager pytest -m e2e tests/e2e/test_shared_cache.py -k vllm --model /path/to/qwen3-8b` | Repeat in SGLang's environment with `-k sglang`; checks remote bytes, output, catalog replay, source restart and reservation drain. Same-host TCP only. |
 | vLLM connector correctness, cache semantics, save/load/hit behavior, release candidate confidence | vLLM correctness E2E | `../.venv/vllm-release/bin/python -m pytest -m e2e tests/e2e/test_vllm_e2e_correctness.py --model /path/to/model` | Native prefix-cache control follows the same prompt plan; `long_warm` must load saved KV after vLLM restart. |
 | SGLang direct GPU linker, CUDA IPC layout, or plugin registration | SGLang direct E2E | `../.venv/sglang-release/bin/python -m pytest -m e2e tests/e2e/test_sglang_direct_e2e.py --model /path/to/model` | Restores after HBM flush and engine restart, with DRAM/forced-SSD byte counters. Output IDs and finite log probabilities match native HBM reuse; a changed identity matches cold computation. |
-| vLLM P/D callbacks, layouts, sender/waiter or request lifetime | vLLM P/D E2E | `../.venv/vllm-release/bin/python -m pytest -m e2e tests/e2e/test_vllm_pd_e2e.py --model /path/to/dense-model --basetemp /var/tmp/orbitkv-pd/run-001` | One GPU with capacity for two model copies; TP=1/PP=1, eager, forced TCP. Compares native and P/D output tokens across three prompt lengths including chunked prefill, requires positive payload bytes and completed/drained sender/waiter counters. Does not qualify cross-GPU/RDMA or cache composition. |
-| SGLang P/D adapter, TENT registration, transfer completion or P/D-cache composition | SGLang P/D E2E | `../.venv/sglang-release/bin/python -m pytest -m e2e tests/e2e/test_sglang_pd_e2e.py --model /path/to/model` | Requires a built Manager, two visible GPUs and `sglang-router==0.3.2` in the SGLang environment. Runs prefill, decode and router over forced TCP, restarts them, proves decode-produced state is reused by a later prefill, checks Manager GPU-load bytes, and compares output with a monolithic control. Repeat on two hosts with RDMA counters separately. |
+| Native P/D, cache composition or request lifetime | vLLM native P/D model gate | `python -m pytest -m e2e tests/e2e/test_vllm_native_pd_e2e.py --model /path/to/dense-model --basetemp /var/tmp/orbitkv-pd/run-001` | Official vLLM/NIXL and upstream router from `docs/pd.md`; standalone P/D, both cache orders, restart, real pressure preemption and strict output. TP=1/PP=1 eager NIXL/UCX. |
+| SGLang native P/D or cache composition | SGLang P/D model gate | `python -m pytest -m e2e tests/e2e/test_sglang_pd_e2e.py --model /path/to/model --basetemp /var/tmp/orbitkv-pd/sglang-001` | Official engine, built Manager and `sglang-router==0.3.2`; one GPU for two model copies or two GPUs. Native retraction, restart/cache bytes and strict monolithic output; delayed ACK/partial-write faults need separate release gates. |
 | Warm-hit pressure, pending lease release, scheduler/cache concurrency | Stress | `uv run --group test pytest -m stress tests/stress/test_vllm_warm_hit_stress.py --model /data/models/Qwen3-4B --max-model-len 2048` | Real vLLM cache pressure regression |
 | Wheel, loader path, installed console script, target CUDA runtime, published package | Release smoke | See Release Smoke | Packaging, loader, final artifact, or runtime contract regression |
 
@@ -172,7 +172,7 @@ replay, or `NONE` / `PIECEWISE` for the other consumption boundaries. The option
 applies identically to the native and OrbitKV engines; omitting it retains vLLM's
 default graph selection. Add `--vllm-multi-connector` to exercise cache recovery
 as the second child of the pinned engine's `MultiConnector`; this checks child
-metadata mapping and the recurrent pre-copy boundary independently of the
+metadata mapping and ordinary cache recovery independently of the
 separate two-worker P/D payload gate.
 
 Add `--vllm-cache-tier ssd` to enable an 8 GiB SSD cache, wait for writes to
@@ -193,8 +193,8 @@ process restarts while the Cache Manager remains alive. A separate namespace
 provides a true cold inference control for the restarted process.
 
 SGLang P/D payload-engine or cache-composition changes additionally require
-`tests/e2e/test_sglang_pd_e2e.py`. It needs a built Cache Manager and two
-visible GPUs. The gate starts prefill, decode and router, publishes state,
+`tests/e2e/test_sglang_pd_e2e.py`. Use the official engine in `docs/pd.md`, a built
+Cache Manager and one GPU with room for two model copies (or two GPUs). The gate starts prefill, decode and router, publishes state,
 restarts the P/D workers, and requires a continuation to recover beyond the
 original prefill-only page boundary. It then compares both generations with a
 monolithic control. The local gate forces TCP; cross-host RDMA/GPUDirect claims
@@ -294,21 +294,20 @@ exact-recovery result. Use `--storage-codec none` for the exact regression gate.
 See [format qualification](../../docs/storage-formats.md) for commands, the
 storage-quantization scope and the distinction from native GDS qualification.
 
-## Experimental native P/D factories
+## Official native P/D candidates
 
-Use the exact patched engine revisions from [P/D setup](../../docs/pd.md#native-pd-with-an-explicit-tent-backend).
-Official vLLM/SGLang dependency pins do not include the factories. These tests
-are explicit GPU gates and are deselected by the source-only default suite.
+Use the release environments and native transport dependencies in [P/D setup](../../docs/pd.md).
+GPU gates are explicitly marked and deselected by the source-only suite.
 
-- `test_vllm_native_pd_e2e.py`: native MooncakeConnector, OrbitKV TENT payload
-  factory and upstream `vllm-router==0.1.15`; three prompt lengths, strict
-  monolithic output comparison and actual transfer counters. One GPU, two TP=1
-  processes, eager TCP. No custom OrbitKV P/D connector/proxy is imported.
-- `test_sglang_pd_e2e.py`: native SGLang lifecycle, explicit TENT registration,
-  shared 512MB Manager, strict output and restart reuse past a decode-produced
-  page boundary. Uses separate GPUs when available, otherwise two TP=1 workers
-  share one GPU. Records the actual topology.
+- `test_vllm_native_pd_e2e.py`: NIXL and upstream router; standalone transfer,
+  cache orders, restart, observed pressure preemption and strict model output.
+- `test_sglang_pd_e2e.py`: native backend and external cache; observed retraction,
+  restarted recovery of D-produced state and strict monolithic control.
+- `test_vllm_connector_contract.py`: real released MultiConnector consumption of
+  best-effort cache versus reliable native P/D delivery.
 
-Keep `--basetemp` and all result/log archives outside the checkout. Successful
-model output does not qualify cancellation, remote drain, RDMA, rank changes,
-heterogeneous GPUs or vLLM native P/D plus external-cache composition.
+Partial writes, cancellation during DMA, delayed ACKs and page reuse require
+independent native lifetime evidence before opening support. Retired fork-only
+fault gates and results remain at immutable commit `9aee895e` and its external
+handoff. Do not count those as official-release passes. Preserve failures,
+controls, wheel/engine hashes and raw runs outside the checkout.

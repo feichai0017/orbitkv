@@ -1,9 +1,10 @@
 # Distributed KV cache
 
-Every Manager keeps a complete local global index of advertised block locations.
-etcd replicates locations and membership; background publication and snapshot/Watch
-maintain the local views. Mooncake TENT carries KV bytes. Source grants and release
-remain OrbitKV gRPC. See the [protocol](distributed-cache.md).
+Every Manager keeps a local global index of advertised block locations. etcd owns
+only the protocol identity, persistent node epochs and leased membership;
+Managers exchange bounded inventory snapshots/deltas directly on the existing
+peer listener. Mooncake TENT carries KV bytes. Source grants and release remain
+OrbitKV gRPC. See the [protocol](distributed-cache.md).
 
 ## Leased Manager membership
 
@@ -37,6 +38,9 @@ transport including TCP. For a same-host TCP test set `MC_FORCE_TCP=1`; OrbitKV
 then disables TENT RDMA/NVLink/MNNVL for that engine creation and temporarily
 suppresses `MC_TENT_CONF` so a general config cannot invalidate the forced-TCP
 control.
+When a proxy or test fault gate owns the advertised address, keep `--addr` as the
+actual listener and set `--peer-advertise-addr` to the concrete address peers can
+reach. It is an endpoint mapping, not a forwarding metadata service.
 
 There is no separate MetaServer process or `--metaserver-addr` flag. Upgrade all
 Managers together for this breaking protocol change. Engine processes retain the
@@ -51,8 +55,9 @@ sequenceDiagram
     participant E as etcd quorum
     participant B as Requester Manager
     A->>A: Seal DRAM or commit SSD; update inventory
-    A-->>E: Background fenced publication
-    E-->>B: Fixed-revision snapshot / Watch
+    A-->>E: Leased membership only
+    E-->>B: Member identity / endpoint
+    A-->>B: Bounded inventory snapshot / delta
     B->>B: Local global-index lookup and route planning
     B->>A: Authorize exact incarnation and residency sequences
     A->>A: Pin sources and reserve bytes
@@ -60,7 +65,7 @@ sequenceDiagram
     B->>A: Mooncake TENT READ
     B->>A: Release after native completion
     B->>B: Restore to engine HBM
-    B-->>E: Publish new local residency
+    B-->>A: Bounded inventory snapshot / delta
 ```
 
 State identity must match model artifacts, computation, rank topology and storage
@@ -102,14 +107,15 @@ batched metadata and engine-side execution work that remains planned.
 ## Failure and configuration behavior
 
 - Registration requires an absent live Node ID, advances its persistent epoch,
-  and binds the endpoint/runtime UUID to an etcd lease. Lease renewal, publication
-  and Watch are independent tasks.
-- Every Manager builds a complete snapshot at revision R and Watches from R + 1.
-  Incomplete or over-budget indexes disable remote discovery rather than silently
-  dropping metadata. Compaction or malformed metadata triggers a rebuild.
-- Publisher cursors fence retries and delete/recreate operations. Journal overflow
-  withdraws that owner's readiness, reconciles its entire inventory and replays
-  concurrent changes before making it discoverable again.
+  and binds the endpoint/runtime UUID and stream protocol to an etcd lease.
+  Lease renewal and the membership Watch are independent of inventory sessions.
+- Every requester installs one complete view per remote owner. A snapshot stays
+  hidden until its ordered pages, contiguous replay, page count and transcript
+  commit validate. Journal overflow resets only that owner view and restarts a
+  bounded snapshot; it never exposes partial coverage.
+- A disconnected stream retains its last installed positive hints as
+  `partial_hints`. The source still validates every generation. Missing evidence
+  does not prove absence until every expected owner view is complete.
 - Source UUID and generation checks prevent stale rows from authorizing reused
   addresses. Both DRAM and SSD can be advertised for one StateKey.
 - Losing a Manager does not remove another Manager's index. A sole lost payload
@@ -129,26 +135,29 @@ batched metadata and engine-side execution work that remains planned.
 ## Catalog availability and etcd
 
 There are two local structures: the **owner inventory** records real storage,
-and the **global index** records advertised locations from all owners. etcd
-replicates the latter's source metadata. There are no assigned directory hosts,
-shards, migration protocol, TTL hint cache or request-time directory fallback.
+and the **global index** records installed owner views. Direct Manager streams
+feed the latter; etcd never stores block locations or stream watermarks. There
+are no assigned directory hosts, shards, TTL hint cache or request-time directory
+fallback.
 
-The versioned prefix is `/orbitkv/v2/<cluster>/`. Upgrade all Managers together;
-there is no v1 synchronization path. Old metadata under v1 is not read or changed
-by new Managers. See [identity and publication](distributed-cache.md#identity-and-publication).
+The versioned prefix remains `/orbitkv/v2/<cluster>/` so old and new Managers
+cannot form disjoint populations. Its format record is now
+`orbitkv/inventory-stream/v3` plus a persistent cluster UUID. Upgrade all Managers
+together using `scripts/migrate-metadata-format.py`; mixed formats are rejected.
 
 ## Limits and observability
 
-`--inventory-journal-bytes` defaults to 16 MiB per owner; overflow triggers
-reconciliation. `--index-budget` defaults to 256 MiB of logical accounting for
-this Manager's complete global index. No measured cluster-scale capacity SLO is
-established; full replication pays update CPU and index memory on every Manager.
+`--inventory-journal-bytes` defaults to 16 MiB per owner; overflow triggers an
+owner snapshot. `--index-budget` defaults to 256 MiB and charges active plus
+staging metadata. `--inventory-stream-coalesce-ms` selects a 0–5 ms quiet window;
+the default remains 0 and 2 ms is an explicit throughput/freshness tradeoff.
 
-`POST /cache/sync` returns `published_revision`. Wait for an available requester
-index with `GET /cache/metadata` at or above that revision when a test requires
-an explicit remote-visibility barrier. Ordinary query paths do not wait on etcd.
-Metadata status includes publisher readiness and inventory/publication progress;
-`/metrics` retains payload, source admission and completion measurements.
+`POST /cache/sync` returns a source `inventory_fence`. A controlled requester
+passes that fence, its scope digest and a bounded timeout to
+`POST /cache/metadata/await`. Ordinary query paths do not call either endpoint.
+Metadata status exposes coverage, owner-view counts, stream frames/bytes and
+bounded queue/session diagnostics; `/metrics` retains payload, source admission
+and completion measurements.
 
 ## Validation
 
@@ -164,21 +173,26 @@ shared Mooncake libraries. The etcd gate starts isolated temporary processes:
 
 ```bash
 ETCD_BIN=/path/to/etcd cargo test --release \
-  --no-default-features --features cuda-13,mooncake \
+  --no-default-features --features cuda-13,mooncake,test-hooks \
   --lib cluster::tests::etcd -- --ignored
 
+ETCD_BIN=/path/to/etcd ORBITKV_METADATA_ARTIFACT_DIR=/external/run \
+  cargo test --release -p orbitkv-server \
+  --no-default-features --features cuda-13,mooncake,test-hooks \
+  cluster::inventory::tests -- --ignored --nocapture --test-threads=1
+
 ETCD_BIN=/path/to/etcd MC_FORCE_TCP=1 cargo test --release -p orbitkv-server \
-  --no-default-features --features cuda-13,mooncake \
+  --no-default-features --features cuda-13,mooncake,test-hooks \
   --lib cluster::tests::p2p_mooncake -- --ignored
 ```
 
-The etcd gate covers duplicate identities, incarnation restart, compaction,
-leader loss and quorum-loss fencing. Run `--lib cluster::publish::tests -- --ignored`
-for lost replies, delayed retry fencing and independent medium propagation.
-The GPU gate exercises real publication/Watch, source authorization and Mooncake
-READ across 260 blocks, plus encoded payloads. Set `ORBITKV_NVCOMP_LIBRARY` for the
-ANS case. These gates run on one host; physical host loss and RDMA need their own
-qualification.
+The etcd gate covers protocol/registration identity, incarnation restart,
+compaction, leader loss and quorum-loss fencing. The ignored inventory-stream
+gates cover atomic snapshots/deltas, journal-overflow repair, all-to-all capacity,
+zero block keys and installed fence semantics. The GPU gate exercises source
+authorization and Mooncake READ across 260 blocks plus encoded payloads. Set
+`ORBITKV_NVCOMP_LIBRARY` for the ANS case. These gates run on one host; physical
+host loss and RDMA need their own qualification.
 
 The Python process gate starts real etcd plus two Manager binaries, uses the
 shared engine-facing client to restore GPU bytes remotely, then verifies local

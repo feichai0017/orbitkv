@@ -10,6 +10,7 @@ Usage:
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 
@@ -125,7 +126,9 @@ def main():
     print(f"\nCommand: {' '.join(cmd)}\n")
 
     try:
-        subprocess.run(cmd, check=True)
+        env = os.environ.copy()
+        env.setdefault("VLLM_USE_V2_MODEL_RUNNER", "0")
+        subprocess.run(cmd, check=True, env=env)
     except KeyboardInterrupt:
         print("\nShutting down server...")
         sys.exit(0)

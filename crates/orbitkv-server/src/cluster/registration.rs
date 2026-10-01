@@ -1,6 +1,7 @@
 use etcd_client::{Client, Compare, CompareOp, PutOptions, Txn, TxnOp};
 use orbitkv_state::CacheOwner;
 
+use super::format::ClusterFormat;
 use super::{BootstrapError, Member, cluster_id, rpc};
 
 pub(super) async fn register(
@@ -10,9 +11,11 @@ pub(super) async fn register(
     owner: &CacheOwner,
     lease: i64,
     expected_cluster: u64,
+    format: &ClusterFormat,
 ) -> Result<Member, BootstrapError> {
     let key = format!("{prefix}members/{node}");
     let epoch_key = format!("{prefix}epochs/{node}");
+    let format_key = format!("{prefix}format");
     for _ in 0..8 {
         let response = rpc(client.get(epoch_key.clone(), None)).await?;
         if cluster_id(response.header()).map_err(BootstrapError::Rejected)? != expected_cluster {
@@ -37,12 +40,15 @@ pub(super) async fn register(
             node_id: node.into(),
             epoch,
             owner: owner.clone(),
+            protocol: orbitkv_state::INVENTORY_STREAM_PROTOCOL.into(),
             lease,
         };
         let bytes = serde_json::to_vec(&member)
             .map_err(|error| BootstrapError::Rejected(error.to_string()))?;
         let transaction = Txn::new()
             .when([
+                Compare::mod_revision(format_key.clone(), CompareOp::Equal, format.revision),
+                Compare::value(format_key.clone(), CompareOp::Equal, format.encoded.clone()),
                 Compare::version(key.clone(), CompareOp::Equal, 0),
                 Compare::mod_revision(epoch_key.clone(), CompareOp::Equal, revision),
             ])

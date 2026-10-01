@@ -27,8 +27,12 @@ retain Manager workers and CUDA IPC tensor bindings.
   readiness stream; both adapters use the whole-operation completion gate.
 - Prometheus metrics and optional request timelines.
 - Experimental peer cache sharing through Mooncake TENT.
-- Experimental vLLM and SGLang P/D payload transfer through the same Rust TENT
-  runtime; SGLang retains its native handoff control plane.
+- Native P/D composition candidates use official vLLM NIXL/MultiConnector and
+  SGLang disaggregation, with independent cache adapters. See [P/D qualification](../docs/pd.md).
+
+The official vLLM cache profile requires `VLLM_USE_V2_MODEL_RUNNER=0`
+and one attention cache group. Set this environment variable before starting
+vLLM; unsupported V2/recurrent profiles fail at startup.
 
 Pinned engine releases: **vLLM 0.30.0** and **SGLang 0.5.20**. See the
 [upgrade qualification scope](../docs/completion-plan.md#s51--release-and-interface-audit).

@@ -1,7 +1,7 @@
-"""Explicit full-Manager metadata coalescing experiment; see distributed-cache.md.
+"""Full-Manager inventory-stream churn and visibility experiment.
 
-Run with the frozen package and test support on PYTHONPATH. No native build is
-performed. Failed runs and raw measurements remain in the required external output.
+Run with a frozen package and test support on PYTHONPATH. The workload performs
+no build and writes every result to the required external output directory.
 """
 
 from __future__ import annotations
@@ -21,24 +21,18 @@ from pathlib import Path
 import requests
 
 from tests.integration.test_distributed_cache import (
+    _await_fence,
     _cleanup_dram,
-    _expected_records,
-    _group_hash,
-    _member_owner,
     _metadata,
     _payload,
     _prefix_end,
     _query_ready,
     _restore,
-    _source_records,
     _sync,
     _until,
-    _wait_for_revision,
-    _wait_source_records,
 )
 from tests.support.cache_manager import CacheManagerProcess, find_available_port
 from tests.support.cluster import etcd_server
-from tests.support.metrics import fetch_orbitkv_metrics
 
 from .artifacts import external_path
 
@@ -47,7 +41,7 @@ def _process_sample(pids):
     result = {"cpu_ticks": 0, "rss_kib": 0, "hwm_kib": 0, "processes": 0}
     for pid in pids:
         try:
-            stat = (Path(f"/proc/{pid}/stat")).read_text().rsplit(") ", 1)[1].split()
+            stat = Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()
             status = Path(f"/proc/{pid}/status").read_text().splitlines()
         except (FileNotFoundError, IndexError):
             continue
@@ -126,6 +120,31 @@ def _etcd_revision(endpoint: str, prefix: str) -> int:
     return int(response.json()["header"]["revision"])
 
 
+def _etcd_keys(endpoint: str, prefix: str):
+    key = prefix.encode()
+    response = requests.post(
+        f"{endpoint}/v3/kv/range",
+        json={
+            "key": base64.b64encode(key).decode(),
+            "range_end": base64.b64encode(_prefix_end(key)).decode(),
+            "keys_only": True,
+        },
+        timeout=5,
+    )
+    response.raise_for_status()
+    return [base64.b64decode(row["key"]).decode() for row in response.json().get("kvs", [])]
+
+
+def _owner_status(manager, incarnation):
+    response = requests.get(
+        f"http://127.0.0.1:{manager.http_port}/cache/metadata/owners",
+        params={"limit": 128},
+        timeout=5,
+    )
+    response.raise_for_status()
+    return next((row for row in response.json() if row["owner"] == incarnation), None)
+
+
 def run(tmp_path: Path, profile: str):
     import torch
 
@@ -152,12 +171,11 @@ def run(tmp_path: Path, profile: str):
     os.environ["MC_FORCE_TCP"] = "1"
     pages, block_bytes, cycles, low_traffic_samples = 8, 4096, 200, 10
     payload_bytes = pages * block_bytes
-    cluster = f"s27-{profile}-{uuid.uuid4().hex[:12]}"
-    namespace = f"s2.7:{profile}:{uuid.uuid4().hex}"
-    hashes = [hashlib.sha256(f"s2.7:{block}".encode()).digest() for block in range(pages)]
+    cluster = f"s28-{profile}-{uuid.uuid4().hex[:12]}"
+    namespace = f"s2.8:{profile}:{uuid.uuid4().hex}"
+    hashes = [hashlib.sha256(f"s2.8:{block}".encode()).digest() for block in range(pages)]
     hash_batch = BlockHashes(hashes)
-    expected_records = _expected_records(hashes, "dram")
-    payload = _payload(torch, pages, block_bytes, 27)
+    payload = _payload(torch, pages, block_bytes, 28)
     result = {
         "inference_latency": None,
         "inference_scope": "client metadata experiment; no model-serving workload",
@@ -176,29 +194,27 @@ def run(tmp_path: Path, profile: str):
         managers = []
         for node in ("source", "observer"):
             port = find_available_port()
-            http_port = find_available_port()
-            manager_args = [
-                "--etcd-endpoints",
-                endpoint,
-                "--node-id",
-                node,
-                "--cluster-name",
-                cluster,
-                "--membership-ttl-secs",
-                "120",
-                "--inventory-journal-bytes",
-                str(16 * 1024 * 1024),
-                "--enable-prometheus",
-            ]
-            if profile != "legacy":
-                manager_args.extend(["--inventory-publish-coalesce-ms", profile])
             manager = CacheManagerProcess(
                 port,
                 pool_size="64mb",
-                http_port=http_port,
-                bootstrap_socket=f"/tmp/orbitkv-s27-{port}.sock",
+                http_port=find_available_port(),
+                bootstrap_socket=f"/tmp/orbitkv-s28-{port}.sock",
                 log_path=tmp_path / f"{node}-manager.log",
-                extra_args=tuple(manager_args),
+                extra_args=(
+                    "--etcd-endpoints",
+                    endpoint,
+                    "--node-id",
+                    node,
+                    "--cluster-name",
+                    cluster,
+                    "--membership-ttl-secs",
+                    "120",
+                    "--inventory-journal-bytes",
+                    str(16 * 1024 * 1024),
+                    "--enable-prometheus",
+                    "--inventory-stream-coalesce-ms",
+                    profile,
+                ),
             )
             stack.callback(manager.stop)
             assert manager.start(), manager.read_logs()
@@ -206,82 +222,58 @@ def run(tmp_path: Path, profile: str):
 
         source_manager, observer_manager = managers
         source_client = CacheManagerClient(source_manager.bootstrap_socket)
-        stack.callback(source_client.close)
-        tensor = torch.empty(payload_bytes, dtype=torch.uint8, device="cuda")
         observer_client = CacheManagerClient(observer_manager.bootstrap_socket)
+        stack.callback(source_client.close)
         stack.callback(observer_client.close)
+        tensor = torch.empty(payload_bytes, dtype=torch.uint8, device="cuda")
         observer_tensor = torch.empty_like(tensor)
         tensor.copy_(payload)
         torch.cuda.synchronize()
         device = resolve_device_id()
-        source_client.start_session_watcher("source", namespace, 1, 1)
-        ok, message = source_client.register_context_batch(
-            "source",
-            namespace,
-            0,
-            0,
-            1,
-            1,
-            device,
-            ["kv:0"],
-            [serialize_gpu_buffer(tensor)],
-            [pages],
-            [block_bytes],
-            [0],
-            [1],
-            "direct",
-            False,
-            tensors=[tensor],
-        )
-        assert ok, message
-        observer_client.start_session_watcher("observer", namespace, 1, 1)
-        ok, message = observer_client.register_context_batch(
-            "observer",
-            namespace,
-            0,
-            0,
-            1,
-            1,
-            device,
-            ["kv:0"],
-            [serialize_gpu_buffer(observer_tensor)],
-            [pages],
-            [block_bytes],
-            [0],
-            [1],
-            "direct",
-            False,
-            tensors=[observer_tensor],
-        )
-        assert ok, message
+        for client, manager, instance, target in (
+            (source_client, source_manager, "source", tensor),
+            (observer_client, observer_manager, "observer", observer_tensor),
+        ):
+            client.start_session_watcher(instance, namespace, 1, 1)
+            ok, message = client.register_context_batch(
+                instance,
+                namespace,
+                0,
+                0,
+                1,
+                1,
+                device,
+                ["kv:0"],
+                [serialize_gpu_buffer(target)],
+                [pages],
+                [block_bytes],
+                [0],
+                [1],
+                "direct",
+                False,
+                tensors=[target],
+            )
+            assert ok, (manager.read_logs(), message)
 
         def unregister_on_exit():
-            for client, instance in [(observer_client, "observer"), (source_client, "source")]:
+            for client, instance in ((observer_client, "observer"), (source_client, "source")):
                 with contextlib.suppress(Exception):
                     client.unregister_context(instance)
 
         stack.callback(unregister_on_exit)
         _until(
-            lambda: (
-                _metadata(source_manager)["index"]["available"]
-                and _metadata(observer_manager)["index"]["available"]
-            ),
+            lambda: all(_metadata(manager)["index"]["registration_valid"] for manager in managers),
             managers,
         )
-
         ok, message = source_client.save(
             "source", 0, 0, device, [("kv:0", list(range(pages)), hashes)]
         )
         assert ok, message
-        initial_revision = _sync(source_manager)
-        _wait_for_revision(observer_manager, initial_revision, managers)
-        owner = _until(lambda: _member_owner(endpoint, cluster, "source"), managers)
-        incarnation = owner["incarnation"]
-        _wait_source_records(endpoint, cluster, incarnation, expected_records, managers)
+        initial_fence = _sync(source_manager)
+        _await_fence(observer_manager, initial_fence, managers)
 
         source_before = _metadata(source_manager)
-        watch_metric = "orbitkv_metadata_watch_key_value_bytes_bytes_total"
-        watch_before = [fetch_orbitkv_metrics(m.http_port).get(watch_metric) for m in managers]
+        observer_before = _metadata(observer_manager)
         etcd_before = _etcd_metrics(endpoint)
         revision_before = _etcd_revision(endpoint, f"/orbitkv/v2/{cluster}/")
         manager_before = _process_sample(manager.process.pid for manager in managers)
@@ -289,10 +281,10 @@ def run(tmp_path: Path, profile: str):
         (tmp_path / "launch.json").write_text(
             json.dumps(
                 {
-                    "commands": [m.command for m in managers],
-                    "pids": [m.process.pid for m in managers],
+                    "commands": [manager.command for manager in managers],
+                    "pids": [manager.process.pid for manager in managers],
                     "etcd_pid": _etcd_pid(endpoint),
-                    "source_owner": owner,
+                    "source_incarnation": initial_fence["source_incarnation"],
                     "profile": profile,
                 },
                 indent=2,
@@ -305,20 +297,17 @@ def run(tmp_path: Path, profile: str):
         workload_started = time.monotonic()
         for cycle in range(cycles):
             started = time.monotonic()
-            cleaned = _cleanup_dram(source_manager)
+            assert _cleanup_dram(source_manager)["evicted_blocks"] == pages
             cleanup_ms.append((time.monotonic() - started) * 1000)
-            assert cleaned["evicted_blocks"] == pages
-
             started = time.monotonic()
             ok, message = source_client.save(
                 "source", 0, 0, device, [("kv:0", list(range(pages)), hashes)]
             )
             save_ms.append((time.monotonic() - started) * 1000)
             assert ok, message
-
             started = time.monotonic()
             query_calls = 1
-            ready = source_client.query_prefetch("source", hash_batch, f"s2.7-burst-{cycle}")
+            ready = source_client.query_prefetch("source", hash_batch, f"s2.8-burst-{cycle}")
             immediate_local_hits.append(
                 ready.num_hit_blocks if isinstance(ready, QueryReady) else 0
             )
@@ -329,7 +318,7 @@ def run(tmp_path: Path, profile: str):
                 assert time.monotonic() < deadline, (cycle, ready)
                 time.sleep(0.0005)
                 query_calls += 1
-                ready = source_client.query_prefetch("source", hash_batch, f"s2.7-burst-{cycle}")
+                ready = source_client.query_prefetch("source", hash_batch, f"s2.8-burst-{cycle}")
             query_ms.append((time.monotonic() - started) * 1000)
             source_client.release(ready.lease)
             raw.write(
@@ -348,22 +337,28 @@ def run(tmp_path: Path, profile: str):
                 + "\n"
             )
 
-        burst_revision = _sync(source_manager)
+        burst_fence = _sync(source_manager)
         burst_sync_ms = (time.monotonic() - workload_started) * 1000
-        watch_started = time.monotonic()
-        _wait_for_revision(observer_manager, burst_revision, managers)
-        burst_watch_ms = (time.monotonic() - watch_started) * 1000
-        _wait_source_records(endpoint, cluster, incarnation, expected_records, managers)
+        visibility_started = time.monotonic()
+        _await_fence(observer_manager, burst_fence, managers)
+        burst_visibility_ms = (time.monotonic() - visibility_started) * 1000
 
         low_visibility_ms = []
         immediate_remote_hits = []
         for sample in range(low_traffic_samples):
             _cleanup_dram(observer_manager)
-            cleaned = _cleanup_dram(source_manager)
-            assert cleaned["evicted_blocks"] == pages
-            delete_revision = _sync(source_manager)
-            _wait_for_revision(observer_manager, delete_revision, managers)
-            assert not _source_records(endpoint, cluster, incarnation)
+            assert _cleanup_dram(source_manager)["evicted_blocks"] == pages
+            delete_fence = _sync(source_manager)
+            _await_fence(observer_manager, delete_fence, managers)
+            missing = _query_ready(
+                observer_client,
+                "observer",
+                hashes,
+                f"deleted-{sample}",
+                0,
+                managers,
+            )
+            assert not missing.lease
             target_sequence = _metadata(source_manager)["inventory_sequence"] + pages
 
             started = time.monotonic()
@@ -384,40 +379,22 @@ def run(tmp_path: Path, profile: str):
             immediate_remote_hits.append(immediate.num_hit_blocks)
             if immediate.lease:
                 observer_client.release(immediate.lease)
-            deadline = time.monotonic() + 5
             while True:
-                progress = _metadata(source_manager)["published"]
-                observed = _metadata(observer_manager)["index"]
-                if (
-                    progress["ready"]
-                    and progress["sequence"] >= target_sequence
-                    and observed["available"]
-                    and observed["revision"] >= progress["revision"]
-                ):
+                status = _owner_status(observer_manager, initial_fence["source_incarnation"])
+                if status and status["fresh"] and status["applied_sequence"] >= target_sequence:
                     break
-                assert time.monotonic() < deadline, (progress, observed)
+                assert time.monotonic() < deadline, [manager.read_logs() for manager in managers]
                 time.sleep(0.0005)
             low_visibility_ms.append((time.monotonic() - started) * 1000)
             ready = _query_ready(
-                source_client,
-                "source",
+                observer_client,
+                "observer",
                 hashes,
-                f"s2.7-low-{sample}",
+                f"visible-{sample}",
                 pages,
                 managers,
             )
-            source_client.release(ready.lease)
-            records = _wait_source_records(
-                endpoint, cluster, incarnation, expected_records, managers
-            )
-            assert {record["sequence"] for record in records.values()} == set(
-                range(target_sequence - pages + 1, target_sequence + 1)
-            )
-            for block, block_hash in enumerate(hashes):
-                assert (
-                    records[(_group_hash(block_hash), "dram")]["sequence"]
-                    == target_sequence - pages + block + 1
-                )
+            observer_client.release(ready.lease)
             _restore(
                 observer_client,
                 "observer",
@@ -434,12 +411,6 @@ def run(tmp_path: Path, profile: str):
                         "sample": sample,
                         "visibility_ms": low_visibility_ms[-1],
                         "target_sequence": target_sequence,
-                        "key_generations": {
-                            identity[0].hex(): record["sequence"]
-                            for identity, record in records.items()
-                        },
-                        "source_published": progress,
-                        "observer_index": observed,
                         "immediate_remote_hits": immediate_remote_hits[-1],
                     }
                 )
@@ -447,20 +418,17 @@ def run(tmp_path: Path, profile: str):
             )
             time.sleep(0.02)
 
-        final_revision = _sync(source_manager)
-        _wait_for_revision(observer_manager, final_revision, managers)
-        final_records = _wait_source_records(
-            endpoint, cluster, incarnation, expected_records, managers
-        )
-        assert _member_owner(endpoint, cluster, "source") == owner
-        assert all(record["stored_bytes"] == block_bytes for record in final_records.values())
+        final_fence = _sync(source_manager)
+        _await_fence(observer_manager, final_fence, managers)
         source_after = _metadata(source_manager)
-        watch_after = [fetch_orbitkv_metrics(m.http_port).get(watch_metric) for m in managers]
         observer_after = _metadata(observer_manager)
+        assert observer_after["index"]["coverage"] == "complete_at_watermarks"
         etcd_after = _etcd_metrics(endpoint)
         revision_after = _etcd_revision(endpoint, f"/orbitkv/v2/{cluster}/")
         manager_after = _process_sample(manager.process.pid for manager in managers)
         etcd_process_after = _process_sample([_etcd_pid(endpoint)])
+        keys = _etcd_keys(endpoint, f"/orbitkv/v2/{cluster}/")
+        assert not any("/blocks/" in key or "/publishers/" in key for key in keys)
         elapsed = time.monotonic() - workload_started
 
         counters = {}
@@ -468,25 +436,22 @@ def run(tmp_path: Path, profile: str):
             "inventory_delta_input_records",
             "inventory_delta_input_bytes",
             "inventory_delta_output_records",
-            "inventory_delta_transactions",
+            "inventory_delta_frames",
             "inventory_delta_encoded_bytes",
             "inventory_coalescing_windows",
             "inventory_coalescing_wait_micros",
         ):
-            before = source_before.get(name)
-            after = source_after.get(name)
-            counters[name] = None if before is None or after is None else after - before
-
+            counters[name] = source_after[name] - source_before[name]
         result.update(
             {
                 "cluster": cluster,
-                "source_incarnation": incarnation,
+                "source_incarnation": final_fence["source_incarnation"],
                 "manager_commands": [manager.command for manager in managers],
                 "manager_pids": [manager.process.pid for manager in managers],
                 "etcd_pid": _etcd_pid(endpoint),
                 "workload_seconds": elapsed,
                 "burst_sync_ms": burst_sync_ms,
-                "burst_watch_ms": burst_watch_ms,
+                "burst_visibility_ms": burst_visibility_ms,
                 "save_ms": _summary(save_ms),
                 "local_query_ms": _summary(query_ms),
                 "cleanup_ms": _summary(cleanup_ms),
@@ -496,14 +461,15 @@ def run(tmp_path: Path, profile: str):
                 "immediate_remote_hit_rate": sum(immediate_remote_hits)
                 / (pages * low_traffic_samples),
                 "after_visibility_remote_hit_rate": 1.0,
-                "final_records": len(final_records),
-                "final_revision": final_revision,
-                "observer_revision": observer_after["index"]["revision"],
+                "final_records": pages,
+                "final_fence": final_fence,
+                "observer_coverage": observer_after["index"]["coverage"],
                 "publisher_counters": counters,
-                "watch_key_value_bytes": [
-                    None if before is None else after - before
-                    for before, after in zip(watch_before, watch_after, strict=True)
-                ],
+                "stream_encoded_bytes_sent": source_after["stream"]["encoded_bytes_sent"]
+                - source_before["stream"]["encoded_bytes_sent"],
+                "stream_encoded_bytes_received": observer_after["stream"]["encoded_bytes_received"]
+                - observer_before["stream"]["encoded_bytes_received"],
+                "etcd_keys": keys,
                 "etcd_metrics_delta": {
                     name: etcd_after[name] - etcd_before[name] for name in etcd_before
                 },
@@ -516,41 +482,38 @@ def run(tmp_path: Path, profile: str):
                 "etcd_revision_delta": revision_after - revision_before,
             }
         )
-        if profile != "legacy":
-            assert all(value is not None and value > 0 for value in result["watch_key_value_bytes"])
-            assert counters["inventory_delta_input_records"] == result["expected_input_mutations"]
-            assert (
-                counters["inventory_delta_output_records"]
-                <= counters["inventory_delta_input_records"]
-            )
-            assert (
-                source_after["inventory_journal_bytes"]
-                <= source_after["inventory_journal_capacity_bytes"]
-            )
+        assert counters["inventory_delta_input_records"] == result["expected_input_mutations"]
+        assert (
+            counters["inventory_delta_output_records"] <= counters["inventory_delta_input_records"]
+        )
+        assert (
+            source_after["inventory_journal_bytes"]
+            <= source_after["inventory_journal_capacity_bytes"]
+        )
+        assert result["stream_encoded_bytes_sent"] > 0
+        assert result["stream_encoded_bytes_received"] > 0
         _restore(source_client, "source", tensor, hashes, "final-local-bytes", payload, managers)
-        for label, before, after in [
+        for label, before, after in (
             ("managers", manager_before, manager_after),
             ("etcd", etcd_process_before, etcd_process_after),
-        ]:
+        ):
             assert before["processes"] == after["processes"] and before["processes"] > 0
             assert after["hwm_kib"] - before["hwm_kib"] <= 256 * 1024, label
-        (tmp_path / "coalescing-result.json").write_text(json.dumps(result, indent=2) + "\n")
-        ok, message = observer_client.unregister_context("observer")
-        assert ok, message
-        ok, message = source_client.unregister_context("source")
-        assert ok, message
+        (tmp_path / "stream-result.json").write_text(json.dumps(result, indent=2) + "\n")
+        for client, instance in ((observer_client, "observer"), (source_client, "source")):
+            ok, message = client.unregister_context(instance)
+            assert ok, message
         tensor = observer_tensor = None
         torch.cuda.synchronize()
         torch.cuda.ipc_collect()
-        (tmp_path / "coalescing-result.json").write_text(json.dumps(result, indent=2) + "\n")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", choices=("legacy", "0", "2", "5"), required=True)
+    parser.add_argument("--profile", choices=("0", "2", "5"), required=True)
     parser.add_argument("--output", type=external_path, required=True)
     args = parser.parse_args()
-    for variable in ["ETCD_BIN", "ORBITKV_CACHE_MANAGER_BINARY"]:
+    for variable in ("ETCD_BIN", "ORBITKV_CACHE_MANAGER_BINARY"):
         if not os.environ.get(variable):
             parser.error(f"set {variable} to a frozen artifact")
     args.output.mkdir(parents=True, exist_ok=False)

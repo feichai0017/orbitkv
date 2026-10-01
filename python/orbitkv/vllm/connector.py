@@ -55,23 +55,18 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
         world_size = vllm_config.parallel_config.world_size
         is_mla = detect_mla(vllm_config)
         cache_groups = tuple(getattr(kv_cache_config, "kv_cache_groups", ()) or ())
-        if cache_groups and CacheGroupLayout.from_config(kv_cache_config).has_recurrent_state:
-            if not vllm_config.use_v2_model_runner:
-                raise RuntimeError(
-                    "OrbitKV recurrent Restore requires vLLM's V2 model runner so "
-                    "state is restored before checkpoint migration."
-                )
-            from vllm.v1.core.sched.output import SchedulerOutput
-
-            if "kv_connector_block_state" not in getattr(
-                SchedulerOutput, "__dataclass_fields__", {}
-            ):
-                raise RuntimeError(
-                    "OrbitKV HMA requires vLLM SchedulerOutput.kv_connector_block_state "
-                    "to hand off pinned Mamba boundary states; this vLLM build does not "
-                    "provide it. Use a build with the boundary-state hand-off before "
-                    "enabling OrbitKV for hybrid models."
-                )
+        if len(cache_groups) > 1 or (
+            cache_groups and CacheGroupLayout.from_config(kv_cache_config).has_recurrent_state
+        ):
+            raise RuntimeError(
+                "OrbitKV on official vLLM 0.30.0 supports one attention cache group; "
+                "hybrid recovery requires an upstream atomic state hand-off."
+            )
+        if vllm_config.use_v2_model_runner:
+            raise RuntimeError(
+                "OrbitKV on official vLLM 0.30.0 requires VLLM_USE_V2_MODEL_RUNNER=0 "
+                "to drain preempted saves before GPU page reuse."
+            )
         collapse_mla_tp = is_mla and len(cache_groups) <= 1
         dcp_world_size = (
             getattr(vllm_config.parallel_config, "decode_context_parallel_size", 1) or 1
@@ -221,14 +216,9 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             if role == KVConnectorRole.SCHEDULER:
                 from orbitkv.vllm.scheduler import SchedulerAdapter
 
-                pd_tail_save = bool(get_option("orbitkv.pd_tail_save", False))
-                pd_tail_load = bool(get_option("orbitkv.pd_tail_load", False))
                 self._scheduler = SchedulerAdapter(
                     self._ctx,
                     clients=clients,
-                    pd_tail_save=pd_tail_save,
-                    pd_tail_load=pd_tail_load,
-                    vllm_config=vllm_config,
                     kv_cache_config=kv_cache_config,
                 )
                 # Open the liveness stream from the scheduler process only. One
@@ -243,10 +233,8 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
                         self._ctx.effective_world_size,
                     )
             else:
-                from orbitkv.vllm.runtime import install_restore_boundary
                 from orbitkv.vllm.worker import WorkerAdapter
 
-                install_restore_boundary()
                 self._worker = WorkerAdapter(
                     self._ctx,
                     vllm_config=vllm_config,
@@ -292,7 +280,7 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
         if metadata is None:
             return
         self._worker.start_load_kv(metadata)
-        # V2 full-graph replay calls the connector without attention metadata.
+        # Graph replay can call the connector without attention metadata.
         # Its captured graph has no Python layer callbacks, so link the whole
         # Restore on the replay stream. Decode steps without Restore do no work.
         if (

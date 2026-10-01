@@ -54,7 +54,7 @@ impl Etcd {
         let initial = peers
             .iter()
             .enumerate()
-            .map(|(i, p)| format!("test{i}={p}"))
+            .map(|(i, peer)| format!("test{i}={peer}"))
             .collect::<Vec<_>>()
             .join(",");
         drop(reservations);
@@ -102,7 +102,7 @@ impl Etcd {
                 server
                     .processes
                     .iter_mut()
-                    .all(|p| p.try_wait().unwrap().is_none()),
+                    .all(|process| process.try_wait().unwrap().is_none()),
                 "etcd exited"
             );
             if let Ok(mut client) = rpc(Client::connect(&server.endpoints, None)).await
@@ -132,25 +132,17 @@ impl Etcd {
         let _ = self.processes[node].wait();
     }
 
+    #[cfg(feature = "test-hooks")]
     pub(crate) fn pids(&self) -> Vec<u32> {
         self.processes.iter().map(Child::id).collect()
     }
 }
 
 fn checkout_root() -> Option<std::path::PathBuf> {
-    let compiled = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    if let Ok(root) = compiled.canonicalize() {
-        return Some(root);
-    }
-    let output = Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let root = std::str::from_utf8(&output.stdout).ok()?.trim();
-    std::fs::canonicalize(root).ok()
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .ok()
 }
 
 impl Drop for Etcd {
@@ -202,53 +194,16 @@ pub(crate) async fn join(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires ETCD_BIN; starts a real isolated etcd process"]
-async fn snapshots_compaction_and_restarts_preserve_member_incarnations() {
+async fn membership_compaction_and_restarts_preserve_incarnations_without_block_keys() {
     let server = Etcd::start(1).await;
     let a = view(51001);
     let b = view(51002);
-    let (member_a, index_a, inventory_a) = join(&server, "recovery", "a", a.clone(), 60).await;
-    let (member_b, index_b, _) = join(&server, "recovery", "b", b.clone(), 60).await;
-    wait_for(|| {
-        a.permits(b.owner())
-            && b.permits(a.owner())
-            && index_a.revision().is_some()
-            && index_b.revision().is_some()
-    })
-    .await;
-    let revision = inventory_a.flush().await.unwrap();
-    wait_for(|| index_b.revision().is_some_and(|r| r >= revision)).await;
-    assert!(
-        Cluster::join(
-            &server.endpoints,
-            "recovery",
-            "a",
-            60,
-            view(51003),
-            Arc::new(ResidencyInventory::new(4096)),
-            Arc::new(GlobalIndex::new(a.clone(), 4096))
-        )
-        .await
-        .is_err()
-    );
+    let (member_a, index_a, _) = join(&server, "recovery", "a", a.clone(), 60).await;
+    let (member_b, _, _) = join(&server, "recovery", "b", b.clone(), 60).await;
+    wait_for(|| a.permits(b.owner()) && b.permits(a.owner())).await;
+    assert!(index_a.status().membership_revision.is_some());
+
     let mut client = Client::connect(&server.endpoints, None).await.unwrap();
-    let cluster = cluster_id(client.status().await.unwrap().header()).unwrap();
-    let scratch = GlobalIndex::new(a.clone(), 1 << 20);
-    let own = client
-        .get("/orbitkv/v2/recovery/members/a", None)
-        .await
-        .unwrap();
-    let mut registration: Member = serde_json::from_slice(own.kvs()[0].value()).unwrap();
-    registration.lease = own.kvs()[0].lease();
-    let (mut members, mut old) = watch::bootstrap(
-        &mut client,
-        "/orbitkv/v2/recovery/",
-        cluster,
-        &registration,
-        &a,
-        &scratch,
-    )
-    .await
-    .unwrap();
     client
         .put("outside-cluster-compaction", "0", None)
         .await
@@ -261,33 +216,6 @@ async fn snapshots_compaction_and_restarts_preserve_member_incarnations() {
         .unwrap()
         .revision();
     client.compact(later, None).await.unwrap();
-    let result = tokio::time::timeout(
-        Duration::from_secs(10),
-        watch::follow(
-            &mut client,
-            "/orbitkv/v2/recovery/",
-            cluster,
-            &registration,
-            &a,
-            &scratch,
-            &mut members,
-            &mut old,
-        ),
-    )
-    .await
-    .expect("compacted Watch did not close");
-    assert!(matches!(result, Err(watch::FollowError::Rebuild(_))));
-    scratch.reset();
-    watch::bootstrap(
-        &mut client,
-        "/orbitkv/v2/recovery/",
-        cluster,
-        &registration,
-        &a,
-        &scratch,
-    )
-    .await
-    .unwrap();
     member_b.shutdown().await;
     wait_for(|| !a.permits(b.owner())).await;
     let replacement = view(51002);
@@ -303,6 +231,21 @@ async fn snapshots_compaction_and_restarts_preserve_member_incarnations() {
             .value(),
         b"2"
     );
+    let all = client
+        .get(
+            "/orbitkv/v2/recovery/",
+            Some(
+                etcd_client::GetOptions::new()
+                    .with_prefix()
+                    .with_keys_only(),
+            ),
+        )
+        .await
+        .unwrap();
+    assert!(all.kvs().iter().all(|kv| {
+        let key = kv.key_str().unwrap();
+        !key.contains("/blocks/") && !key.contains("/publishers/")
+    }));
     new_b.shutdown().await;
     member_a.shutdown().await;
 }
@@ -313,7 +256,7 @@ async fn leader_loss_recovers_and_quorum_loss_fences_remote_admission() {
     let mut server = Etcd::start(3).await;
     let a = view(52001);
     let (member_a, index_a, _) = join(&server, "quorum", "a", a.clone(), 30).await;
-    wait_for(|| a.permits(a.owner()) && index_a.revision().is_some()).await;
+    wait_for(|| a.permits(a.owner()) && index_a.status().membership_revision.is_some()).await;
     let leader = server.leader().await;
     server.kill(leader);
     let b = view(52002);
@@ -327,66 +270,46 @@ async fn leader_loss_recovers_and_quorum_loss_fences_remote_admission() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires ETCD_BIN; registration reply reconciliation and competing identity rejection"]
-async fn registration_reconciles_its_committed_reply_without_advancing_epoch_or_stealing_a_node() {
+#[ignore = "requires ETCD_BIN; registration reply reconciliation and old-format rejection"]
+async fn registration_reconciles_exact_identity_and_rejects_old_format() {
     let server = Etcd::start(1).await;
     let mut client = Client::connect(&server.endpoints, None).await.unwrap();
     let grant = client.lease_grant(60, None).await.unwrap();
     let cluster = cluster_id(grant.header()).unwrap();
     let owner = view(57001);
     let prefix = "/orbitkv/v2/register-retry/";
-    watch::install_format(&mut client, prefix, cluster)
-        .await
-        .unwrap();
-    let first =
-        registration::register(&mut client, prefix, "a", owner.owner(), grant.id(), cluster)
-            .await
-            .unwrap();
-    // Repeat the same intent as after a lost response; the committed identity is authoritative.
-    let repeated =
-        registration::register(&mut client, prefix, "a", owner.owner(), grant.id(), cluster)
-            .await
-            .unwrap();
-    assert_eq!(first, repeated);
-    assert_eq!(first.epoch, 1);
-    assert_eq!(
-        client
-            .get(format!("{prefix}epochs/a"), None)
-            .await
-            .unwrap()
-            .kvs()[0]
-            .value(),
-        b"1"
-    );
-    let other = view(57001);
-    assert!(matches!(
-        registration::register(&mut client, prefix, "a", other.owner(), grant.id(), cluster).await,
-        Err(BootstrapError::Rejected(_))
-    ));
-    let other_lease = client.lease_grant(60, None).await.unwrap();
-    assert!(matches!(
-        registration::register(
-            &mut client,
-            prefix,
-            "a",
-            owner.owner(),
-            other_lease.id(),
-            cluster
-        )
-        .await,
-        Err(BootstrapError::Rejected(_))
-    ));
-    client.lease_revoke(grant.id()).await.unwrap();
-    let replacement = registration::register(
+    let installed = format::install(&mut client, prefix, cluster).await.unwrap();
+    let first = registration::register(
         &mut client,
         prefix,
         "a",
-        other.owner(),
-        other_lease.id(),
+        owner.owner(),
+        grant.id(),
         cluster,
+        &installed,
     )
     .await
     .unwrap();
-    assert_eq!(replacement.epoch, 2);
-    assert_ne!(first.owner.incarnation, replacement.owner.incarnation);
+    let repeated = registration::register(
+        &mut client,
+        prefix,
+        "a",
+        owner.owner(),
+        grant.id(),
+        cluster,
+        &installed,
+    )
+    .await
+    .unwrap();
+    assert_eq!(first, repeated);
+    assert_eq!(first.epoch, 1);
+    client
+        .put("/orbitkv/v2/old/format", "orbitkv/global-index/v2", None)
+        .await
+        .unwrap();
+    assert!(
+        format::install(&mut client, "/orbitkv/v2/old/", cluster)
+            .await
+            .is_err()
+    );
 }

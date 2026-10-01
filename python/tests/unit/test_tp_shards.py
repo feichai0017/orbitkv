@@ -25,7 +25,6 @@ from orbitkv.vllm.worker import WorkerAdapter  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _available_local_sockets(monkeypatch):
-    monkeypatch.setattr("orbitkv.vllm.runtime.install_restore_boundary", lambda: None)
     monkeypatch.setattr("orbitkv.vllm.connector.derive_namespace", lambda *_a, **_k: "identity")
     monkeypatch.setattr("orbitkv.client.connection._is_unix_socket", lambda _path: True)
     monkeypatch.setattr(
@@ -93,6 +92,7 @@ def _vllm_config(*, extra_overrides=None, **parallel_overrides):
         ),
         kv_transfer_config=kv_transfer_config,
         additional_config={},
+        use_v2_model_runner=False,
     )
 
 
@@ -496,3 +496,13 @@ def test_each_tp_shard_has_a_local_unregister_leader():
             engine_client.unregister_context.assert_called_once_with("instance")
         else:
             engine_client.unregister_context.assert_not_called()
+
+
+def test_v2_runner_is_rejected_before_connecting(monkeypatch):
+    connect = MagicMock()
+    monkeypatch.setattr("orbitkv.vllm.connector.connect_cache", connect)
+    config = _vllm_config()
+    config.use_v2_model_runner = True
+    with pytest.raises(RuntimeError, match="VLLM_USE_V2_MODEL_RUNNER=0"):
+        OrbitKVConnector(config, KVConnectorRole.SCHEDULER)
+    connect.assert_not_called()

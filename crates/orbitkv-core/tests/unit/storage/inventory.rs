@@ -1,5 +1,6 @@
 use super::*;
 use orbitkv_state::ReplicaRepresentation;
+use std::sync::Arc;
 
 fn key(n: u32) -> StateKey {
     StateKey::new("model".into(), n.to_le_bytes().to_vec())
@@ -131,32 +132,25 @@ fn coalescing_preserves_contiguous_coverage_and_latest_key_medium_generation() {
     assert_eq!(deletion.records[0].sequence, 6);
 }
 
-#[tokio::test]
-async fn flush_requires_a_complete_published_inventory() {
-    let inventory = Arc::new(ResidencyInventory::new(4096));
+#[test]
+fn captured_fence_is_monotonic_and_wakes_publishers() {
+    let inventory = ResidencyInventory::new(4096);
     inventory.change(
         &key(1),
         ReplicaMedium::Dram,
         Some(metadata(ReplicaMedium::Dram)),
     );
-    inventory.acknowledge(PublishedInventory {
-        sequence: 1,
-        revision: 4,
-        ready: false,
-    });
-    let pending = tokio::spawn({
-        let inventory = inventory.clone();
-        async move { inventory.flush().await }
-    });
-    tokio::task::yield_now().await;
-    assert!(!pending.is_finished());
+    assert_eq!(inventory.capture_fence(), 1);
     assert_eq!(inventory.status().flush_through_sequence, 1);
-    inventory.acknowledge(PublishedInventory {
-        sequence: 1,
-        revision: 5,
-        ready: true,
-    });
-    assert_eq!(pending.await.unwrap().unwrap(), 5);
+    inventory.change(
+        &key(2),
+        ReplicaMedium::Dram,
+        Some(metadata(ReplicaMedium::Dram)),
+    );
+    inventory.request_flush(1);
+    assert_eq!(inventory.status().flush_through_sequence, 1);
+    assert_eq!(inventory.capture_fence(), 2);
+    assert_eq!(inventory.status().flush_through_sequence, 2);
 }
 
 #[tokio::test(start_paused = true)]
@@ -175,19 +169,8 @@ async fn coalescing_wait_is_bounded_and_flush_bypasses_it() {
             inventory.wait_to_publish(0).await,
             Duration::from_millis(window)
         );
-        let flushing = tokio::spawn({
-            let inventory = inventory.clone();
-            async move { inventory.flush().await }
-        });
-        tokio::task::yield_now().await;
+        inventory.request_flush(1);
         assert_eq!(inventory.wait_to_publish(0).await, Duration::ZERO);
-        assert!(!flushing.is_finished());
-        inventory.acknowledge(PublishedInventory {
-            sequence: 1,
-            revision: 3,
-            ready: true,
-        });
-        assert_eq!(flushing.await.unwrap().unwrap(), 3);
         // An already fulfilled flush notification cannot skip the next window.
         inventory.change(
             &key(2),
@@ -223,18 +206,8 @@ async fn coalescing_wait_is_bounded_and_flush_bypasses_it() {
     });
     tokio::task::yield_now().await;
     tokio::time::advance(Duration::from_millis(1)).await;
-    let flushing = tokio::spawn({
-        let inventory = inventory.clone();
-        async move { inventory.flush().await }
-    });
+    inventory.request_flush(10);
     assert_eq!(waiting.await.unwrap(), Duration::from_millis(1));
-    assert!(!flushing.is_finished());
-    inventory.acknowledge(PublishedInventory {
-        sequence: 10,
-        revision: 4,
-        ready: true,
-    });
-    assert_eq!(flushing.await.unwrap().unwrap(), 4);
 }
 
 #[test]

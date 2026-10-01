@@ -7,11 +7,14 @@ This example demonstrates:
 """
 
 import argparse
+import os
 import random
 import time
 
-from vllm import LLM, SamplingParams
-from vllm.config import KVTransferConfig
+os.environ.setdefault("VLLM_USE_V2_MODEL_RUNNER", "0")
+
+from vllm import LLM, SamplingParams  # noqa: E402
+from vllm.config import KVTransferConfig  # noqa: E402
 
 
 def generate_long_prompt(length: int) -> str:

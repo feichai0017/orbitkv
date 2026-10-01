@@ -22,13 +22,3 @@ def register() -> None:
         "orbitkv.vllm",
         "OrbitKVConnector",
     )
-    KVConnectorFactory.register_connector(
-        "PdDecodeConnector",
-        "orbitkv.vllm.pd",
-        "PdDecodeConnector",
-    )
-    KVConnectorFactory.register_connector(
-        "PdPrefillConnector",
-        "orbitkv.vllm.pd",
-        "PdPrefillConnector",
-    )

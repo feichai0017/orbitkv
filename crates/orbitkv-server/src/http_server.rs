@@ -17,6 +17,7 @@ struct AppState {
     engine: Arc<OrbitKVEngine>,
     lifecycle: crate::cache::lifecycle::LifecycleService,
     prometheus_registry: Option<Registry>,
+    inventory: Option<crate::cluster::InventoryRuntime>,
 }
 
 async fn health_handler() -> &'static str {
@@ -124,32 +125,135 @@ async fn cleanup_memory_cache_handler(
     })
 }
 
-async fn metadata_handler(
+#[derive(Serialize)]
+struct MetadataResponse {
+    #[serde(flatten)]
+    engine: orbitkv_core::MetadataStatus,
+    stream: crate::cluster::InventoryRuntimeStatus,
+}
+
+async fn metadata_handler(State(state): State<AppState>) -> Json<Option<MetadataResponse>> {
+    Json(
+        match (state.engine.metadata_status(), state.inventory.as_ref()) {
+            (Some(engine), Some(inventory)) => Some(MetadataResponse {
+                engine,
+                stream: inventory.status(),
+            }),
+            _ => None,
+        },
+    )
+}
+
+#[derive(Deserialize)]
+struct OwnerMetadataQuery {
+    after: Option<uuid::Uuid>,
+    #[serde(default = "default_owner_status_limit")]
+    limit: usize,
+}
+
+fn default_owner_status_limit() -> usize {
+    64
+}
+
+async fn owner_metadata_handler(
     State(state): State<AppState>,
-) -> Json<Option<orbitkv_core::MetadataStatus>> {
-    Json(state.engine.metadata_status())
+    Query(query): Query<OwnerMetadataQuery>,
+) -> impl IntoResponse {
+    if query.limit == 0 || query.limit > 128 {
+        return (
+            StatusCode::BAD_REQUEST,
+            "owner metadata limit must be in 1..=128".to_string(),
+        )
+            .into_response();
+    }
+    match state
+        .engine
+        .metadata_owner_statuses(query.after, query.limit)
+    {
+        Some(owners) => Json(owners).into_response(),
+        None => (
+            StatusCode::CONFLICT,
+            "distributed inventory is not configured",
+        )
+            .into_response(),
+    }
 }
 
 async fn sync_cache_handler(State(state): State<AppState>) -> impl IntoResponse {
     match tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        state.engine.flush_saves_and_inventory(),
+        state.engine.flush_saves(),
     )
     .await
     {
-        Ok(Ok(revision)) => (
-            StatusCode::OK,
-            Json(serde_json::json!({"published_revision": revision})).into_response(),
-        ),
-        Ok(Err(error)) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            error.to_string().into_response(),
-        ),
+        Ok(()) => match state.inventory.as_ref() {
+            Some(inventory) => match inventory.capture_fence() {
+                Ok(fence) => (
+                    StatusCode::OK,
+                    Json(serde_json::json!({"inventory_fence": fence})).into_response(),
+                ),
+                Err(error) => (StatusCode::SERVICE_UNAVAILABLE, error.into_response()),
+            },
+            None => (
+                StatusCode::OK,
+                Json(serde_json::json!({"local_flush_complete": true})).into_response(),
+            ),
+        },
         Err(_) => (
             StatusCode::GATEWAY_TIMEOUT,
             "cache synchronization timed out".into_response(),
         ),
     }
+}
+
+#[derive(Deserialize)]
+struct AwaitInventoryRequest {
+    inventory_fence: orbitkv_state::InventoryFence,
+    scope_digest: String,
+    timeout_ms: u64,
+}
+
+async fn await_inventory_handler(
+    State(state): State<AppState>,
+    Json(request): Json<AwaitInventoryRequest>,
+) -> impl IntoResponse {
+    let Some(inventory) = state.inventory.as_ref() else {
+        return (
+            StatusCode::CONFLICT,
+            "distributed inventory is not configured".to_string(),
+        );
+    };
+    let scope = match decode_hex(&request.scope_digest) {
+        Ok(scope) => scope,
+        Err(error) => return (StatusCode::BAD_REQUEST, error),
+    };
+    match inventory
+        .await_fence(
+            &request.inventory_fence,
+            &scope,
+            std::time::Duration::from_millis(request.timeout_ms),
+        )
+        .await
+    {
+        Ok(()) => (StatusCode::OK, "inventory fence installed".to_string()),
+        Err(error) if error.contains("timed out") => (StatusCode::GATEWAY_TIMEOUT, error),
+        Err(error) if error.contains("limit reached") => (StatusCode::TOO_MANY_REQUESTS, error),
+        Err(error) => (StatusCode::PRECONDITION_FAILED, error),
+    }
+}
+
+fn decode_hex(value: &str) -> Result<Vec<u8>, String> {
+    if value.len() != 64 || !value.is_ascii() {
+        return Err("scope_digest must contain 64 hexadecimal characters".into());
+    }
+    value
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let text = std::str::from_utf8(pair).map_err(|_| "invalid scope_digest")?;
+            u8::from_str_radix(text, 16).map_err(|_| "invalid scope_digest".to_string())
+        })
+        .collect()
 }
 
 /// Start HTTP server for health check, optional Prometheus metrics, and instance management.
@@ -169,6 +273,7 @@ pub async fn start_http_server(
         enable_prometheus,
         prometheus_registry,
         shutdown,
+        None,
     )
     .await
 }
@@ -180,6 +285,7 @@ pub(crate) async fn start_http_server_with_lifecycle(
     enable_prometheus: bool,
     prometheus_registry: Option<Registry>,
     shutdown: Arc<Notify>,
+    inventory: Option<crate::cluster::InventoryRuntime>,
 ) -> Result<tokio::task::JoinHandle<()>, std::io::Error> {
     let listener = TcpListener::bind(addr).await?;
 
@@ -191,6 +297,7 @@ pub(crate) async fn start_http_server_with_lifecycle(
         } else {
             None
         },
+        inventory,
     };
 
     let mut app = Router::new()
@@ -198,6 +305,8 @@ pub(crate) async fn start_http_server_with_lifecycle(
         .route("/instances", get(list_instances_handler))
         .route("/instances/cleanup", post(cleanup_handler))
         .route("/cache/sync", post(sync_cache_handler))
+        .route("/cache/metadata/await", post(await_inventory_handler))
+        .route("/cache/metadata/owners", get(owner_metadata_handler))
         .route("/cache/metadata", get(metadata_handler))
         .route("/cache/memory/cleanup", post(cleanup_memory_cache_handler));
 

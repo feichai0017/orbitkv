@@ -125,6 +125,7 @@ class VLLMServer:
 
         env = os.environ.copy()
         env["PYTHONHASHSEED"] = "0"
+        env.setdefault("VLLM_USE_V2_MODEL_RUNNER", "0")
         python_source = str(PYTHON_ROOT)
         current_pythonpath = env.get("PYTHONPATH")
         env["PYTHONPATH"] = (
@@ -243,13 +244,15 @@ class VLLMServer:
                 "OrbitKV" if self.use_orbitkv or self.kv_transfer_config is not None else "Baseline"
             )
             print(f"\n[{server_label}] Stopping vLLM server...")
+            with suppress(ProcessLookupError):
+                os.killpg(self.process.pid, signal.SIGTERM)
             try:
-                os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
                 self.process.wait(timeout=10)
-            except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
-                if self.process:
-                    os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
-                    self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                with suppress(ProcessLookupError):
+                    os.killpg(self.process.pid, signal.SIGKILL)
+                self.process.wait(timeout=5)
+            self.process = None
             print("Server stopped.\n")
 
         if self.log_handle:
@@ -361,6 +364,7 @@ class CacheManager:
         # fails registration with "pinned to device N but got M".
         env.pop("CUDA_VISIBLE_DEVICES", None)
         env["PYTHONHASHSEED"] = "0"
+        env.setdefault("VLLM_USE_V2_MODEL_RUNNER", "0")
         env["PYO3_PYTHON"] = sys.executable
         env["PYTHONHOME"] = sys.base_prefix
         if libdir := sysconfig.get_config_var("LIBDIR"):
