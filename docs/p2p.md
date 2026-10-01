@@ -47,6 +47,24 @@ Managers together for this breaking protocol change. Engine processes retain the
 same UDS/iceoryx2 and CUDA IPC integration described in the
 [vLLM and SGLang deployment guide](deployment.md).
 
+## Metadata subscription scope
+
+Omitting scope flags subscribes to `AllNamespaces`. For an exact startup
+allowlist, repeat `--metadata-namespace orbitkv:v2:<64-lowercase-hex>` using the
+storage namespaces logged by actual engine registration. Do not substitute model
+display names or prefixes: namespace identity includes computation,
+representation and state-group inputs. `--metadata-empty-scope` explicitly
+subscribes to no remote namespaces and is not the same as omission. Exact sets are
+sorted/deduplicated, limited to 256 namespaces and a 64 KiB encoded Open.
+
+The configured scope is immutable for the Manager process. Changing it requires
+a restart and full bootstrap; old sessions, cursors and installed completeness
+do not carry across. A scope-outside remote lookup is unavailable, while the same
+Manager's local DRAM/SSD cache remains usable. Filtering happens at the source
+for snapshots, replay and deltas, preserving original source interval coverage.
+It is a metadata-volume control, not tenant authentication, and it does not remove
+the all-to-all inventory session topology.
+
 ## Lookup and transfer
 
 ```mermaid
@@ -116,6 +134,9 @@ batched metadata and engine-side execution work that remains planned.
 - A disconnected stream retains its last installed positive hints as
   `partial_hints`. The source still validates every generation. Missing evidence
   does not prove absence until every expected owner view is complete.
+- A completed empty owner view proves only that owner has no records in the
+  configured scope at its installed watermark. It is distinct from a missing
+  view and says nothing about scope-outside keys.
 - Source UUID and generation checks prevent stale rows from authorizing reused
   addresses. Both DRAM and SSD can be advertised for one StateKey.
 - Losing a Manager does not remove another Manager's index. A sole lost payload
@@ -142,8 +163,10 @@ fallback.
 
 The versioned prefix remains `/orbitkv/v2/<cluster>/` so old and new Managers
 cannot form disjoint populations. Its format record is now
-`orbitkv/inventory-stream/v3` plus a persistent cluster UUID. Upgrade all Managers
-together using `scripts/migrate-metadata-format.py`; mixed formats are rejected.
+`orbitkv/inventory-stream/v4` plus a persistent cluster UUID. Version 3 cannot
+express the exact scope descriptor and is rejected rather than silently treated
+as all-domain. Upgrade all Managers together using
+`scripts/migrate-metadata-format.py`; mixed formats are rejected.
 
 ## Limits and observability
 
@@ -151,6 +174,9 @@ together using `scripts/migrate-metadata-format.py`; mixed formats are rejected.
 owner snapshot. `--index-budget` defaults to 256 MiB and charges active plus
 staging metadata. `--inventory-stream-coalesce-ms` selects a 0–5 ms quiet window;
 the default remains 0 and 2 ms is an explicit throughput/freshness tradeoff.
+`GET /cache/metadata` also reports `scope_kind`, the canonical scope digest and
+exact namespace count. Coverage applies only to that scope and the captured
+membership revision.
 
 `POST /cache/sync` returns a source `inventory_fence`. A controlled requester
 passes that fence, its scope digest and a bounded timeout to

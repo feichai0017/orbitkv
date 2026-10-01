@@ -1,9 +1,9 @@
 # Distributed inventory and recovery design
 
-**Status: S2.8 all-namespace implementation candidate, 2026-09-30.** S2.7 remains
-the accepted baseline; the inventory-stream cutover described here is implemented
-but not independently accepted. Nothing in this document alone establishes new
-runtime, deployment or performance support. The
+**Status: S2.9 scoped-discovery implementation candidate, 2026-10-01.** S2.8 is
+independently accepted; the scoped subscription and coverage changes described
+here are implemented but await independent review. Nothing in this document alone
+establishes new runtime, deployment or performance support. The
 [completion plan](completion-plan.md) is the only execution queue and acceptance
 ledger. This document specifies contracts consumed by S2, S3, S4, S6 and S7; it
 does not create a second roadmap.
@@ -138,7 +138,7 @@ mean that both wire formats are supported. Change its `format` value at an
 offline cutover to a canonical record containing:
 
 ```text
-protocol = orbitkv/inventory-stream/v3
+protocol = orbitkv/inventory-stream/v4
 cluster_uuid = randomly generated persistent UUID
 ```
 
@@ -215,11 +215,11 @@ payload and calls the existing inventory/index owners directly. A separate proto
 service is appropriate for the distinct streaming contract; it does not require
 another binary, catalog or transport abstraction.
 
-The proposed operation is a bidirectional `InventorySession`. One directed
+The implemented operation is a bidirectional `InventorySession`. One directed
 requester-to-source session multiplexes control and one canonical subscription
 set. Reuse endpoint channels where safe, with independent bounded queues so bulk
 snapshot encoding cannot starve grants, release ACKs or membership tasks.
-Wire names below are proposed contracts, not existing callable APIs.
+The wire names below are the v4 protocol contracts.
 
 ### Identity and messages
 
@@ -348,18 +348,20 @@ charge their memory, and verify lookup/update lock hold times under churn.
 
 ## Subscription coverage and local query semantics
 
-The first streaming cutover uses `AllNamespaces` and all admitted members. Add
-explicit namespace scoping only after full-domain equivalence passes. Membership
-is the source list; do not add per-key routing or a central namespace directory.
-An owner with no records for a scope sends a completed empty view, which is
-different from an owner that has not answered.
+The first streaming cutover used `AllNamespaces` and all admitted members. S2.9
+adds exact namespace scoping after full-domain equivalence passed. Membership is
+the source list; do not add per-key routing or a central namespace directory. An
+owner with no records for a scope sends a completed empty view, which is different
+from an owner that has not answered.
 
 The scoped profile uses a startup allowlist of exact storage namespaces, selected
-from actual engine registration identities. Proposed CLI surface:
-`--metadata-namespace <exact-namespace>` repeated; omission retains all namespaces.
-Validate and document it with the implementation. No model-name string, LoRA name
-or rank omission substitutes for the representation-bound namespace. A Manager
-can serve its local cache outside its remote subscription set.
+from actual engine registration identities. Repeat
+`--metadata-namespace <exact-namespace>`; omission retains `AllNamespaces`, while
+`--metadata-empty-scope` explicitly subscribes to no remote namespace. The exact
+set is sorted and deduplicated, limited to 256 namespaces and a 64 KiB encoded
+Open. No model-name string, LoRA name or rank omission substitutes for the
+representation-bound namespace. A Manager can serve its local cache outside its
+remote subscription set.
 
 An explicit scope change starts a new local scope generation and bootstrap. The
 first implementation requires reconfiguration/restart; automatic query-triggered

@@ -547,25 +547,30 @@ endpoint. Direct Prometheus remains available.
 ### Distributed metadata progress
 
 `GET /cache/metadata` reports the local index's `membership_revision`, explicit
-`coverage`, active/staging/accounted bytes, expected/installed owner views and
-view generation. Registration validity is separate: an interrupted inventory
-stream can retain positive hints with `partial_hints`, while invalid membership
-makes coverage `unavailable`.
+`coverage`, active/staging/accounted bytes, expected/installed owner views, view
+generation, `scope_kind` and exact namespace count. Registration validity is
+separate: an interrupted inventory stream can retain positive hints with
+`partial_hints`, while invalid membership or a scope-outside lookup makes
+coverage `unavailable`. A complete empty owner view differs from a missing view.
 
 The same response includes the local inventory sequence, resident and retained-
 journal record counts, current/peak journal bytes, capacity and history gaps.
 Completed stream intervals report input/coalesced records, encoded bytes, delta
 frames and elapsed coalescing wait. `inventory_flush_through_sequence` is the
 latest requested source-fence target; it is not a received-frame or installed-
-view watermark.
+view watermark. `inventory_scope_filter_input_records`,
+`inventory_scope_filter_output_records` and `inventory_scope_filter_micros`
+measure source-side filtering across snapshot/replay/delta work; lower output
+counts alone are not a serving-performance result.
 
-The `stream` object reports protocol/cluster/source identity, all-namespace scope
-digest, membership revision, current/peak source and receiver sessions, frames
-and encoded bytes sent/received, current/peak aggregate outbound queue bytes and
-reset count. These are process-lifetime counters. Snapshot bytes share the frame
-counters; etcd network metrics now represent membership/configuration traffic,
-not block traffic. The pre-cutover Watch payload counter is removed with its sole
-producer.
+The `stream` object reports protocol/cluster/source identity, canonical scope
+digest/kind/namespace count, membership revision, current/peak source and receiver
+sessions, frames and encoded bytes sent/received, current/peak aggregate outbound
+queue bytes and reset count. These are process-lifetime counters. Snapshot bytes
+share the frame counters; etcd network metrics now represent
+membership/configuration traffic, not block traffic. Namespace filtering does
+not reduce the session count. The pre-cutover Watch payload counter is removed
+with its sole producer.
 
 `GET /cache/metadata/owners?after=<uuid>&limit=<1..128>` reports bounded,
 UUID-ordered installed owner views with their committed sequence, freshness,
@@ -574,9 +579,10 @@ request-path directory lookup.
 
 Standalone Managers return JSON `null`. `POST /cache/sync` returns an
 `inventory_fence`; `POST /cache/metadata/await` succeeds only after the matching
-source incarnation/epoch is installed through that sequence. These are
-synchronization boundaries, independent of source authorization and native
-payload completion.
+source incarnation/epoch and exact scope are installed through that sequence. A
+wrong scope fails; an empty filtered interval advances only covered progress and
+does not prove a scope-outside key absent. These are synchronization boundaries,
+independent of source authorization and native payload completion.
 
 The old per-shard Catalog gauges, inventory-RPC counters and candidate-lookup
 metrics were removed with their runtime. Transfer, source budget, remote-stage

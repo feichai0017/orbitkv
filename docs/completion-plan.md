@@ -36,7 +36,7 @@ record submitted, merged and released as different states.
 | --- | --- |
 | S0 | Agent handoff and Codex skill migration merged in PR #190. |
 | S1 | Evidence separation independently verified at `ec3add9b`; this delivery consolidates plans and release-based integration guidance. Acceptance covers S1 only; native CUDA qualification remains blocked on this host. |
-| S2 | Partial: S2.1–S2.8 are independently accepted. Three-host metadata remains blocked by CPU-node SSH authorization and mutually unreachable A/B container data addresses; scoped streams, live-store soak and separate-host cells remain open under S2.9/S2.10. |
+| S2 | Partial: S2.1–S2.8 are independently accepted; S2.9 is implemented and awaits independent review. Three-host metadata remains blocked by CPU-node SSH authorization and mutually unreachable A/B container data addresses; live-store soak and separate-host cells remain open under S2.10. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
 | S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`. vLLM 0.30.0 remains an unqualified upgrade target, and public lifecycle/deployment gates remain open. |
@@ -71,7 +71,7 @@ independent protocol or native-lifetime implementation.
 | Local transport | UDS bootstrap, iceoryx2 descriptors, shared arenas and bounded operation ownership | Page-generation coverage, explicit registration data and live-process stall handling |
 | Raw copies | Contiguous/strided DMA, bounded multipart Restore, engine-local execution | Residual overhead and earlier multipart consumption |
 | Compute overlap | Qualified raw single-part layer/group readiness; coarse dependencies where required | SSD/codec pipelines and legal multipart overlap |
-| Distributed discovery | Local `GlobalIndex`, bounded owner snapshot/delta streams, explicit coverage and etcd membership; no directory RPCs | Scoped subscriptions, long live-store soak and separate host-failure domains |
+| Distributed discovery | Local `GlobalIndex`, bounded scoped owner snapshot/delta streams, explicit coverage and etcd membership; no directory RPCs | Independent S2.9 review, long live-store soak and separate host-failure domains |
 | Remote recovery | Source authorization, TENT READ, release reconciliation, peer DRAM/SSD | Permanent requester loss and transfer/partition fault qualification |
 | Engine support | vLLM 0.29.0 and SGLang 0.5.20 local recovery and TP=1 replica sharing | Explicit multi-instance, container, P/D and TP/PP qualification cells |
 | Cost decisions | Resource-scoped observations, shadow estimates and guarded experimental peer choices | One consumed planner for complete routes, legal boundaries and P/D authority |
@@ -395,8 +395,8 @@ unsafe assignment. It accepted the complete S2.8 delivery at `ad5bb8e6`.
 
 ### S2.9 — Scoped discovery and explicit coverage
 
-**Implementation open. Depends on:** accepted S2.8. Implement the
-[subscription contract](distributed-design.md#subscription-coverage-and-local-query-semantics).
+**Implemented; independent review pending. Depends on:** accepted S2.8.
+Implements the [subscription contract](distributed-design.md#subscription-coverage-and-local-query-semantics).
 
 - Add exact namespace allowlists and canonical scope identity; initially use
   explicit configuration, not query-triggered subscription. Preserve model,
@@ -412,6 +412,26 @@ unsafe assignment. It accepted the complete S2.8 delivery at `ad5bb8e6`.
 **Acceptance:** no lost in-scope candidates or cross-scope matches, no false
 negative-completeness claim, lower matching-workload metadata bytes, and bounded
 repair without a directory RPC. Filtering is not tenant authentication.
+
+Production candidate `272803cf` and frozen harness `fddf6c14` implement protocol
+v4, canonical all/exact/empty scope identity, source-side snapshot/replay/delta
+filtering, scope-bound resume/await and incrementally maintained coverage. Exact
+allowlists use complete generated storage namespaces, allow at most 256 entries
+and a 64 KiB Open; scope changes restart/bootstrap rather than reuse old views.
+Real-etcd and full-Manager DRAM/io_uring gates cover empty/filtered views,
+reconnect/gap/restart, membership/incarnation transitions, budget withdrawal and
+scope-outside local service with exact GPU bytes.
+
+The frozen same-host A100 forced-TCP matrix runs five independent matched pairs
+with 10/10 exit zero. Scoped median stream bytes are 61,616 versus 236,683
+all-domain (ratio 0.2603), with maximum async/barrier visibility p99 of
+26.714/6.815 ms and scoped/all median bootstrap/repair ratios of 0.9921/1.0044.
+Stable churn has zero history gaps; the isolated repair phase records a real gap
+and reset; block churn adds zero etcd block/cursor revisions. Scope filtering
+retains one peer session and makes no serving, TTFT/ITL, tenant-isolation or
+cross-host claim. Raw/failed controls and frozen hashes remain outside the
+checkout. Do not mark this substage accepted until the independent reviewer
+checks the diff, reruns gates and verifies those artifacts.
 
 ### S2.10 — Sustained live-store and independent-domain qualification
 

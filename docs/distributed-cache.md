@@ -1,23 +1,26 @@
 # Distributed cache design
 
-The current S2.8 candidate keeps only protocol identity, persistent node epochs
-and leased membership in etcd. Managers exchange bounded owner inventory
-snapshots and deltas on the existing peer listener, then query the same local
-`GlobalIndex` as before. `ResidencyInventory` remains the only source-side
+The current S2.9 candidate keeps only protocol identity, persistent node epochs
+and leased membership in etcd. Managers exchange bounded, scope-filtered owner
+inventory snapshots and deltas on the existing peer listener, then query the same
+local `GlobalIndex` as before. `ResidencyInventory` remains the only source-side
 residency truth; the stream has bounded frame credit and hidden snapshot staging,
 not another Catalog. Source grants and completion remain OrbitKV gRPC, and
 Mooncake TENT carries payload bytes.
 
 This is a coordinated pre-1.0 protocol cutover. New Managers require
-`orbitkv/inventory-stream/v3` and reject the frozen etcd-block format. Stop every
-Manager and use `scripts/migrate-metadata-format.py` to dry-run, archive and CAS
+`orbitkv/inventory-stream/v4` and reject both the frozen etcd-block format and v3
+clients that cannot describe their scope. Stop every Manager and use
+`scripts/migrate-metadata-format.py` to dry-run, archive and CAS
 the namespace before switching or rolling back. Mixed-version operation and a
 second production metadata path are not supported.
 
-The all-namespace implementation is independently accepted at `ad5bb8e6`. Its
-evidence is same-host TCP and synthetic all-to-all stream capacity; physical
-cross-host, independent failure domains, native engine serving, RDMA, native GDS
-and S2.10 long live-store/soak cells remain open.
+The all-namespace implementation is independently accepted at `ad5bb8e6`. The
+S2.9 scoped candidate is implemented at native `272803cf` with qualification
+harness `fddf6c14` and awaits independent review. Its evidence is same-host TCP
+with real Manager DRAM/io_uring paths and matched metadata/client workloads;
+physical cross-host, independent failure domains, native engine serving, RDMA,
+native GDS and S2.10 long live-store/soak cells remain open.
 
 ## Current owner inventory-stream protocol
 
@@ -39,27 +42,32 @@ flowchart TB
     A <-->|TENT payload READ| B
 ```
 
-Each directed all-namespace session binds the cluster UUID, source node epoch and
-incarnation, requester incarnation, scope digest and random session ID. Frames
-are ordered and bounded. A receiver stages every snapshot page and contiguous
-journal replay out of view, validates its transcript and page count, then swaps
-the complete owner view into `GlobalIndex` atomically. Frame-consumption ACKs
-return bounded byte credit; they never advance the installed watermark.
+Each directed session binds the cluster UUID, source node epoch and incarnation,
+requester incarnation, canonical scope description/digest and random session ID.
+Omission means `AllNamespaces`; repeated exact generated storage namespaces form
+a sorted/deduplicated allowlist; an explicit empty scope means no remote
+namespace. Frames are ordered and bounded. A receiver stages every filtered
+snapshot page and contiguous journal replay out of view, validates its transcript
+and page count, then swaps the complete owner view into `GlobalIndex` atomically.
+Frame-consumption ACKs return bounded byte credit; they never advance the
+installed watermark.
 
 Normal deltas cover a contiguous source interval, coalesce exact `(StateKey,
-medium)` identities and update one owner view atomically. Duplicates are
-idempotent. Overlap, gaps, conflicting generations, invalid identity or size and
-missing snapshot pages fail without partial installation. Stream interruption
-keeps valid positive hints while coverage becomes `partial_hints`; membership
-removal excludes that incarnation immediately and cleans its reverse-index rows
-in bounded batches.
+medium)` identities, filter them at the source and update one owner view
+atomically. Empty filtered intervals retain the original covered sequence.
+Duplicates are idempotent. Overlap, gaps, conflicting generations, invalid
+identity or size and missing snapshot pages fail without partial installation.
+Stream interruption keeps valid positive hints while coverage becomes
+`partial_hints`; membership removal excludes that incarnation immediately and
+cleans its reverse-index rows in bounded batches.
 
 The current limits are 1,024 records and 512 KiB encoded/decoded content per
 frame, 1 MiB gRPC messages and per-stream outstanding credit, 32 MiB aggregate
 outbound credit, 128 sessions in each direction, two served and received
 snapshots, 64 concurrent fence awaiters, 16 MiB/s aggregate source pacing with a
 1 MiB burst, and 100 ms to 3 s reconnect backoff. `--index-budget` charges active
-and hidden staging views together.
+and hidden staging views together. Exact scopes are limited to 256 namespaces and
+a 64 KiB encoded Open.
 
 `POST /cache/sync` waits for submitted saves and returns an `inventory_fence`
 containing protocol, cluster UUID, source epoch/incarnation and source sequence.
@@ -74,8 +82,18 @@ Standalone `/cache/sync` still drains submitted local saves and returns
 `GET /cache/metadata` reports membership revision/validity, explicit coverage,
 active/staging/accounted index bytes, expected and installed owner-view counts,
 local journal state, stream bytes/frames, session counts, queue high-water marks,
-cluster identity and the all-namespace scope digest. Etcd traffic no longer grows
-with block churn; inspect stream diagnostics separately from membership traffic.
+cluster identity and the canonical scope digest/kind/count. Coverage applies only
+to that scope and membership cut. A complete empty owner view is not a missing
+view; scope-outside remote discovery is unavailable while local cache operations
+continue. Etcd traffic no longer grows with block churn; inspect stream
+diagnostics separately from membership traffic.
+
+Scope is startup configuration. Repeat `--metadata-namespace` with complete
+`orbitkv:v2:<64 lowercase hex>` values logged by actual registration, use
+`--metadata-empty-scope` for an explicit empty set, or omit both for all-domain.
+A change requires restart/full bootstrap; old scope cursors, completeness and
+late frames cannot be reused. Filtering is not tenant authentication and does not
+eliminate the all-to-all peer sessions.
 
 The frozen same-host A100 candidate uses native commit `344ef6c9` and benchmark
 harness `53314d52`. A 16-owner, 60-second all-to-all run applies 245,760 changes
@@ -95,6 +113,17 @@ keys. Evidence and failed development controls are under
 A100 path `/workspace/orbitkv-three-host-20260930/s2-8-inventory-streams/`.
 Independent review accepted the S2.8 scope at `ad5bb8e6`; no cross-host or
 serving result is inferred.
+
+The frozen S2.9 matched matrix uses production candidate `272803cf` and harness
+`fddf6c14`: five independent all/scoped pairs, 50 churn cycles per run, identical
+per-pair namespace/key/payload oracles and 2 ms coalescing. All 10 runs pass exact
+GPU restores, final owner sets, repair and zero etcd block/cursor writes. Median
+stream bytes are 236,683 all-domain and 61,616 scoped (ratio 0.2603); maximum
+asynchronous/barrier visibility p99 is 26.714/6.815 ms. Median scoped/all
+bootstrap and repair ratios are 0.9921 and 1.0044. These metadata/client results
+do not establish TTFT, ITL or serving improvement. Evidence is external under
+`/workspace/orbitkv-three-host-20260930/s2-9-scoped-discovery/candidate-272803cf/`;
+independent S2.9 review remains pending.
 
 ## Historical S2.1–S2.7 etcd-block path
 
