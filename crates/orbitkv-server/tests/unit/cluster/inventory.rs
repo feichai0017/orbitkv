@@ -653,3 +653,22 @@ async fn scope_change_restart_never_reuses_the_old_view_or_cursor() {
 #[cfg(feature = "test-hooks")]
 #[path = "inventory_capacity.rs"]
 mod capacity;
+
+#[tokio::test]
+async fn fenced_source_stops_before_queueing_an_inventory_frame() {
+    let (runtime, _, _) = runtime_for_protocol_test();
+    let (output, mut response) = mpsc::channel(4);
+    let (_control, controls) = watch::channel(ClientControl::default());
+    let mut sender = FrameSender::new(runtime.clone(), Uuid::new_v4(), output, controls);
+    let frame = sender
+        .frame(inventory_server_frame::Body::Progress(InventoryProgress {
+            through_sequence: 0,
+            source_head_sequence: 0,
+        }))
+        .unwrap();
+    runtime.shared.membership.fence();
+    assert!(sender.send(frame).await.is_err());
+    assert!(response.try_recv().is_err());
+    assert_eq!(runtime.status().frames_sent, 0);
+    assert_eq!(runtime.status().outbound_queue_bytes, 0);
+}

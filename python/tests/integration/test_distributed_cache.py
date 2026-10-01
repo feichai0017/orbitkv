@@ -185,6 +185,18 @@ def _etcd_keys(endpoint: str, prefix: str):
     return [base64.b64decode(row["key"]).decode() for row in response.json().get("kvs", [])]
 
 
+def _etcd_json(endpoint: str, key: str):
+    response = requests.post(
+        f"{endpoint}/v3/kv/range",
+        json={"key": base64.b64encode(key.encode()).decode()},
+        timeout=5,
+    )
+    response.raise_for_status()
+    rows = response.json().get("kvs", [])
+    assert len(rows) <= 1, rows
+    return json.loads(base64.b64decode(rows[0]["value"])) if rows else None
+
+
 def _payload(torch, pages, block_bytes, round_id):
     values = torch.arange(pages * block_bytes, device="cuda", dtype=torch.int64).reshape(
         pages, block_bytes
@@ -265,6 +277,145 @@ def _discover_storage_namespaces(tmp_path, identities, pages, block_bytes):
         manager.stop()
         torch.cuda.synchronize()
         torch.cuda.ipc_collect()
+
+
+def test_manager_graceful_shutdown_fences_inventory_and_restarts_node(tmp_path, monkeypatch):
+    torch = pytest.importorskip("torch")
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is required")
+    from orbitkv import CacheManagerClient
+    from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
+
+    monkeypatch.setenv("MC_FORCE_TCP", "1")
+    pages, block_bytes = 8, 4096
+    payload_bytes = pages * block_bytes
+    cluster = f"s210-shutdown-{uuid.uuid4().hex[:12]}"
+    identity = f"s2.10:shutdown:{uuid.uuid4().hex}"
+    hashes = [hashlib.sha256(f"s2.10:shutdown:{block}".encode()).digest() for block in range(pages)]
+    payload = _payload(torch, pages, block_bytes, 210)
+    result = {"cluster": cluster, "pages": pages, "block_bytes": block_bytes}
+
+    with ExitStack() as stack:
+        endpoint, _ = stack.enter_context(etcd_server(tmp_path))
+        managers = []
+        clients = []
+        tensors = []
+        ports = {node: find_available_port() for node in ("source", "consumer")}
+
+        def new_manager(node, run):
+            manager = CacheManagerProcess(
+                ports[node],
+                pool_size="64mb",
+                http_port=find_available_port(),
+                bootstrap_socket=f"/tmp/orbitkv-s210-shutdown-{ports[node]}.sock",
+                log_path=tmp_path / f"{node}-manager-{run}.log",
+                extra_args=(
+                    "--etcd-endpoints",
+                    endpoint,
+                    "--node-id",
+                    node,
+                    "--cluster-name",
+                    cluster,
+                    "--membership-ttl-secs",
+                    "60",
+                ),
+            )
+            stack.callback(manager.stop)
+            assert manager.start(), manager.read_logs()
+            managers.append(manager)
+            return manager
+
+        source_manager = new_manager("source", 0)
+        consumer_manager = new_manager("consumer", 0)
+        for node, manager in (("source", source_manager), ("consumer", consumer_manager)):
+            client = CacheManagerClient(manager.bootstrap_socket)
+            clients.append(client)
+            stack.callback(client.close)
+            tensor = torch.empty(payload_bytes, dtype=torch.uint8, device="cuda")
+            tensors.append(tensor)
+            client.start_session_watcher(node, identity, 1, 1)
+            ok, message = client.register_context_batch(
+                node,
+                identity,
+                0,
+                0,
+                1,
+                1,
+                resolve_device_id(),
+                ["kv:0"],
+                [serialize_gpu_buffer(tensor)],
+                [pages],
+                [block_bytes],
+                [0],
+                [1],
+                "direct",
+                False,
+                tensors=[tensor],
+            )
+            assert ok, message
+
+        source_client, consumer_client = clients
+        source_tensor = tensors[0]
+        source_tensor.copy_(payload)
+        torch.cuda.synchronize()
+        ok, message = source_client.save(
+            "source", 0, 0, resolve_device_id(), [("kv:0", list(range(pages)), hashes)]
+        )
+        assert ok, message
+        fence = _sync(source_manager)
+        _await_fence(consumer_manager, fence, managers)
+        old_owner = fence["source_incarnation"]
+        old_status = _owner_status(consumer_manager, old_owner)
+        assert old_status and old_status["fresh"] and old_status["records"] == pages
+        member_key = f"/orbitkv/v2/{cluster}/members/source"
+        old_member = _etcd_json(endpoint, member_key)
+        assert old_member and old_member["owner"]["incarnation"] == old_owner
+
+        source_client.close()
+        exit_code, shutdown_seconds = source_manager.terminate_gracefully(timeout=10)
+        assert exit_code == 0
+        assert _etcd_json(endpoint, member_key) is None
+        _until(lambda: _owner_status(consumer_manager, old_owner) is None, managers)
+
+        replacement = new_manager("source", 1)
+        new_member = _until(lambda: _etcd_json(endpoint, member_key), managers)
+        assert new_member["epoch"] > old_member["epoch"]
+        new_owner = new_member["owner"]["incarnation"]
+        assert new_owner != old_owner
+        _until(
+            lambda: (
+                (status := _owner_status(consumer_manager, new_owner))
+                and status["fresh"]
+                and status["records"] == 0
+            ),
+            managers,
+        )
+        miss = _query_ready(
+            consumer_client, "consumer", hashes, "old-source-after-restart", 0, managers
+        )
+        assert not miss.lease
+        replacement_exit, replacement_shutdown_seconds = replacement.terminate_gracefully(
+            timeout=10
+        )
+        assert replacement_exit == 0
+        assert _etcd_json(endpoint, member_key) is None
+
+        result.update(
+            {
+                "old_member": old_member,
+                "new_member": new_member,
+                "shutdown_seconds": shutdown_seconds,
+                "replacement_shutdown_seconds": replacement_shutdown_seconds,
+                "old_owner_removed": True,
+                "old_source_query_rejected": True,
+            }
+        )
+        consumer_client.close()
+        source_tensor = None
+        tensors.clear()
+        torch.cuda.synchronize()
+        torch.cuda.ipc_collect()
+        (tmp_path / "graceful-shutdown-result.json").write_text(json.dumps(result, indent=2) + "\n")
 
 
 @pytest.mark.parametrize("medium", ["dram", "ssd"])

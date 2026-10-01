@@ -528,6 +528,22 @@ class CacheManagerProcess:
                 with contextlib.suppress(OSError):
                     Path(self.bootstrap_socket).unlink()
 
+    def terminate_gracefully(self, timeout: float = 10) -> tuple[int, float]:
+        """Require SIGTERM shutdown without falling back to SIGKILL."""
+        if self.process is None:
+            raise RuntimeError("Cache Manager is not running")
+        process = self.process
+        started = time.monotonic()
+        if process.poll() is None:
+            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+        returncode = process.wait(timeout=timeout)
+        elapsed = time.monotonic() - started
+        self.process = None
+        self._close_log()
+        with contextlib.suppress(OSError):
+            Path(self.bootstrap_socket).unlink()
+        return returncode, elapsed
+
     def is_running(self) -> bool:
         """Check if server process is still running."""
         return self.process is not None and self.process.poll() is None
