@@ -82,6 +82,45 @@ struct Counters {
     resets: AtomicU64,
 }
 
+#[derive(Clone, Copy)]
+enum SessionDirection {
+    Source,
+    Receiver,
+}
+
+struct ActiveSession {
+    shared: Arc<Shared>,
+    direction: SessionDirection,
+}
+
+impl ActiveSession {
+    fn new(shared: Arc<Shared>, direction: SessionDirection) -> Self {
+        let (active, peak) = match direction {
+            SessionDirection::Source => (
+                &shared.counters.source_sessions,
+                &shared.counters.source_sessions_peak,
+            ),
+            SessionDirection::Receiver => (
+                &shared.counters.receiver_sessions,
+                &shared.counters.receiver_sessions_peak,
+            ),
+        };
+        let active = active.fetch_add(1, Ordering::Relaxed) + 1;
+        peak.fetch_max(active, Ordering::Relaxed);
+        Self { shared, direction }
+    }
+}
+
+impl Drop for ActiveSession {
+    fn drop(&mut self) {
+        let active = match self.direction {
+            SessionDirection::Source => &self.shared.counters.source_sessions,
+            SessionDirection::Receiver => &self.shared.counters.receiver_sessions,
+        };
+        active.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 #[derive(Default)]
 struct MemberState {
     revision: Option<i64>,
@@ -381,25 +420,10 @@ impl Inventory for InventoryService {
         let runtime = self.runtime.clone();
         tokio::spawn(async move {
             let _permit = permit;
-            let active = runtime
-                .shared
-                .counters
-                .source_sessions
-                .fetch_add(1, Ordering::Relaxed)
-                + 1;
-            runtime
-                .shared
-                .counters
-                .source_sessions_peak
-                .fetch_max(active, Ordering::Relaxed);
+            let _active = ActiveSession::new(runtime.shared.clone(), SessionDirection::Source);
             if let Err(error) = serve_source(runtime.clone(), identity, open, input, output).await {
                 log::warn!("Inventory source session stopped: {error}");
             }
-            runtime
-                .shared
-                .counters
-                .source_sessions
-                .fetch_sub(1, Ordering::Relaxed);
         });
         Ok(Response::new(Box::pin(ReceiverStream::new(response))))
     }
@@ -939,17 +963,7 @@ async fn follow_source(runtime: InventoryRuntime, source: Member) {
         Ok(permit) => permit,
         Err(_) => return,
     };
-    let active = runtime
-        .shared
-        .counters
-        .receiver_sessions
-        .fetch_add(1, Ordering::Relaxed)
-        + 1;
-    runtime
-        .shared
-        .counters
-        .receiver_sessions_peak
-        .fetch_max(active, Ordering::Relaxed);
+    let _active = ActiveSession::new(runtime.shared.clone(), SessionDirection::Receiver);
     let mut delay = Duration::from_millis(100);
     while runtime.exact_member(&source) {
         if let Err(error) = follow_source_once(runtime.clone(), source.clone()).await {
@@ -963,11 +977,6 @@ async fn follow_source(runtime: InventoryRuntime, source: Member) {
         tokio::time::sleep(delay).await;
         delay = (delay * 2).min(Duration::from_secs(3));
     }
-    runtime
-        .shared
-        .counters
-        .receiver_sessions
-        .fetch_sub(1, Ordering::Relaxed);
 }
 
 async fn follow_source_once(runtime: InventoryRuntime, source: Member) -> Result<(), String> {

@@ -672,3 +672,20 @@ async fn fenced_source_stops_before_queueing_an_inventory_frame() {
     assert_eq!(runtime.status().frames_sent, 0);
     assert_eq!(runtime.status().outbound_queue_bytes, 0);
 }
+
+#[tokio::test]
+async fn aborted_receiver_session_releases_the_active_diagnostic() {
+    let (runtime, _, _) = runtime_for_protocol_test();
+    let shared = runtime.shared.clone();
+    let task = tokio::spawn(async move {
+        let _active = ActiveSession::new(shared, SessionDirection::Receiver);
+        std::future::pending::<()>().await;
+    });
+    while runtime.status().receiver_sessions == 0 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(runtime.status().receiver_sessions, 1);
+    task.abort();
+    let _ = task.await;
+    assert_eq!(runtime.status().receiver_sessions, 0);
+}
