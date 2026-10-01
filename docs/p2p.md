@@ -149,6 +149,12 @@ batched metadata and engine-side execution work that remains planned.
 - Registration is valid for half the acknowledged TTL measured from request send
   time. Once expired/fenced it cannot revive; restart for a new incarnation.
   Lease expiry or requester disappearance is not proof of native transport drain.
+- Normal shutdown fences membership before asking gRPC to stop, so long-lived
+  inventory streams finish before lifecycle drain and lease revocation. A test or
+  supervisor must observe a zero exit code and member-key deletion; SIGKILL
+  fallback is not graceful evidence. Same-node restart advances the epoch and
+  uses a new incarnation. Aborted old follower tasks release their active-session
+  diagnostics rather than accumulating phantom sessions.
 - The connector currently uses HTTP etcd endpoints, without exposed TLS/auth
   configuration. UUIDs and transfer tickets are consistency fences, not peer
   authentication. Use a trusted cluster network.

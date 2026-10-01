@@ -572,6 +572,12 @@ membership/configuration traffic, not block traffic. Namespace filtering does
 not reduce the session count. The pre-cutover Watch payload counter is removed
 with its sole producer.
 
+Current session counts release through an abort-safe owner when membership
+replacement cancels an old follower. After a normal receiver restart, current
+source/receiver sessions must return to the actual live topology; peak retains
+the process high-water mark. A growing current count with stable membership is a
+session-lifecycle fault, not harmless telemetry drift.
+
 `GET /cache/metadata/owners?after=<uuid>&limit=<1..128>` reports bounded,
 UUID-ordered installed owner views with their committed sequence, freshness,
 receipt age and record count. It is an operational/qualification surface, not a

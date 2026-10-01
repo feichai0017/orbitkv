@@ -44,6 +44,14 @@ Use test-owned processes for faults; preserve other workloads and collect logs
 outside the repo. Keep same-host TCP, physical two-host TCP and RDMA evidence
 separate. Build first, then test with native binaries/libraries frozen.
 
+For a normal Manager stop, require SIGTERM to fence membership before gRPC waits
+for inventory streams, then drain lifecycle ownership and revoke the member lease.
+Do not accept a test helper's SIGKILL fallback as graceful shutdown evidence.
+Verify the member key is absent before reusing a node ID, and require a larger
+epoch plus a different incarnation after restart. Current/peak inventory session
+counters are abort-safe diagnostics: a replaced follower must return current
+sessions to the real live count even when its task is aborted.
+
 For repeated-key metadata traffic, `--inventory-stream-coalesce-ms` selects a
 0–5 ms quiet window; the default is 0. A requested fence interrupts intentional
 wait but still requires complete input-interval installation. Compare inventory

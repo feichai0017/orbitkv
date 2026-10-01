@@ -36,7 +36,7 @@ record submitted, merged and released as different states.
 | --- | --- |
 | S0 | Agent handoff and Codex skill migration merged in PR #190. |
 | S1 | Evidence separation independently verified at `ec3add9b`; this delivery consolidates plans and release-based integration guidance. Acceptance covers S1 only; native CUDA qualification remains blocked on this host. |
-| S2 | Partial: S2.1–S2.8 are independently accepted; S2.9 is implemented and awaits independent review. Three-host metadata remains blocked by CPU-node SSH authorization and mutually unreachable A/B container data addresses; live-store soak and separate-host cells remain open under S2.10. |
+| S2 | Partial: S2.1–S2.9 are independently accepted; the S2.10 same-host live-store substage is implemented and awaits independent review. Physical cross-host cache/HA, final integrated serving, RDMA/GDS and S3-dependent cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
 | S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`. vLLM 0.30.0 remains an unqualified upgrade target, and public lifecycle/deployment gates remain open. |
@@ -71,7 +71,7 @@ independent protocol or native-lifetime implementation.
 | Local transport | UDS bootstrap, iceoryx2 descriptors, shared arenas and bounded operation ownership | Page-generation coverage, explicit registration data and live-process stall handling |
 | Raw copies | Contiguous/strided DMA, bounded multipart Restore, engine-local execution | Residual overhead and earlier multipart consumption |
 | Compute overlap | Qualified raw single-part layer/group readiness; coarse dependencies where required | SSD/codec pipelines and legal multipart overlap |
-| Distributed discovery | Local `GlobalIndex`, bounded scoped owner snapshot/delta streams, explicit coverage and etcd membership; no directory RPCs | Independent S2.9 review, long live-store soak and separate host-failure domains |
+| Distributed discovery | Local `GlobalIndex`, bounded scoped owner streams, explicit coverage, etcd membership and same-host live-store qualification; no directory RPCs | Independent S2.10 substage review and separate host-failure domains |
 | Remote recovery | Source authorization, TENT READ, release reconciliation, peer DRAM/SSD | Permanent requester loss and transfer/partition fault qualification |
 | Engine support | vLLM 0.29.0 and SGLang 0.5.20 local recovery and TP=1 replica sharing | Explicit multi-instance, container, P/D and TP/PP qualification cells |
 | Cost decisions | Resource-scoped observations, shadow estimates and guarded experimental peer choices | One consumed planner for complete routes, legal boundaries and P/D authority |
@@ -444,9 +444,11 @@ with the frozen S2.9 handoff; no serving or tenant-isolation claim is inferred.
 
 ### S2.10 — Sustained live-store and independent-domain qualification
 
-**Qualification open. Depends on:** accepted protocol implementation from S2.8
-and S2.9 for any scoped claims. This carries forward S2's remaining capacity and
-cross-host obligations; it does not replace their missing evidence with a new name.
+**Same-host live-store substage implemented; independent review pending. Overall
+qualification remains open. Depends on:** accepted protocol implementation from
+S2.8 and S2.9 for scoped claims. This carries forward S2's remaining capacity,
+serving and cross-host obligations; it does not replace missing evidence with a
+new name.
 
 - Execute the [frozen workload/acceptance matrix](distributed-design.md#performance-acceptance-and-ablations)
   on actual live DRAM and io_uring storage. Increase one load dimension at a time,
@@ -464,6 +466,50 @@ and recovery targets met, frozen implementation and independent-review evidence,
 and truthful topology/medium exclusions. S3-dependent crash reclamation remains
 open until native termination proof is available. Keep blocked hardware cells
 explicit and continue only work independent of them.
+
+Production commit `6e671166` adds graceful inventory-stream shutdown and
+abort-safe live session accounting. SIGTERM fences membership before gRPC waits,
+then normal lifecycle drain and lease revocation finish. The strict full-Manager
+gate observes member deletion before same-node restart, increasing epoch, changed
+incarnation and refusal of the old source. Pre-fix `272803cf` times out after ten
+seconds with an active stream; the corrected final candidate exits each restart
+in at most 0.42 seconds. An intermediate soak exposed follower-task cancellation
+leaking the diagnostic active count; the final candidate returns current and peak
+session counts to the one-session topology after receiver/source replacement.
+
+The frozen same-host A100 workload uses actual Manager Publish/Query/Restore and
+forced TCP. All/scoped DRAM and all/scoped io_uring SSD each run at least 30
+minutes, totaling 7,200 exact cycles and 7,200.50 steady seconds. Five matched
+pairs per medium preserve exact namespace/key/payload oracles; scoped stream-byte
+ratios are 0.2551 DRAM and 0.2519 SSD, with median bootstrap/repair ratios within
+1.10. SSD recovery clears both source and requester DRAM and observes source SSD
+reads plus remote bytes. Fixed-membership churn creates no etcd block/cursor
+writes. Median five-pair local save/query p99 pressure targets pass, with the
+wide confidence intervals retained as uncertainty rather than a serving claim.
+
+The final candidate runs 7,181 mixed DRAM/SSD cycles over 7,200.10 seconds while
+injecting stream partition/heal, a slow subscriber, journal overflow, receiver
+restart, source restart, source lease expiry and epoch-3 recovery. It records zero
+wrong bytes and stale authorizations, exact final coverage, bounded index/queue,
+one current/peak session in each direction and local save/query p99 pressure
+regressions of 2.13%/-2.93%. Quiet and fault-inclusive visibility are reported
+separately; the intentional slow-subscriber window is not presented as ordinary
+freshness.
+
+The real-Manager supported owner envelope stops at four. A 16-owner run is exact
+and complete but fails the frozen 50 ms target at 51.72 ms visibility p99, so it
+is retained as an unsupported boundary. Five matched 16 MiB/1 MiB index-pressure
+runs degrade explicitly to `partial_hints`, keep two of four owner views, remain
+under the configured budget and clear staging. The earlier 256 MiB soak, shutdown
+timeout, harness failures and the session-counter failure remain archived.
+
+A100 and the CPU host now have verified bidirectional data IP connectivity, but
+the current/H20 environment cannot reach their data plane or execute CUDA. Three
+independent etcd failure domains therefore remain blocked. The final integrated
+S2.9/PR #198 wheel and official vLLM 0.30.0/SGLang 0.5.20 shared-cache serving,
+physical cross-host cache traffic, RDMA, native GDS and S3 crash reclamation are
+not qualified by this substage. Do not mark S2 or full S2.10 complete from this
+same-host delivery.
 
 ## S3 — Transfer lifetime and generation-safe ownership
 

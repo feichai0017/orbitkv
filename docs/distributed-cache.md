@@ -125,6 +125,57 @@ do not establish TTFT, ITL or serving improvement. Evidence is external under
 `/workspace/orbitkv-three-host-20260930/s2-9-scoped-discovery/candidate-272803cf/`;
 independent S2.9 review remains pending.
 
+## Same-host live-store qualification candidate
+
+The S2.10 same-host candidate uses production commit `6e671166` and final harness
+`e83837f7`. Normal shutdown fences membership before gRPC waits for inventory
+streams, then drains process-channel lifecycle ownership and revokes the lease.
+Source frame sends reject a fenced registration. Source/receiver session counters
+use abort-safe ownership so replacing an incarnation cannot leave a phantom
+active count. Strict gates require zero exit within ten seconds, member-key
+deletion before node-ID reuse, a larger epoch, a new incarnation and rejection
+of the old source.
+
+On one A100 with two full Managers and forced TCP, four actual live-store cells
+each ran at least 1,800 seconds: all/scoped DRAM and all/scoped io_uring SSD.
+They performed 7,200 exact mutation/restore rounds in 7,200.50 steady seconds.
+SSD cells cleared source and consumer DRAM before recovery and observed both SSD
+read and remote-fetch bytes; the 128 MiB SSD cell evicted its oldest rounds while
+the complete all-domain index stayed below the 16 MiB logical budget. Fixed
+membership block churn added zero etcd block or publisher/cursor writes.
+
+Five matched pairs per medium retain exact candidates and payloads. Median scoped
+stream bytes are 25.51% of all-domain for DRAM and 25.19% for SSD. Median matched
+bootstrap/repair ratios stay within 1.10. Metadata-pressure save/query p99 median
+regressions meet 5%, but the five-run confidence intervals remain wide and are
+reported rather than converted into a serving claim. A final-candidate smoke
+also passes all/scoped DRAM/SSD recovery; one DRAM barrier run contains a retained
+63.82 ms outlier.
+
+The final candidate's 7,200.10-second mixed DRAM/SSD soak completes 7,181 cycles
+with peer partitions, a 50 ms/chunk slow subscriber, journal-overflow rebuild,
+receiver restart, source restart, source lease expiry and epoch-3 recovery.
+Wrong bytes and stale authorizations are zero. Quiet visibility p99, fault-inclusive
+visibility, repair time, CPU/RSS, lock time and queue/index bounds are preserved in
+the external summary. Local save/query p99 regressions during pressure are
+2.13%/-2.93%; all graceful restart stops are below 0.42 seconds, and final
+current/peak sessions are one in each direction.
+
+The supported real-Manager capacity envelope in this substage is four source
+owners. The 16-owner run converges exactly with complete coverage but records a
+51.72 ms visibility p99, exceeding the frozen 50 ms target, and remains a failed
+capacity boundary. Five matched 16 MiB/1 MiB index runs demonstrate bounded
+`partial_hints` degradation: two of four owner views remain installed, accounted
+bytes stay below 1 MiB and staging returns to zero. Failed 256 MiB-soak and
+pre-fix shutdown runs are retained with the evidence.
+
+This is metadata/client qualification, not native engine serving. A100 and the
+CPU host have bidirectional data connectivity, but the current/H20 environment
+cannot reach that data plane or initialize CUDA, so three independent etcd
+failure domains remain unavailable. Cross-host HA/cache traffic, the integrated
+vLLM 0.30.0 and SGLang 0.5.20 serving package, P/D/TP/PP/EP, RDMA, native GDS and
+S3-dependent crash reclamation remain open.
+
 ## Historical S2.1–S2.7 etcd-block path
 
 The remainder of this page through the S2.7 acceptance record describes the
