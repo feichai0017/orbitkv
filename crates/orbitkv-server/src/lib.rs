@@ -32,6 +32,7 @@ use orbitkv_common::grpc::{
 use orbitkv_core::OrbitKVEngine;
 use prometheus::Registry;
 use proto::engine::engine_server::EngineServer;
+use proto::engine::inventory_server::InventoryServer;
 use pyo3::{PyErr, Python, types::PyAnyMethods};
 use std::error::Error;
 use std::net::SocketAddr;
@@ -59,6 +60,10 @@ pub struct Cli {
     /// Peer control address in distributed mode; its port also names the default local socket.
     #[arg(long, default_value = "127.0.0.1:50055")]
     pub addr: SocketAddr,
+
+    /// Membership endpoint advertised to peers when it differs from --addr.
+    #[arg(long, requires = "etcd_endpoints")]
+    pub peer_advertise_addr: Option<SocketAddr>,
 
     /// CUDA devices to initialize (comma-separated, e.g., "0,1,2,3").
     /// If not specified, auto-detects and initializes all available GPUs.
@@ -230,9 +235,9 @@ pub struct Cli {
     #[arg(long, default_value_t = orbitkv_core::DEFAULT_INVENTORY_JOURNAL_BYTES)]
     pub inventory_journal_bytes: usize,
 
-    /// Quiet window for bounded inventory publication coalescing (0 disables).
+    /// Quiet window for bounded inventory-stream delta coalescing (0 disables).
     #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u64).range(0..=5))]
-    pub inventory_publish_coalesce_ms: u64,
+    pub inventory_stream_coalesce_ms: u64,
 
     /// HLL sliding-window list for hit-rate estimation. Comma-separated humantime
     /// durations; each becomes a canonical `window` label in metrics (e.g. `15m,1h,1d`).
@@ -617,15 +622,16 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         log::warn!("--nics has no effect without distributed cache configuration");
     }
     let membership_view = if peer_control_enabled {
-        if cli.addr.ip().is_unspecified() || cli.addr.port() == 0 {
-            return Err("distributed --addr must be a concrete, routable peer endpoint".into());
+        let peer_addr = cli.peer_advertise_addr.unwrap_or(cli.addr);
+        if peer_addr.ip().is_unspecified() || peer_addr.port() == 0 {
+            return Err("distributed peer advertise address must be concrete and routable".into());
         }
         if cli.index_budget < orbitkv_state::INVENTORY_BATCH_BYTES * 2 {
             return Err("--index-budget must hold at least two inventory batches".into());
         }
         Some(Arc::new(orbitkv_catalog::MembershipView::new(
             orbitkv_state::CacheOwner {
-                endpoint: cli.addr.to_string(),
+                endpoint: peer_addr.to_string(),
                 incarnation: uuid::Uuid::new_v4(),
             },
         )))
@@ -643,7 +649,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         .map(|_| {
             orbitkv_core::ResidencyInventory::with_publish_coalescing(
                 cli.inventory_journal_bytes,
-                Duration::from_millis(cli.inventory_publish_coalesce_ms),
+                Duration::from_millis(cli.inventory_stream_coalesce_ms),
             )
             .map(Arc::new)
         })
@@ -747,6 +753,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             ),
             None => None,
         };
+        let inventory_runtime = membership.as_ref().map(cluster::Cluster::inventory);
         // Create OrbitKVEngine inside tokio runtime context (needed for SSD cache tokio::spawn)
         let engine = Arc::new(OrbitKVEngine::new_with_config(
             cli.pool_size,
@@ -815,6 +822,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             cli.enable_prometheus,
             metrics_state.prometheus_registry.clone(),
             Arc::clone(&shutdown),
+            inventory_runtime.clone(),
         )
         .await?;
 
@@ -847,12 +855,21 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             let grpc_service = EngineServer::new(service)
                 .max_decoding_message_size(MAX_GRPC_MESSAGE_SIZE)
                 .max_encoding_message_size(MAX_GRPC_MESSAGE_SIZE);
+            let inventory_service = InventoryServer::new(
+                inventory_runtime
+                    .as_ref()
+                    .ok_or("missing distributed inventory runtime")?
+                    .service(),
+            )
+            .max_decoding_message_size(1024 * 1024)
+            .max_encoding_message_size(1024 * 1024);
 
             if let Err(err) = Server::builder()
                 .http2_keepalive_interval(Some(GRPC_SERVER_HTTP2_KEEPALIVE_INTERVAL))
                 .http2_keepalive_timeout(Some(GRPC_SERVER_HTTP2_KEEPALIVE_TIMEOUT))
                 .concurrency_limit_per_connection(16)
                 .add_service(grpc_service)
+                .add_service(inventory_service)
                 .serve_with_shutdown(cli.addr, shutdown_signal)
                 .await
             {

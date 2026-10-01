@@ -42,9 +42,9 @@ forward and requires piecewise graphs. SGLang installs persistent external event
 waits before its first graph capture. Packed buffers, vLLM recurrent operators
 and multi-part plans retain coarser dependencies; see the
 [layer readiness contract](engine-local-restore.md#layer-readiness-and-framework-consumption).
-etcd stores membership, epochs and block locations. Background publication and
-snapshot/Watch maintain a complete local global index. Discovery stays local;
-peer source authorization and release use gRPC.
+etcd stores protocol identity, membership and epochs. Bounded Manager inventory
+snapshots/deltas maintain local global indexes. Discovery stays local; peer
+source authorization and release use gRPC.
 
 
 Single-node deployment connects engines to their host's Cache Manager and needs
@@ -130,7 +130,7 @@ See [transport.md](transport.md) for the measured process-transport baseline.
 | Cache service | `orbitkv-server/src/cache/` | Transport-neutral operations, registration, and session cleanup |
 | Cache engine | `orbitkv-core` | Leases, HBM transfer scheduling, pinned DRAM, SSD, local and remote lookup |
 | Peer control | `orbitkv-server/src/peer.rs`, `orbitkv-core/src/peer/export.rs` | Server translates RPCs; Core validates and owns source grants |
-| Global index | `orbitkv-catalog`, `orbitkv-server/src/cluster` | Complete local candidate index; fenced etcd publication, snapshot/Watch and member admission |
+| Global index | `orbitkv-catalog`, `orbitkv-server/src/cluster` | Local candidate index; atomic owner-view installation, stream coverage and etcd member admission |
 | Byte movement | `orbitkv-transfer`, `orbitkv-mooncake-sys` | Mooncake Segment/BatchTransfer over RDMA or TCP |
 
 Transport-specific names belong at physical boundaries. Cache operations and
@@ -248,7 +248,7 @@ remaining execution work is tracked only in the completion plan.
 | [LMCache MP serialization](https://docs.lmcache.ai/mp/serde.html) and [FlexKV compression](https://github.com/taco-project/FlexKV/tree/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/flexkv/transfer/compression) | Separate engine precision from cache encoding; bound codec workspace and qualify formats | `codec/` owns batched GPU ANS/FP8/TurboQuant, reusable arenas, CPU SIMD and CRC validation; `transfer/worker/codec` owns engine-page and writeback lifetimes. Encoded DRAM, SSD and Mooncake payloads share versioned metadata. cuFile can write encoded GPU groups and restore through GPU validation/decode. Native GDS and broader model-quality qualification remain open. |
 | [FlexKV file-range coalescing](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/csrc/transfer_ssd.cpp) and [GDS](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/csrc/gds/gds_manager.cpp) | Merge physically compatible same-file ranges; keep storage geometry separate from engine tensor layouts | `transfer/worker/ssd` validates demand and coalesces leased ranges per file; its queue owns task/extent lifetime, bounded GPU write admission and batch-level read/write scheduling. |
 | [Mooncake TE v0.3.13.post1](https://github.com/kvcache-ai/Mooncake/blob/719735896c86b56fabec6cf3e825fb2ea640597a/mooncake-transfer-engine/include/transfer_engine.h) | Registered memory and batched remote transfers | Reused directly through `orbitkv-transfer` and `orbitkv-mooncake-sys`. Catalog/source authorization and state compatibility remain OrbitKV responsibilities. Scoped two-host TCP serving passes; RDMA remains unqualified. |
-| [Mooncake RFC #3504](https://github.com/kvcache-ai/Mooncake/issues/3504) — draft proposal | Cached membership and embedded authority; keep coordination off per-key data paths | `orbitkv-catalog` owns complete local global indexes; `server/cluster` owns etcd metadata, leases and snapshot/Watch. The RFC is a reference, not a claim of implementation equivalence. |
+| [Mooncake RFC #3504](https://github.com/kvcache-ai/Mooncake/issues/3504) — draft proposal | Cached membership and embedded authority; keep coordination off per-key data paths | `orbitkv-catalog` owns local global indexes; `server/cluster` owns etcd membership and bounded owner streams. The RFC is a reference, not a claim of implementation equivalence. |
 
 Compiled `required_ranges`, complete-state recovery and generation/lease checks
 remain the common acceptance boundary for every tier. A useful transfer policy
@@ -475,22 +475,21 @@ and destination ownership through terminal DMA completion.
 
 ## Multi-node cache path and deployment
 
-Each Manager has a complete local global index. Owner inventories record real
-DRAM and SSD residencies independently; server cluster tasks publish their bounded
-change journal to etcd using member/lease and publisher-cursor comparisons.
-Fixed-revision snapshots plus Watch synchronize indexes without request-time
-directory RPCs. A restarted Manager reconstructs locations from etcd; a failed
-Manager does not take another Manager's index with it.
+Each Manager has a local global index. Owner inventories record real DRAM and SSD
+residencies independently; server cluster tasks exchange bounded snapshots and
+contiguous deltas on the existing peer listener. Etcd watches only membership and
+protocol identity. A restarted Manager reconstructs owner views from peers without
+request-time directory RPCs.
 
 The requester reads local index evidence, plans source spans and obtains exact
 runtime/residency authorization. TENT READ moves bytes into owned pinned DRAM;
 the existing local path restores them to HBM. Newly resident requester copies
-are published asynchronously. Source SSD uses bounded exact-generation staging.
+enter their owner stream asynchronously. Source SSD uses bounded exact-generation staging.
 Source grants and release use gRPC; native TENT remains the payload transport.
 
 There are no catalog shards, fixed placement, TTL hints, directory lookup RPCs
-or compatibility runtime. Incomplete snapshots or capacity failures withdraw
-index availability. Etcd quorum loss stops new remote admission after conservative
+or compatibility runtime. Incomplete snapshots or capacity failures downgrade
+coverage without exposing staging. Etcd quorum loss stops new remote admission after conservative
 lease expiry while local caches remain usable. See [protocol and limits](distributed-cache.md).
 
 Source timeout does not prove transport revocation: overdue pins remain charged
@@ -504,8 +503,9 @@ flowchart LR
     EA[Engine A] <--> MA[Manager A: DRAM, SSD, complete local index]
     EB[Engine B] <--> MB[Manager B: DRAM, SSD, complete local index]
     MA <-->|TENT READ; OrbitKV grants and release| MB
-    MA <-->|Background publication and snapshot/Watch| E[etcd quorum: locations and members]
-    MB <-->|Background publication and snapshot/Watch| E
+    MA --> E[etcd quorum: protocol, epochs, members]
+    MB --> E
+    MA <-.->|Bounded inventory snapshot / delta| MB
 ```
 
 ## Planning direction

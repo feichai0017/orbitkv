@@ -36,15 +36,15 @@ flowchart TB
 ```
 
 The cluster view is queryable across the cache deployment. Each Manager keeps
-its exact local inventory and a complete index of advertised block locations,
-asynchronously synchronized through etcd. Resource-pressure summaries remain
+its exact local inventory and a local index of installed owner views,
+asynchronously synchronized through bounded Manager streams. Resource-pressure summaries remain
 bounded evidence rather than replicated execution authority. Extend the existing
 [global-index design](distributed-cache.md) without another central decision service.
 
 | Planning evidence | Distribution and use | Authority at execution |
 | --- | --- | --- |
 | Membership, incarnation, capabilities and topology | Cached membership/configuration; etcd stays off per-read paths | Current owner incarnation and operation compatibility |
-| Key, residence, representation, bytes and generation | Ordered owner inventory into etcd; fixed-revision snapshot/Watch into complete local indexes | Source validates and pins the selected residence |
+| Key, residence, representation, bytes and generation | Bounded owner snapshot/delta streams into local indexes with explicit coverage | Source validates and pins the selected residence |
 | Source preparation pressure and export/staging capacity | Bounded, timestamped summaries; optionally refresh only a shortlisted owner | Source admits or rejects against its current credits |
 | Transfer, decode and consumer-ready costs | Destination observations keyed by route, source/resource, representation and size; source supplies its own preparation evidence | Actual completion updates the estimates |
 
@@ -521,9 +521,10 @@ The former `backing/` and `internode/` trees are removed. `peer/export.rs` is th
 authoritative source owner: it checks incarnation, membership, namespace and
 residency sequence, accounts pinned allocations and drains completion after
 fencing. `peer/transport.rs` holds the registered pinned pool until unregister.
-Server owns etcd publication/Watch and the inbound source gRPC adapter; outbound
-source-requester clients remain with their Core peer workflows. The Mooncake crate remains the byte-transfer
-boundary, including NIC and transport selection.
+Server owns etcd membership Watch, bounded Manager inventory sessions and the
+inbound source gRPC adapter; outbound source-requester clients remain with their
+Core peer workflows. The Mooncake crate remains the byte-transfer boundary,
+including NIC and transport selection.
 
 These ownership changes preserve default source priority and the opt-in cost
 policy. Complete-route comparisons, shared-device admission and new peer memory

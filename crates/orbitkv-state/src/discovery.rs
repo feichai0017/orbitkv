@@ -6,6 +6,14 @@ pub const DISCOVERY_MAX_BYTES: usize = 64 * 1024;
 pub const DISCOVERY_MAX_REPLICAS_PER_MEDIUM: usize = 4;
 pub const DISCOVERY_MAX_ENDPOINT_BYTES: usize = 4096;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiscoveryCoverage {
+    CompleteAtWatermarks,
+    PartialHints,
+    Unavailable,
+}
+
 #[derive(
     Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]
@@ -90,6 +98,7 @@ pub struct ReplicaLocation {
 pub struct BlockCandidates {
     pub key: StateKey,
     pub replicas: Vec<ReplicaLocation>,
+    pub coverage: DiscoveryCoverage,
 }
 
 impl BlockCandidates {

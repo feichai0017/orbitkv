@@ -48,22 +48,26 @@ def drain(*manager_urls: str, timeout: float = 30) -> list[dict]:
         time.sleep(0.1)
 
 
-def synchronize(manager_url: str, *readers: str, timeout: float = 30) -> int:
+def synchronize(manager_url: str, *readers: str, timeout: float = 30) -> dict:
     response = requests.post(f"{manager_url}/cache/sync", timeout=35)
     response.raise_for_status()
-    revision = response.json()["published_revision"]
-    deadline = time.monotonic() + timeout
+    fence = response.json()["inventory_fence"]
     for reader in readers:
-        while True:
-            response = requests.get(f"{reader}/cache/metadata", timeout=5)
-            response.raise_for_status()
-            status = response.json()
-            if status and status["index"]["available"] and status["index"]["revision"] >= revision:
-                break
-            if time.monotonic() >= deadline:
-                raise TimeoutError(f"{reader} has not applied publication {revision}: {status}")
-            time.sleep(0.05)
-    return revision
+        response = requests.get(f"{reader}/cache/metadata", timeout=5)
+        response.raise_for_status()
+        status = response.json()
+        response = requests.post(
+            f"{reader}/cache/metadata/await",
+            json={
+                "inventory_fence": fence,
+                "scope_digest": status["stream"]["scope_digest"],
+                "timeout_ms": int(timeout * 1000),
+            },
+            timeout=timeout + 5,
+        )
+        if response.status_code != 200:
+            raise TimeoutError(f"{reader} did not install inventory fence {fence}: {response.text}")
+    return fence
 
 
 def verify_restore(before: dict, after: dict, expected: str, actual: dict) -> dict:

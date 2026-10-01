@@ -65,8 +65,9 @@ Multi-node cache sharing is experimental. Interfaces may change before 1.0.
   timelines, and reproduce the published latency and throughput measurements.
   Opt-in cost observations compare matching copy/SSD-route evidence in shadow,
   with resource identity and uncertainty checks before suggesting a change.
-- **Experimental shared cache.** Complete local global indexes locate peer replicas;
-  etcd replicates locations and membership, and Mooncake TENT moves bytes.
+- **Experimental shared cache.** Local global indexes locate peer replicas;
+  etcd keeps protocol identity and leased membership, bounded Manager inventory
+  streams synchronize residency views, and Mooncake TENT moves bytes.
   Source allocations remain budgeted through timeout; bounded completion records
   reconcile lost authorization replies and retry completion acknowledgements
   using reusable windows and generation-fenced tickets. Before the metadata cutover, both engines passed the

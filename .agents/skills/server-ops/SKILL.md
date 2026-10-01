@@ -1,6 +1,6 @@
 ---
 name: server-ops
-description: Configure or diagnose OrbitKV Cache Managers, local process transport, DRAM/SSD budgets, etcd global indexes and peer transfers. Use for deployment and runtime incidents.
+description: Configure or diagnose OrbitKV Cache Managers, local process transport, DRAM/SSD budgets, etcd membership, inventory-fed global indexes and peer transfers. Use for deployment and runtime incidents.
 ---
 
 # OrbitKV Manager operations
@@ -19,9 +19,10 @@ Trace an incident through its owner:
 
 1. Check process health and the engine's UDS/iceoryx2 registration before diagnosing
    a cache miss as a transport failure. See `crates/orbitkv-server/src/endpoint/`.
-2. Check `/cache/metadata`: registration validity, index availability/revision and
-   publisher progress. `POST /cache/sync` is a source publication barrier; a
-   requester must separately observe that revision. See `src/cluster/` in Server.
+2. Check `/cache/metadata`: membership validity/revision, explicit coverage,
+   active/staging index bytes, installed views and stream queues. `/cache/sync`
+   returns a source inventory fence; a controlled requester must install it via
+   `/cache/metadata/await`. A received frame or source head is not that watermark.
 3. Check source grants and generation checks in `crates/orbitkv-core/src/peer/`,
    then TENT READ/completion. Index freshness does not authorize an address.
 4. Inspect query, source export, SSD staging and GPU admission budgets using
@@ -33,13 +34,13 @@ Use test-owned processes for faults; preserve other workloads and collect logs
 outside the repo. Keep same-host TCP, physical two-host TCP and RDMA evidence
 separate. Build first, then test with native binaries/libraries frozen.
 
-For repeated-key metadata traffic, `--inventory-publish-coalesce-ms` selects a
-0–5 ms quiet window; the default is 0. `/cache/sync` interrupts intentional wait
-but still requires complete input-interval publication. Compare inventory input/
-output counters and `orbitkv_metadata_watch_key_value_bytes_bytes_total` with measured
-observer visibility and effective hits. Watch payload accounting excludes framing
-and snapshot RPCs; etcd network counters cover broader traffic. A lower mutation
-count alone does not establish serving improvement.
+For repeated-key metadata traffic, `--inventory-stream-coalesce-ms` selects a
+0–5 ms quiet window; the default is 0. A requested fence interrupts intentional
+wait but still requires complete input-interval installation. Compare inventory
+input/output counters and stream encoded bytes with measured observer visibility
+and effective hits. Etcd network counters now cover membership/configuration,
+not block propagation. A lower mutation count alone does not establish serving
+improvement.
 
 For inference interference, measure the physical NIC/direction, PCIe/NUMA and
 engine collective traffic as well as TENT transfers. Manager query-byte budgets
