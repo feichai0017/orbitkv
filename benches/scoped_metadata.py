@@ -361,6 +361,7 @@ def run(output: Path, subscription: str, coalesce_ms: int):
             with contextlib.suppress(Exception):
                 client.unregister_context(f"{node}-{index}")
             client.close()
+        tensor = None
         tensors.clear()
         torch.cuda.synchronize()
         torch.cuda.ipc_collect()

@@ -216,6 +216,7 @@ def _discover_storage_namespaces(tmp_path, identities, pages, block_bytes):
     )
     clients = []
     tensors = []
+    tensor = None
     try:
         assert manager.start(), manager.read_logs()
         for index, identity in enumerate(identities):
@@ -259,6 +260,7 @@ def _discover_storage_namespaces(tmp_path, identities, pages, block_bytes):
             with contextlib.suppress(Exception):
                 client.unregister_context(instance)
             client.close()
+        tensor = None
         tensors.clear()
         manager.stop()
         torch.cuda.synchronize()
@@ -757,6 +759,7 @@ def test_manager_scoped_inventory_keeps_outside_local_cache_and_exact_remote_byt
             ok, message = client.unregister_context(f"{node}-{label}")
             assert ok, message
             client.close()
+        tensor = local = None
         tensors.clear()
         torch.cuda.synchronize()
         torch.cuda.ipc_collect()
