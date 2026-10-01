@@ -41,6 +41,8 @@ def run(
     index_budget: str,
     expect_degraded: bool,
     seed: str,
+    pages: int,
+    skip_restore: bool,
 ):
     import torch
 
@@ -50,7 +52,7 @@ def run(
 
     assert torch.cuda.is_available()
     os.environ["MC_FORCE_TCP"] = "1"
-    pages, block_bytes = 8, 4096
+    block_bytes = 4096
     payload_bytes = pages * block_bytes
     identity = f"s2.10:capacity:{owners}:{seed}"
     (storage_namespace,) = _discover_storage_namespaces(output, [identity], pages, block_bytes)
@@ -61,6 +63,8 @@ def run(
         "duration_seconds": duration_seconds,
         "index_budget": index_budget,
         "expect_degraded": expect_degraded,
+        "pages": pages,
+        "skip_restore": skip_restore,
         "storage_namespace": storage_namespace,
         "cluster": cluster,
         "artifacts": {
@@ -84,6 +88,7 @@ def run(
 
         def start_manager(node):
             port = find_available_port()
+            journal_bytes = 16 * 1024 * 1024 if pages > 128 else 256 * 1024
             manager = CacheManagerProcess(
                 port,
                 pool_size="32mb",
@@ -101,7 +106,7 @@ def run(
                     "--membership-ttl-secs",
                     "120",
                     "--inventory-journal-bytes",
-                    str(256 * 1024),
+                    str(journal_bytes),
                     "--inventory-stream-coalesce-ms",
                     "2",
                     "--index-budget",
@@ -212,29 +217,30 @@ def run(
                 for node in source_nodes:
                     _await_fence(managers["observer"], fences[node], manager_list, timeout=30)
                 visibility.append((time.monotonic() - visibility_started) * 1000)
-                selected = source_nodes[cycle % owners]
-                expected = _payload(
-                    torch, pages, block_bytes, cycle * owners + (cycle % owners) + 1
-                )
-                _cleanup_dram(managers["observer"])
-                before = fetch_orbitkv_metrics(managers["observer"].http_port).get(
-                    "orbitkv_remote_fetch_bytes_total", 0
-                )
-                _restore(
-                    clients["observer"],
-                    "observer",
-                    tensors["observer"],
-                    hashes[selected],
-                    f"capacity-{cycle}",
-                    expected,
-                    manager_list,
-                )
-                _wait_for_remote_drain(managers[selected], managers["observer"], manager_list)
-                after = fetch_orbitkv_metrics(managers["observer"].http_port)[
-                    "orbitkv_remote_fetch_bytes_total"
-                ]
-                assert after >= before + payload_bytes
-                remote_bytes += after - before
+                if not skip_restore:
+                    selected = source_nodes[cycle % owners]
+                    expected = _payload(
+                        torch, pages, block_bytes, cycle * owners + (cycle % owners) + 1
+                    )
+                    _cleanup_dram(managers["observer"])
+                    before = fetch_orbitkv_metrics(managers["observer"].http_port).get(
+                        "orbitkv_remote_fetch_bytes_total", 0
+                    )
+                    _restore(
+                        clients["observer"],
+                        "observer",
+                        tensors["observer"],
+                        hashes[selected],
+                        f"capacity-{cycle}",
+                        expected,
+                        manager_list,
+                    )
+                    _wait_for_remote_drain(managers[selected], managers["observer"], manager_list)
+                    after = fetch_orbitkv_metrics(managers["observer"].http_port)[
+                        "orbitkv_remote_fetch_bytes_total"
+                    ]
+                    assert after >= before + payload_bytes
+                    remote_bytes += after - before
                 observer = _metadata(managers["observer"])
                 raw.write(
                     json.dumps(
@@ -301,10 +307,7 @@ def run(
         ).json()
         if expect_degraded:
             assert observer_status["index"]["coverage"] != "complete_at_watermarks"
-            assert (
-                observer_status["index"]["accounted_bytes"]
-                <= int(index_budget.removesuffix("kb")) * 1024
-            )
+            assert observer_status["index"]["accounted_bytes"] <= 1024 * 1024
             assert observer_status["index"]["expected_owner_views"] >= owners
             assert (
                 observer_status["index"]["installed_owner_views"]
@@ -334,9 +337,9 @@ def run(
                 "etcd_keys": keys,
             }
         )
+        (output / "capacity-result.json").write_text(json.dumps(result, indent=2) + "\n")
         if owners == 16 and not expect_degraded:
             assert result["visibility_ms"]["p99"] <= 50
-        (output / "capacity-result.json").write_text(json.dumps(result, indent=2) + "\n")
 
         for node, client in clients.items():
             with contextlib.suppress(Exception):
@@ -354,6 +357,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--owners", type=int, choices=(1, 4, 16), required=True)
     parser.add_argument("--seed", required=True)
+    parser.add_argument("--pages", type=int, default=8)
+    parser.add_argument("--skip-restore", action="store_true")
     parser.add_argument("--duration-seconds", type=int, default=60)
     parser.add_argument("--index-budget", default="16mb")
     parser.add_argument("--expect-degraded", action="store_true")
@@ -361,8 +366,8 @@ def main():
     args = parser.parse_args()
     if args.duration_seconds <= 0:
         parser.error("duration must be positive")
-    if args.expect_degraded and not args.index_budget.endswith("kb"):
-        parser.error("degraded index budget must use kb")
+    if args.pages <= 0 or args.pages > 1024:
+        parser.error("--pages must be in 1..=1024")
     for variable in ("ETCD_BIN", "ORBITKV_CACHE_MANAGER_BINARY", "ORBITKV_MOONCAKE_LIB_DIR"):
         if not os.environ.get(variable):
             parser.error(f"set {variable} to a frozen artifact")
@@ -375,6 +380,8 @@ def main():
             args.index_budget,
             args.expect_degraded,
             args.seed,
+            args.pages,
+            args.skip_restore,
         )
     except BaseException as error:
         (args.output / "failure.txt").write_text(repr(error) + "\n")
