@@ -181,6 +181,21 @@ fn open_and_frame_credit_reject_wrong_identity_and_future_ack() {
         .digest()
         .to_vec();
     assert!(validate_open(&runtime, &wrong_digest).is_err());
+    let exact_scope = InventoryScope::exact(["a".into(), "b".into()]).unwrap();
+    let mut noncanonical = valid.clone();
+    noncanonical.scope_mode = InventoryScopeMode::InventoryScopeExactNamespaces as i32;
+    noncanonical.scope_namespaces = ["b", "a", "b"]
+        .into_iter()
+        .map(|value| value.as_bytes().to_vec())
+        .collect();
+    noncanonical.scope_digest = exact_scope.digest().to_vec();
+    assert!(validate_open(&runtime, &noncanonical).is_err());
+    let mut exact = noncanonical;
+    exact.scope_namespaces = ["a", "b"]
+        .into_iter()
+        .map(|value| value.as_bytes().to_vec())
+        .collect();
+    assert_eq!(validate_open(&runtime, &exact).unwrap().scope, exact_scope);
 
     let (output, _) = mpsc::channel(1);
     let (control, controls) = watch::channel(ClientControl {

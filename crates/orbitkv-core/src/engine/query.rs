@@ -70,6 +70,8 @@ impl OrbitKVEngine {
         let topology = instance.sealed_topology()?;
         topology.group_total_slots(group_id)?;
         let mut positions = Vec::new();
+        let mut unknown = 0usize;
+        let requested = hashes.len();
         'discovery: for (batch, hashes) in
             hashes.chunks(orbitkv_state::DISCOVERY_MAX_KEYS).enumerate()
         {
@@ -88,8 +90,20 @@ impl OrbitKVEngine {
                 debug_assert_eq!(candidate.key.hash, encoded[position]);
                 if candidate.is_available() {
                     positions.push((batch * orbitkv_state::DISCOVERY_MAX_KEYS + position) as u32);
-                } else if group_id == 0 {
-                    break 'discovery;
+                } else {
+                    #[cfg(feature = "mooncake")]
+                    if candidate.remote_coverage().is_some_and(|coverage| {
+                        coverage != orbitkv_state::DiscoveryCoverage::CompleteAtWatermarks
+                    }) {
+                        unknown = if group_id == 0 {
+                            requested - positions.len()
+                        } else {
+                            unknown + 1
+                        };
+                    }
+                    if group_id == 0 {
+                        break 'discovery;
+                    }
                 }
             }
         }
@@ -99,7 +113,8 @@ impl OrbitKVEngine {
             .add(positions.len() as u64, &[]);
         metrics
             .cache_candidate_misses
-            .add((hashes.len() - positions.len()) as u64, &[]);
+            .add((requested - positions.len() - unknown) as u64, &[]);
+        metrics.cache_candidate_unknown.add(unknown as u64, &[]);
         Ok(positions)
     }
 

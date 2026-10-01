@@ -68,7 +68,7 @@ pub(crate) struct ReplicaSet {
     pub(crate) key: StateKey,
     replicas: SmallVec<[ReplicaCandidate; 2]>,
     #[cfg(feature = "mooncake")]
-    remote_coverage: DiscoveryCoverage,
+    remote_coverage: Option<DiscoveryCoverage>,
 }
 
 impl ReplicaSet {
@@ -77,7 +77,7 @@ impl ReplicaSet {
             key,
             replicas: SmallVec::new(),
             #[cfg(feature = "mooncake")]
-            remote_coverage: DiscoveryCoverage::Unavailable,
+            remote_coverage: None,
         }
     }
 
@@ -128,12 +128,12 @@ impl ReplicaSet {
         coverage: DiscoveryCoverage,
         replicas: Vec<ReplicaLocation>,
     ) {
-        self.remote_coverage = coverage;
+        self.remote_coverage = Some(coverage);
         self.set_peers(replicas);
     }
 
-    #[cfg(all(feature = "mooncake", test))]
-    pub(crate) fn remote_coverage(&self) -> DiscoveryCoverage {
+    #[cfg(feature = "mooncake")]
+    pub(crate) fn remote_coverage(&self) -> Option<DiscoveryCoverage> {
         self.remote_coverage
     }
 

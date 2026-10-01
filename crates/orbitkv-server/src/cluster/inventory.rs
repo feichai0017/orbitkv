@@ -1387,17 +1387,25 @@ fn decode_scope(open: &InventoryOpen) -> Result<InventoryScope, Status> {
         InventoryScopeMode::InventoryScopeAllNamespaces => Err(Status::invalid_argument(
             "all-namespace scope carries exact namespaces",
         )),
-        InventoryScopeMode::InventoryScopeExactNamespaces => InventoryScope::exact(
-            open.scope_namespaces
+        InventoryScopeMode::InventoryScopeExactNamespaces => {
+            let supplied = open
+                .scope_namespaces
                 .iter()
                 .map(|namespace| {
                     std::str::from_utf8(namespace)
                         .map(str::to_owned)
                         .map_err(|_| Status::invalid_argument("inventory namespace is not UTF-8"))
                 })
-                .collect::<Result<Vec<_>, _>>()?,
-        )
-        .map_err(Status::invalid_argument),
+                .collect::<Result<Vec<_>, _>>()?;
+            let scope =
+                InventoryScope::exact(supplied.clone()).map_err(Status::invalid_argument)?;
+            if scope.namespaces() != Some(supplied.as_slice()) {
+                return Err(Status::invalid_argument(
+                    "exact inventory namespaces are not sorted and unique",
+                ));
+            }
+            Ok(scope)
+        }
     }
 }
 

@@ -315,4 +315,21 @@ async fn registration_reconciles_exact_identity_and_rejects_old_format() {
             .await
             .is_err()
     );
+    client
+        .put(
+            "/orbitkv/v2/v3/format",
+            serde_json::to_vec(&serde_json::json!({
+                "protocol": "orbitkv/inventory-stream/v3",
+                "cluster_uuid": uuid::Uuid::new_v4(),
+            }))
+            .unwrap(),
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(
+        format::install(&mut client, "/orbitkv/v2/v3/", cluster)
+            .await
+            .is_err()
+    );
 }
