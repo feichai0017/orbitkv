@@ -123,12 +123,12 @@ asynchronous/barrier visibility p99 is 26.714/6.815 ms. Median scoped/all
 bootstrap and repair ratios are 0.9921 and 1.0044. These metadata/client results
 do not establish TTFT, ITL or serving improvement. Evidence is external under
 `/workspace/orbitkv-three-host-20260930/s2-9-scoped-discovery/candidate-272803cf/`;
-independent S2.9 review remains pending.
+independent review accepted S2.9 at `0b97be08` without blocking findings.
 
 ## Same-host live-store qualification candidate
 
-The S2.10 same-host candidate uses production commit `6e671166` and final harness
-`e83837f7`. Normal shutdown fences membership before gRPC waits for inventory
+The S2.10 same-host candidate uses production commit `50f77954` and final harness
+`4ea04fb2`. Normal shutdown fences membership before gRPC waits for inventory
 streams, then drains process-channel lifecycle ownership and revokes the lease.
 Source frame sends reject a fenced registration. Source/receiver session counters
 use abort-safe ownership so replacing an incarnation cannot leave a phantom
@@ -144,12 +144,18 @@ read and remote-fetch bytes; the 128 MiB SSD cell evicted its oldest rounds whil
 the complete all-domain index stayed below the 16 MiB logical budget. Fixed
 membership block churn added zero etcd block or publisher/cursor writes.
 
-Five matched pairs per medium retain exact candidates and payloads. Median scoped
+The first five matched pairs per medium retain exact candidates and payloads but
+ran faster than the predeclared one-round-per-second cadence; they remain useful
+correctness controls, not acceptance evidence for isolation. Median scoped
 stream bytes are 25.51% of all-domain for DRAM and 25.19% for SSD. Median matched
-bootstrap/repair ratios stay within 1.10. Metadata-pressure save/query p99 median
-regressions meet 5%, but the five-run confidence intervals remain wide and are
-reported rather than converted into a serving claim. A final-candidate smoke
-also passes all/scoped DRAM/SSD recovery; one DRAM barrier run contains a retained
+bootstrap/repair ratios stay within 1.10, but multiple per-run local save/query
+ratios and their confidence intervals cross the 5% isolation target. That
+performance cell remains unqualified. The replacement matrix runs all 20 cells at
+the predeclared one round per second and passes correctness, cadence, stream
+reduction and bootstrap/repair. Isolation still fails conservatively: DRAM save
+and query have per-run maxima 1.1683/1.2179, while SSD reaches 1.2835/1.4724;
+their bootstrap confidence bounds also exceed 1.05. A final-candidate smoke
+passes all/scoped DRAM/SSD recovery; one DRAM barrier run contains a retained
 63.82 ms outlier.
 
 The final candidate's 7,200.10-second mixed DRAM/SSD soak completes 7,181 cycles
@@ -158,8 +164,9 @@ receiver restart, source restart, source lease expiry and epoch-3 recovery.
 Wrong bytes and stale authorizations are zero. Quiet visibility p99, fault-inclusive
 visibility, repair time, CPU/RSS, lock time and queue/index bounds are preserved in
 the external summary. Local save/query p99 regressions during pressure are
-2.13%/-2.93%; all graceful restart stops are below 0.42 seconds, and final
-current/peak sessions are one in each direction.
+2.13%/-2.93%; soak restart stops are below 0.42 seconds, while the separate strict
+two-start process gate records about 1.32 seconds and remains below its ten-second
+limit. Final current/peak sessions are one in each direction.
 
 The supported real-Manager capacity envelope in this substage is four source
 owners. The 16-owner run converges exactly with complete coverage but records a

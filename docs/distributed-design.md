@@ -1,9 +1,9 @@
 # Distributed inventory and recovery design
 
-**Status: S2.9 scoped-discovery implementation candidate, 2026-10-01.** S2.8 is
-independently accepted; the scoped subscription and coverage changes described
-here are implemented but await independent review. Nothing in this document alone
-establishes new runtime, deployment or performance support. The
+**Status: S2.10 same-host correctness implementation; performance qualification
+partial.** S2.8 and S2.9 are independently accepted; the 16-owner visibility and
+5% isolation gates fail and the cross-host/serving stage remains open. Nothing in
+this document alone establishes new runtime, deployment or performance support. The
 [completion plan](completion-plan.md) is the only execution queue and acceptance
 ledger. This document specifies contracts consumed by S2, S3, S4, S6 and S7; it
 does not create a second roadmap.
