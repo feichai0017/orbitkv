@@ -761,6 +761,9 @@ impl FrameSender {
     }
 
     async fn send(&mut self, frame: InventoryServerFrame) -> Result<(), String> {
+        if !self.runtime.shared.membership.registration_valid() {
+            return Err("inventory source membership is fenced".into());
+        }
         let bytes = frame.encoded_len();
         while self.outstanding_bytes + bytes > STREAM_CREDIT_BYTES {
             self.release_acknowledged()?;

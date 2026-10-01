@@ -207,6 +207,15 @@ fenced runtimes cannot revive; restart for a new UUID. Own-record replacement,
 removal or coordinator identity change fences remote work. Local DRAM/SSD remains
 usable. Metadata expiry never proves that a native payload transfer has drained.
 
+On shutdown the Manager fences its membership before waiting for gRPC to stop.
+Inventory streams stop publishing from the fenced owner, allowing their RPCs to
+finish; normal channel/lifecycle drain and lease revocation then complete. This
+ordering prevents long-lived inventory streams from holding shutdown open while
+keepalive still renews the old registration. After an abrupt stop, wait for the
+old member key to disappear before reusing its node ID; the new process must
+have a higher epoch and a different incarnation. Fencing metadata does not
+release payload pins or GPU destinations before their existing owners drain.
+
 ### Request path and bounded work
 
 1. Read local DRAM/SSD evidence and the local global index.

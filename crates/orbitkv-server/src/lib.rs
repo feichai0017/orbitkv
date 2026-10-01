@@ -830,6 +830,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
         let shutdown_signal = {
             let notify = Arc::clone(&shutdown);
+            let membership_view = membership_view.clone();
             async move {
                 tokio::select! {
                     _ = tokio::signal::ctrl_c() => {
@@ -841,6 +842,9 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                     _ = notify.notified() => {
                         info!("Shutdown requested via control endpoint");
                     }
+                }
+                if let Some(view) = membership_view {
+                    view.fence();
                 }
                 notify.notify_waiters();
             }
