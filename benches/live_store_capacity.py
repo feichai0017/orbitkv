@@ -255,7 +255,43 @@ def run(
                     time.sleep(remaining)
             assert time.monotonic() - started >= duration_seconds
         else:
-            time.sleep(min(duration_seconds, 10))
+            while time.monotonic() - started < duration_seconds:
+                cycle_started = time.monotonic()
+                save_started = time.monotonic()
+                for owner, node in enumerate(source_nodes):
+                    cleaned = _cleanup_dram(managers[node])
+                    assert cleaned["evicted_blocks"] == pages
+                    payload = _payload(torch, pages, block_bytes, cycle * owners + owner + 1)
+                    tensors[node].copy_(payload)
+                    torch.cuda.synchronize()
+                    ok, message = clients[node].save(
+                        node,
+                        0,
+                        0,
+                        device,
+                        [("kv:0", list(range(pages)), hashes[node])],
+                    )
+                    assert ok, message
+                save_latency.append((time.monotonic() - save_started) * 1000)
+                observer = _metadata(managers["observer"])
+                assert observer["index"]["coverage"] != "complete_at_watermarks"
+                raw.write(
+                    json.dumps(
+                        {
+                            "cycle": cycle,
+                            "elapsed": time.monotonic() - started,
+                            "save_ms": save_latency[-1],
+                            "index": observer["index"],
+                            "stream": observer["stream"],
+                        }
+                    )
+                    + "\n"
+                )
+                cycle += 1
+                remaining = 1 - (time.monotonic() - cycle_started)
+                if remaining > 0:
+                    time.sleep(remaining)
+            assert time.monotonic() - started >= duration_seconds
 
         observer_status = _metadata(managers["observer"])
         owner_rows = requests.get(
