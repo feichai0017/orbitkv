@@ -173,11 +173,11 @@ def run(output: Path, subscription: str, coalesce_ms: int):
             stack.callback(manager.stop)
             assert manager.start(), manager.read_logs()
             managers.append(manager)
-            client = CacheManagerClient(manager.bootstrap_socket)
-            stack.callback(client.close)
-            clients[node] = client
             for index, identity in enumerate(identities):
                 instance = f"{node}-{index}"
+                client = CacheManagerClient(manager.bootstrap_socket)
+                stack.callback(client.close)
+                clients[(node, index)] = client
                 tensor = torch.empty(payload_bytes, dtype=torch.uint8, device="cuda")
                 tensors[(node, index)] = tensor
                 client.start_session_watcher(instance, identity, 1, 1)
@@ -202,7 +202,6 @@ def run(output: Path, subscription: str, coalesce_ms: int):
                 assert ok, message
 
         source_manager, observer_manager = managers
-        source_client, observer_client = clients["source"], clients["observer"]
         device = resolve_device_id()
 
         def save_all(round_id):
@@ -210,7 +209,7 @@ def run(output: Path, subscription: str, coalesce_ms: int):
                 tensor = tensors[("source", index)]
                 tensor.copy_((payload + round_id) % 251)
                 torch.cuda.synchronize()
-                ok, message = source_client.save(
+                ok, message = clients[("source", index)].save(
                     f"source-{index}", 0, 0, device, [("kv:0", list(range(pages)), hashes)]
                 )
                 assert ok, message
@@ -264,7 +263,7 @@ def run(output: Path, subscription: str, coalesce_ms: int):
             _cleanup_dram(observer_manager)
             expected_payload = (payloads[0] + cycle + 1) % 251
             _restore(
-                observer_client,
+                clients[("observer", 0)],
                 "observer-0",
                 tensors[("observer", 0)],
                 hashes,
@@ -275,7 +274,7 @@ def run(output: Path, subscription: str, coalesce_ms: int):
             _wait_for_remote_drain(source_manager, observer_manager, managers)
             if subscription == "scoped":
                 miss = _query_ready(
-                    observer_client,
+                    clients[("observer", 1)],
                     "observer-1",
                     hashes,
                     f"outside-{cycle}",
@@ -298,7 +297,7 @@ def run(output: Path, subscription: str, coalesce_ms: int):
         repair_ms = (time.monotonic() - repair_started) * 1000
         _cleanup_dram(observer_manager)
         _restore(
-            observer_client,
+            clients[("observer", 0)],
             "observer-0",
             tensors[("observer", 0)],
             hashes,
@@ -358,11 +357,9 @@ def run(output: Path, subscription: str, coalesce_ms: int):
         assert after_source["stream"]["source_sessions_peak"] >= 1
         assert after_observer["stream"]["receiver_sessions_peak"] >= 1
         (output / "scoped-result.json").write_text(json.dumps(result, indent=2) + "\n")
-        for node, client in clients.items():
-            for index in range(namespace_count):
-                with contextlib.suppress(Exception):
-                    client.unregister_context(f"{node}-{index}")
-        for client in clients.values():
+        for (node, index), client in clients.items():
+            with contextlib.suppress(Exception):
+                client.unregister_context(f"{node}-{index}")
             client.close()
         tensors.clear()
         torch.cuda.synchronize()

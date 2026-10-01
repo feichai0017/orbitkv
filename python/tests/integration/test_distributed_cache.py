@@ -218,10 +218,10 @@ def _discover_storage_namespaces(tmp_path, identities, pages, block_bytes):
     tensors = []
     try:
         assert manager.start(), manager.read_logs()
-        client = CacheManagerClient(manager.bootstrap_socket)
-        clients.append(client)
         for index, identity in enumerate(identities):
             instance = f"namespace-probe-{index}"
+            client = CacheManagerClient(manager.bootstrap_socket)
+            clients.append((client, instance))
             tensor = torch.empty(pages * block_bytes, dtype=torch.uint8, device="cuda")
             tensors.append(tensor)
             client.start_session_watcher(instance, identity, 1, 1)
@@ -255,10 +255,9 @@ def _discover_storage_namespaces(tmp_path, identities, pages, block_bytes):
         found = _until(discovered, [manager])
         return [found[f"namespace-probe-{index}"] for index in range(len(identities))]
     finally:
-        for client in clients:
-            for instance in [f"namespace-probe-{item}" for item in range(len(identities))]:
-                with contextlib.suppress(Exception):
-                    client.unregister_context(instance)
+        for client, instance in clients:
+            with contextlib.suppress(Exception):
+                client.unregister_context(instance)
             client.close()
         tensors.clear()
         manager.stop()
@@ -625,11 +624,11 @@ def test_manager_scoped_inventory_keeps_outside_local_cache_and_exact_remote_byt
             stack.callback(manager.stop)
             assert manager.start(), manager.read_logs()
             managers.append(manager)
-            client = CacheManagerClient(manager.bootstrap_socket)
-            stack.callback(client.close)
-            clients[node] = client
             for label, identity in (("selected", selected_identity), ("outside", outside_identity)):
                 instance = f"{node}-{label}"
+                client = CacheManagerClient(manager.bootstrap_socket)
+                stack.callback(client.close)
+                clients[(node, label)] = client
                 tensor = torch.empty(payload_bytes, dtype=torch.uint8, device="cuda")
                 tensors[(node, label)] = tensor
                 client.start_session_watcher(instance, identity, 1, 1)
@@ -654,10 +653,9 @@ def test_manager_scoped_inventory_keeps_outside_local_cache_and_exact_remote_byt
                 assert ok, message
 
         source_manager, consumer_manager = managers
-        source_client = clients["source"]
-        consumer_client = clients["consumer"]
         device = resolve_device_id()
         for label, payload in (("selected", selected_payload), ("outside", outside_payload)):
+            source_client = clients[("source", label)]
             tensor = tensors[("source", label)]
             tensor.copy_(payload)
             torch.cuda.synchronize()
@@ -682,7 +680,7 @@ def test_manager_scoped_inventory_keeps_outside_local_cache_and_exact_remote_byt
         assert consumer_metadata["index"]["scope_kind"] == "exact_namespaces"
 
         miss = _query_ready(
-            consumer_client,
+            clients[("consumer", "outside")],
             "consumer-outside",
             hashes,
             "outside-remote-miss",
@@ -694,7 +692,7 @@ def test_manager_scoped_inventory_keeps_outside_local_cache_and_exact_remote_byt
             "orbitkv_remote_fetch_bytes_total", 0
         )
         _restore(
-            consumer_client,
+            clients[("consumer", "selected")],
             "consumer-selected",
             tensors[("consumer", "selected")],
             hashes,
@@ -711,12 +709,13 @@ def test_manager_scoped_inventory_keeps_outside_local_cache_and_exact_remote_byt
         local = tensors[("consumer", "outside")]
         local.copy_(outside_payload)
         torch.cuda.synchronize()
-        ok, message = consumer_client.save(
+        outside_client = clients[("consumer", "outside")]
+        ok, message = outside_client.save(
             "consumer-outside", 0, 0, device, [("kv:0", list(range(pages)), hashes)]
         )
         assert ok, message
         _restore(
-            consumer_client,
+            outside_client,
             "consumer-outside",
             local,
             hashes,
@@ -726,7 +725,7 @@ def test_manager_scoped_inventory_keeps_outside_local_cache_and_exact_remote_byt
         )
         _cleanup_dram(consumer_manager)
         miss = _query_ready(
-            consumer_client,
+            outside_client,
             "consumer-outside",
             hashes,
             "outside-after-local-eviction",
@@ -752,11 +751,9 @@ def test_manager_scoped_inventory_keeps_outside_local_cache_and_exact_remote_byt
                 "outside_local_exact": True,
             }
         )
-        for node, client in clients.items():
-            for label in ("selected", "outside"):
-                ok, message = client.unregister_context(f"{node}-{label}")
-                assert ok, message
-        for client in clients.values():
+        for (node, label), client in clients.items():
+            ok, message = client.unregister_context(f"{node}-{label}")
+            assert ok, message
             client.close()
         tensors.clear()
         torch.cuda.synchronize()
