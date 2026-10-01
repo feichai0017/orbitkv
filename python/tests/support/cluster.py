@@ -33,6 +33,7 @@ class TcpGate:
         self._condition = threading.Condition()
         self._connections: set[tuple[socket.socket, socket.socket]] = set()
         self._partitioned = False
+        self._delay_seconds = 0.0
         self._stopped = False
         self._thread = threading.Thread(target=self._serve, name="orbitkv-etcd-gate", daemon=True)
         self._thread.start()
@@ -54,6 +55,12 @@ class TcpGate:
     def heal(self) -> None:
         with self._condition:
             self._partitioned = False
+
+    def set_delay(self, seconds: float) -> None:
+        if seconds < 0:
+            raise ValueError("TCP gate delay cannot be negative")
+        with self._condition:
+            self._delay_seconds = seconds
 
     def close(self) -> None:
         with self._condition:
@@ -115,6 +122,10 @@ class TcpGate:
                     data = source.recv(16 * 1024)
                     if not data:
                         return
+                    with self._condition:
+                        delay = self._delay_seconds
+                    if delay:
+                        time.sleep(delay)
                     destination.sendall(data)
         except (OSError, ValueError):
             pass
