@@ -657,8 +657,9 @@ status is reported separately from local adapter qualification.
 ### S5.3 — Public lifecycle and hybrid-state contracts
 
 The 2026-09-30 source check confirms that released 0.30.0 and current vLLM main
-still invoke preemption drain after page initialization, and synchronous restore
-after recurrent preprocessing. The generic preemption-ordering fix is submitted
+invoke preemption drain after page initialization in the **V2 runner**, and
+synchronous restore after recurrent preprocessing. The official V1 runner
+already calls preemption before page updates. The generic preemption-ordering fix is submitted
 as [vLLM #59410](https://github.com/vllm-project/vllm/pull/59410), linked to
 [#59409](https://github.com/vllm-project/vllm/issues/59409), at `2f868f14` based on
 main `91dab0eb`. It supersedes the earlier unsubmitted `98b917d5` patch. Local
@@ -666,17 +667,19 @@ qualification includes 46 A100 worker tests and one native MultiConnector
 Qwen3-8B output gate; the upstream contributor-eligibility gate still needs
 maintainer validation. It is not merged or released. Evidence:
 `/root/orbitkv-artifacts/engine-native-lifecycle-20260930/vllm-upstream/submission-20260930/HANDOFF.md`.
-Moving only that fence does not remove `runtime.py`'s restore
-boundary. SGLang PR #40595 (external-linker construction) and #40896 (load-failure
+The release-only profile now uses V1 and rejects multi-group/recurrent serving;
+its `runtime.py` and native-prefix override are removed. The recurring-state
+ordering gap remains an upstream requirement for reopening that profile. SGLang PR #40595 (external-linker construction) and #40896 (load-failure
 lifecycle) are open; #40759 (Mamba lifecycle proof of concept) is closed unmerged.
 Do not delete consumed safety behavior based on these proposals.
 
-- vLLM: replace the `runtime.py` runner patch only after the released interface
+- vLLM: the runner patch is removed for V1 single-group serving. Reopen V2 and
+  recurrent profiles only after the released interface
   guarantees preemption/save drain before page reuse and restore after page
   initialization/COW but before recurrent state preprocessing. Prefer a generic
   ordering fix to a new callback when the existing contract suffices.
-- Replace `scheduler.py`'s blanket multi-group native-prefix bypass with correct
-  atomic state-group availability/recovery. Audit existing divergent-hit APIs;
+- The multi-group native-prefix bypass is removed with that serving profile.
+  Reopening it requires correct atomic state-group availability/recovery. Audit existing divergent-hit APIs;
   changing a capability flag alone does not prove all states ready.
 - SGLang: move generic recurrent checkpoint allocation/commit/abort and external
   linker lifecycle support into engine components where accepted. Shrink
@@ -696,61 +699,36 @@ Do not delete consumed safety behavior based on these proposals.
 profile; all-state readiness, GPU ownership and resident-prefix behavior pass.
 Unreleased required fixes keep only their dependent profiles experimental.
 
-### S5.4 — Native P/D lifecycle with TENT payloads
+### S5.4 — Official native P/D and independent cache
 
-**Implemented and locally qualified; independent acceptance pending.** The
-experimental profile now uses native engine request/page lifecycles, explicit
-thin TENT backends and independent historical-cache adapters. The custom vLLM
-P/D connectors, handshake state machines, HTTP sender/proxy and partial-tail
-cache extension are removed. Required fork revisions and runnable commands
-are in [P/D setup](pd.md#native-pd-with-an-explicit-tent-backend); official
-vLLM 0.30.0/SGLang 0.5.20 dependency pins do not supply these APIs.
+**Release-only cutover implemented; qualification and independent acceptance open.**
+Use official vLLM 0.30.0 and SGLang 0.5.20. Live vLLM P/D uses NIXL and
+MultiConnector; SGLang uses native disaggregation. Manager shared-cache traffic
+continues to use TENT. There is no maintained engine fork runtime.
 
-- vLLM `MultiConnector` selects one destination writer. The unselected cache
-  releases its query leases; unselected native P/D sends an empty source-cleanup
-  pull without writing or reporting receive completion. Saves follow the
-  engine's valid computed extent, including prefixes supplied by native P/D,
-  so Decode-generated blocks can be restored after a process restart.
-- vLLM receive failure and shutdown wait for every producer terminal and native
-  write completion. Empty pulls cannot produce phantom completions; aggregate
-  statistics tolerate children without a Prometheus exporter. Existing upstream
-  fixes and their attribution are linked in [P/D setup](pd.md).
-- SGLang consumes public decode-owned `PDTransferEvent` observations; all six
-  private P/D observation Hooks are removed. P may restore cached state, while
-  D saves completed state and leaves incoming writes to native P/D. Ordinary
-  cache admission/graph Hooks remain S5.3 work.
-- SGLang aborts retain source pages and destination pages until all submitted
-  futures and every writer's per-attempt ACK drain. Duplicate/stale ACKs cannot
-  release a new attempt. Hold timeout quarantines and retries ABORT; it never
-  frees pages. Memory unload rejects unresolved destinations. Partial transport
-  failure isolates the peer session and requires fresh workers.
-- **Local qualification:** A100, Qwen3-8B BF16, TP=1/PP=1, eager, same-host TCP.
-  vLLM standalone P/D and both cache-selection orders match monolithic output
-  through restart; the constrained-pool gate requires actual native preemption
-  and restores Decode-generated complete blocks. A real GPU byte-level gate
-  covers partial write, cancellation, delayed ACK, shutdown drain and page reuse.
-  SGLang model execution covers blocked real writes, cancellation/quarantine,
-  partial submission, delayed ACK, native retraction and restart cache reuse,
-  with exact initial/continuation output controls.
-- **Evidence:** current gates, installed artifact/source hashes and all failed
-  attempts are retained under
-  `/root/orbitkv-artifacts/native-pd-cutover-20260930/HANDOFF.md`; the prior
-  factory/aggregate TENT completion qualification remains under
-  `/root/orbitkv-artifacts/native-pd-tent-20260930/HANDOFF.md`. A reviewer must
-  rerun the claimed profile before independent acceptance.
-- **Qualification open:** permanent peer loss, cross-host destination
-  generation/revocation, independent failure domains and RDMA remain S3 gates.
-  Without drain evidence this profile may retain pages indefinitely; it does
-  not claim automatic failover. Heterogeneous GPUs/ranks, hybrid P/D, graph modes
-  and native GDS are unqualified. Historical strict-output failures remain in
-  the preserved evidence. A TENT call does not establish GPUDirect RDMA use.
-- **Upstream/release open:** publish only focused, nonduplicate engine API and
-  lifetime contributions, consume their released replacements, and then qualify
-  the corresponding official release. A fork commit is not released support.
+- Preserve retirement of custom connectors, handshake/proxy and partial-tail
+  cache extensions, plus unselected query-lease release and valid save ranges.
+  Remove the fork-only TENT adapters, observation callbacks and runtime gates.
+- Candidate composition: P reads/writes the independent cache; D uses save-only
+  cache and native P/D owns incoming writes. Test other cache-selection orders
+  separately. Python owns engine callbacks/layout/events, Rust owns cache
+  transfers, batching, leases and resource lifetime.
+- Combine accepted S2.8 only; do not absorb unaccepted S2.9. Freeze the new wheel,
+  run official-engine cold/warm/restart/failure DRAM/SSD and shared-cache gates,
+  and verify installed engine files before/after.
+- Require real native P/D output, cancellation, preemption/retraction, restart,
+  partial-submit, delayed-ACK and page-reuse evidence before opening each profile.
+  Model output alone does not close native transfer lifetime qualification.
+- Preserve fork patches/tests at immutable commit `9aee895e` and prior evidence
+  under `/root/orbitkv-artifacts/native-pd-cutover-20260930/HANDOFF.md` as upstream
+  material. They do not establish official release support.
+- Current reproduction and limits: [P/D setup](pd.md). New evidence belongs under
+  `/root/orbitkv-artifacts/release-native-pd-20261001/`. Cross-host fault domains,
+  RDMA, hybrid/rank combinations and native GDS remain unqualified.
 
-**Acceptance:** independently reproduce transfer/output/drain evidence for the
-claimed native P/D and cache-composed modes. The replacement and retirement
-ship together; no TE/TENT compatibility fallback or duplicate P/D owner remains.
+**Acceptance:** independently reproduce the claimed released-engine and frozen
+wheel gates. Open profiles only with proven ownership and fault handling; no
+fork-only factory, callback, default configuration or CI dependency may remain.
 
 ### S5.5 — Deployment matrix and upstream maintenance
 

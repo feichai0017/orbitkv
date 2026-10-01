@@ -1,6 +1,6 @@
-"""Native Mooncake P/D + TENT + upstream Router; requires the S5.4 engine patches.
+"""Official vLLM 0.30.0 NIXL P/D + MultiConnector + upstream Router.
 
-Two TP=1 processes share one GPU over TCP. Cache-first and P/D-first modes
+Two TP=1 processes share one GPU using NIXL/UCX. Cache-first and P/D-first modes
 exercise exclusive destination writes through native MultiConnector selection.
 This gate does not qualify RDMA or parallelism changes.
 """
@@ -30,10 +30,10 @@ pytestmark = [pytest.mark.e2e, pytest.mark.gpu]
 @pytest.mark.parametrize("channel_server", [{"tier": "dram", "pool_size": "1gb"}], indirect=True)
 @pytest.mark.parametrize(
     "cache_order",
-    [None, "pd_first", "cache_first", "pd_first_pressure"],
-    ids=["pd", "pd-first", "cache-first", "preemption"],
+    [None, "save_only", "pd_first", "cache_first", "pd_first_pressure"],
+    ids=["pd", "save-only", "pd-first", "cache-first", "preemption"],
 )
-def test_native_pd_tent_matches_monolithic(model, tmp_path, channel_server, cache_order):
+def test_native_pd_nixl_matches_monolithic(model, tmp_path, channel_server, cache_order):
     pytest.importorskip("vllm")
     torch = pytest.importorskip("torch")
     if not torch.cuda.is_available() or not Path(model).is_dir():
@@ -55,7 +55,7 @@ def test_native_pd_tent_matches_monolithic(model, tmp_path, channel_server, cach
         "gpu_memory_utilization": 0.4,
         "prefix_caching": False,
         "env_overrides": {
-            "MC_FORCE_TCP": "1",
+            "VLLM_USE_V2_MODEL_RUNNER": "0",
             "VLLM_LOG_STATS_INTERVAL": "1",
             "PYTHONPATH": os.pathsep.join([str(tmp_path), os.environ.get("PYTHONPATH", "")]),
         },
@@ -95,12 +95,13 @@ def test_native_pd_tent_matches_monolithic(model, tmp_path, channel_server, cach
         for index, length in enumerate((769, 769) if pressure else (129, 257, 769))
     ]
 
-    def launch(stack, name, config=None, bootstrap=None):
+    def launch(stack, name, config=None, side_channel=None):
         options = dict(common)
-        if bootstrap is not None:
+        if side_channel is not None:
             options["env_overrides"] = {
                 **common["env_overrides"],
-                "VLLM_MOONCAKE_BOOTSTRAP_PORT": str(bootstrap),
+                "VLLM_NIXL_SIDE_CHANNEL_HOST": "127.0.0.1",
+                "VLLM_NIXL_SIDE_CHANNEL_PORT": str(side_channel),
             }
         server = VLLMServer(
             port=find_available_port(),
@@ -143,16 +144,13 @@ def test_native_pd_tent_matches_monolithic(model, tmp_path, channel_server, cach
         tmp_path = evidence_root / f"pd-processes-{restart}"
         tmp_path.mkdir()
         with contextlib.ExitStack() as stack:
-            bootstrap = find_available_port()
             urls = {}
             for role in ("producer", "consumer"):
                 native_config = {
-                    "kv_connector": "MooncakeConnector",
+                    "kv_connector": "NixlConnector",
                     "kv_role": f"kv_{role}",
-                    "kv_connector_extra_config": {
-                        "mooncake_protocol": "tcp",
-                        "transfer_engine_factory": "orbitkv.vllm.transport.TentTransferEngine",
-                    },
+                    "kv_load_failure_policy": "fail",
+                    "kv_connector_extra_config": {"backends": ["UCX"]},
                 }
                 config = native_config
                 if cache_order:
@@ -163,28 +161,35 @@ def test_native_pd_tent_matches_monolithic(model, tmp_path, channel_server, cach
                         "kv_connector_extra_config": {
                             "orbitkv.bootstrap_socket": channel_server.bootstrap_socket,
                             "orbitkv.transfer_backend": "direct",
-                            "orbitkv.mode": "read_write",
+                            "orbitkv.mode": (
+                                "save_only"
+                                if role == "consumer" and cache_order == "save_only"
+                                else "read_write"
+                            ),
                         },
                     }
                     children = [cache_config, native_config]
-                    if role == "consumer" and cache_order in {"pd_first", "pd_first_pressure"}:
+                    if role == "consumer" and cache_order in {
+                        "save_only",
+                        "pd_first",
+                        "pd_first_pressure",
+                    }:
                         children.reverse()
                     config = {
                         "kv_connector": "MultiConnector",
                         "kv_role": "kv_both",
                         "kv_connector_extra_config": {"connectors": children},
                     }
-                urls[role] = launch(stack, role, config, bootstrap)
+                urls[role] = launch(stack, role, config, find_available_port())
 
             router_port = find_available_port()
             command = [
                 router_binary,
                 "--vllm-pd-disaggregation",
                 "--kv-connector",
-                "mooncake",
+                "nixl",
                 "--prefill",
                 urls["producer"],
-                str(bootstrap),
                 "--decode",
                 urls["consumer"],
                 "--host",
@@ -248,6 +253,58 @@ def test_native_pd_tent_matches_monolithic(model, tmp_path, channel_server, cach
                         )
                     assert after.get("orbitkv_load_failures_total", 0) == 0
 
+            if cache_order == "save_only":
+                aborted_metric = r'^vllm:request_success_total\{[^}]*finished_reason="abort"[^}]*\}\s+([\d.eE+-]+)$'
+                before_cancel = requests.get(urls["consumer"] + "/metrics", timeout=5)
+                before_cancel.raise_for_status()
+                aborted_before = sum(
+                    float(value)
+                    for value in re.findall(aborted_metric, before_cancel.text, re.MULTILINE)
+                )
+                cancellation = {**bodies[-1], "max_tokens": 1024, "stream": True}
+                cancellation["prompt"] = [token + 31 for token in cancellation["prompt"]]
+                with requests.post(
+                    router_url + "/v1/completions",
+                    json=cancellation,
+                    stream=True,
+                    timeout=120,
+                ) as stream:
+                    stream.raise_for_status()
+                    first_chunk = next(
+                        line
+                        for line in stream.iter_lines(chunk_size=1)
+                        if line.startswith(b"data:")
+                    )
+                    assert b"[DONE]" not in first_chunk
+                    (tmp_path / "cancel-first-chunk.txt").write_bytes(first_chunk)
+                deadline = time.monotonic() + 30
+                while True:
+                    response = requests.get(urls["consumer"] + "/metrics", timeout=5)
+                    response.raise_for_status()
+                    gauges = re.findall(
+                        r"^vllm:num_requests_(?:running|waiting)(?:\{[^}]*\})?\s+([\d.eE+-]+)$",
+                        response.text,
+                        re.MULTILINE,
+                    )
+                    aborted_after = sum(
+                        float(value)
+                        for value in re.findall(aborted_metric, response.text, re.MULTILINE)
+                    )
+                    if (
+                        aborted_after > aborted_before
+                        and gauges
+                        and all(float(value) == 0 for value in gauges)
+                    ):
+                        (tmp_path / "cancel-drained-metrics.txt").write_text(response.text)
+                        break
+                    assert time.monotonic() < deadline, "client cancellation did not drain"
+                    time.sleep(0.2)
+                recovered = generate(router_url, bodies[0])
+                assert (
+                    recovered["choices"][0]["token_ids"] == controls[0]["choices"][0]["token_ids"]
+                )
+                (tmp_path / "after-cancel.json").write_text(json.dumps(recovered, indent=2))
+
             if pressure and not restart:
                 response = requests.get(urls["consumer"] + "/metrics", timeout=5)
                 response.raise_for_status()
@@ -264,7 +321,7 @@ def test_native_pd_tent_matches_monolithic(model, tmp_path, channel_server, cach
 
             deadline = time.monotonic() + 30
             while True:
-                log = (tmp_path / "producer.log").read_text()
+                log = (tmp_path / "consumer.log").read_text()
                 completed = sum(
                     int(value)
                     for value in re.findall(r"Num successful transfers[\"']?[:=]\s*(\d+)", log)
@@ -279,7 +336,7 @@ def test_native_pd_tent_matches_monolithic(model, tmp_path, channel_server, cach
                     for value in re.findall(r"Avg MB per transfer[\"']?[:=]\s*([\d.]+)", log)
                 )
             if pressure and restart:
-                producer_log = (tmp_path / "producer.log").read_text()
+                producer_log = (tmp_path / "consumer.log").read_text()
                 hits = [
                     int(value)
                     for value in re.findall(
@@ -289,7 +346,7 @@ def test_native_pd_tent_matches_monolithic(model, tmp_path, channel_server, cach
                 assert len(hits) >= len(bodies) and min(hits) >= 1152, producer_log[-6000:]
             for role in ("producer", "consumer"):
                 role_log = (tmp_path / f"{role}.log").read_text()
-                assert "vLLM native P/D TENT ready:" in role_log
+                assert "Nixl" in role_log
                 assert all(
                     int(value) == 0
                     for value in re.findall(

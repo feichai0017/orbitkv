@@ -1,8 +1,8 @@
 # Distributed inventory and recovery design
 
-**Status: S2.8 all-namespace implementation candidate, 2026-09-30.** S2.7 remains
-the accepted baseline; the inventory-stream cutover described here is implemented
-but not independently accepted. Nothing in this document alone establishes new
+**Status: S2.8 all-namespace inventory streams independently accepted.**
+The accepted ledger is `3f3b71a3`; S2.9 scoped discovery and S2.10 deployment
+qualification remain open. Nothing in this document alone establishes new
 runtime, deployment or performance support. The
 [completion plan](completion-plan.md) is the only execution queue and acceptance
 ledger. This document specifies contracts consumed by S2, S3, S4, S6 and S7; it

@@ -221,9 +221,8 @@ D2D scatter when source and destination layouts match. The KV state still
 occupies HBM, and destination pages must remain reserved until completion,
 including after cancellation. CUDA IPC only shares access to an allocation;
 sharing a handle does not itself move data. The
-[native P/D TENT backend](pd.md) already registers engine
-GPU tensors and submits remote writes, but remains outside the qualified shared
-cache path. Direct placement in that shared-cache path is a follow-up to
+[native P/D path](pd.md) uses each official engine's transport and ownership;
+its direct GPU transfer does not qualify shared-cache direct placement. Direct placement in that shared-cache path is a follow-up to
 qualify independently from the host-staged peer SSD route.
 
 GDS does not schedule requests or select reusable model state. Recovery planning

@@ -75,13 +75,11 @@ Multi-node cache sharing is experimental. Interfaces may change before 1.0.
   with cross-GPU numerical and RDMA limits documented separately. Peer SSD reads use
   exact-generation, bounded source-side io_uring staging before the same
   Mooncake transfer path; physical two-host qualification remains open.
-- **Experimental P/D handoff.** An explicit TENT payload factory can use the
-  engines' native P/D lifecycle and router. This requires the pinned experimental
-  engine patches in [P/D setup](docs/pd.md#native-pd-with-an-explicit-tent-backend);
-  official engine releases do not yet provide these APIs. Native P/D replaces
-  the custom connectors and proxy; cache adapters remain independent, with one
-  load owner per destination and explicit fault/drain gates.
-  RDMA and heterogeneous-GPU strict-output qualification remain open.
+- **Native P/D composition candidates.** Official vLLM uses NIXL and
+  MultiConnector; official SGLang uses native disaggregation. OrbitKV supplies
+  independent cache adapters and keeps Manager shared-cache traffic on TENT.
+  No maintained engine fork or custom P/D proxy is required. The
+  [P/D guide](docs/pd.md) records ownership and remaining fault qualification.
 
 See [supported deployments](docs/deployment.md) and
 [model qualification](docs/models.md) before selecting a checkpoint and topology.

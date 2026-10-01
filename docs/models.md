@@ -1,5 +1,11 @@
 # Model qualification
 
+The current official vLLM 0.30.0 adapter supports V1 with one attention cache
+group (`VLLM_USE_V2_MODEL_RUNNER=0`). Multi-group/recurrent serving is rejected;
+historical hybrid evidence below does not reopen that profile. Shared recovery
+contracts and SGLang component work remain available with their stated limits.
+See [the released interface audit](engine-release-audit.md).
+
 OrbitKV qualifies a checkpoint, engine release, cache format and execution
 path together. A model family name or an engine's ability to load weights is
 not evidence that OrbitKV can restore every state it needs.

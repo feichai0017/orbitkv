@@ -37,6 +37,7 @@ export const docGroups = [
       { slug: "peer-control", title: "Peer control boundary" },
       { slug: "shared-cache-qualification", title: "Shared-cache qualification" },
       { slug: "distributed-cache", title: "Distributed global index" },
+      { slug: "distributed-design", title: "Inventory and recovery design" },
       {
         slug: "distributed-comparison",
         title: "LMCache, FlexKV & Mooncake comparison",

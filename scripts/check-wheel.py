@@ -25,8 +25,6 @@ def check_wheel(path: Path, variant: str, version: str | None = None) -> None:
         "orbitkv/vllm/layout.py",
         "orbitkv/vllm/metadata.py",
         "orbitkv/vllm/metrics.py",
-        "orbitkv/vllm/transport.py",
-        "orbitkv/sglang/completion.py",
         "orbitkv/sglang/plugin.py",
         "orbitkv/sglang/linker.py",
         "orbitkv/sglang/config.py",
@@ -42,6 +40,10 @@ def check_wheel(path: Path, variant: str, version: str | None = None) -> None:
         if missing:
             raise ValueError(f"missing wheel files: {', '.join(sorted(missing))}")
         removed_files = {
+            "orbitkv/vllm/transport.py",
+            "orbitkv/vllm/runtime.py",
+            "orbitkv/sglang/pd.py",
+            "orbitkv/sglang/completion.py",
             "orbitkv/libtransfer_engine.so",
             "orbitkv/orbitkv-metaserver-py",
             "orbitkv/orbitkv-catalog-py",

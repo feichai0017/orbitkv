@@ -103,14 +103,6 @@ def test_recurrent_request_finished_holds_only_for_pending_saves():
     assert "r1" not in scheduler._block_hashes
 
 
-def test_hma_binding_disables_local_prefix_lookup_before_scheduling():
-    scheduler = _make_recurrent_scheduler()
-    block_pool = SimpleNamespace(get_cached_block=lambda *_args: object())
-    scheduler.bind_gpu_block_pool(block_pool)
-
-    assert block_pool.get_cached_block(b"hash", [0, 1]) is None
-
-
 def test_hma_accepts_different_allocator_block_counts():
     scheduler = _make_recurrent_scheduler()
 

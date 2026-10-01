@@ -44,8 +44,8 @@ hybrid recovery E2Es continue to qualify ordinary selected-range reads.
 | Peer transfer, source ownership, catalog recovery or either engine adapter | Shared-replica serving gate | `ETCD_BIN=/path/to/etcd ORBITKV_CACHE_MANAGER_BINARY=/path/to/manager pytest -m e2e tests/e2e/test_shared_cache.py -k vllm --model /path/to/qwen3-8b` | Repeat in SGLang's environment with `-k sglang`; checks remote bytes, output, catalog replay, source restart and reservation drain. Same-host TCP only. |
 | vLLM connector correctness, cache semantics, save/load/hit behavior, release candidate confidence | vLLM correctness E2E | `../.venv/vllm-release/bin/python -m pytest -m e2e tests/e2e/test_vllm_e2e_correctness.py --model /path/to/model` | Native prefix-cache control follows the same prompt plan; `long_warm` must load saved KV after vLLM restart. |
 | SGLang direct GPU linker, CUDA IPC layout, or plugin registration | SGLang direct E2E | `../.venv/sglang-release/bin/python -m pytest -m e2e tests/e2e/test_sglang_direct_e2e.py --model /path/to/model` | Restores after HBM flush and engine restart, with DRAM/forced-SSD byte counters. Output IDs and finite log probabilities match native HBM reuse; a changed identity matches cold computation. |
-| Native P/D, cache composition or request lifetime | vLLM native P/D model gate | `python -m pytest -m e2e tests/e2e/test_vllm_native_pd_e2e.py --model /path/to/dense-model --basetemp /var/tmp/orbitkv-pd/run-001` | Patched engine and upstream router from `docs/pd.md`; standalone P/D, both cache orders, restart, real pressure preemption and strict output. TP=1/PP=1 eager TCP. |
-| SGLang P/D, public callbacks or cache composition | SGLang P/D model gate | `python -m pytest -m e2e tests/e2e/test_sglang_pd_e2e.py --model /path/to/model --basetemp /var/tmp/orbitkv-pd/sglang-001` | Patched engine, built Manager and `sglang-router==0.3.2`; one GPU for two model copies or two GPUs. Actual blocked GPU writes, cancellation/quarantine/late ACK, partial failure, retraction, restart/cache bytes and strict monolithic output. |
+| Native P/D, cache composition or request lifetime | vLLM native P/D model gate | `python -m pytest -m e2e tests/e2e/test_vllm_native_pd_e2e.py --model /path/to/dense-model --basetemp /var/tmp/orbitkv-pd/run-001` | Official vLLM/NIXL and upstream router from `docs/pd.md`; standalone P/D, both cache orders, restart, real pressure preemption and strict output. TP=1/PP=1 eager NIXL/UCX. |
+| SGLang native P/D or cache composition | SGLang P/D model gate | `python -m pytest -m e2e tests/e2e/test_sglang_pd_e2e.py --model /path/to/model --basetemp /var/tmp/orbitkv-pd/sglang-001` | Official engine, built Manager and `sglang-router==0.3.2`; one GPU for two model copies or two GPUs. Native retraction, restart/cache bytes and strict monolithic output; delayed ACK/partial-write faults need separate release gates. |
 | Warm-hit pressure, pending lease release, scheduler/cache concurrency | Stress | `uv run --group test pytest -m stress tests/stress/test_vllm_warm_hit_stress.py --model /data/models/Qwen3-4B --max-model-len 2048` | Real vLLM cache pressure regression |
 | Wheel, loader path, installed console script, target CUDA runtime, published package | Release smoke | See Release Smoke | Packaging, loader, final artifact, or runtime contract regression |
 
@@ -172,7 +172,7 @@ replay, or `NONE` / `PIECEWISE` for the other consumption boundaries. The option
 applies identically to the native and OrbitKV engines; omitting it retains vLLM's
 default graph selection. Add `--vllm-multi-connector` to exercise cache recovery
 as the second child of the pinned engine's `MultiConnector`; this checks child
-metadata mapping and the recurrent pre-copy boundary independently of the
+metadata mapping and ordinary cache recovery independently of the
 separate two-worker P/D payload gate.
 
 Add `--vllm-cache-tier ssd` to enable an 8 GiB SSD cache, wait for writes to
@@ -193,7 +193,7 @@ process restarts while the Cache Manager remains alive. A separate namespace
 provides a true cold inference control for the restarted process.
 
 SGLang P/D payload-engine or cache-composition changes additionally require
-`tests/e2e/test_sglang_pd_e2e.py`. Use the patched engine in `docs/pd.md`, a built
+`tests/e2e/test_sglang_pd_e2e.py`. Use the official engine in `docs/pd.md`, a built
 Cache Manager and one GPU with room for two model copies (or two GPUs). The gate starts prefill, decode and router, publishes state,
 restarts the P/D workers, and requires a continuation to recover beyond the
 original prefill-only page boundary. It then compares both generations with a
@@ -294,27 +294,20 @@ exact-recovery result. Use `--storage-codec none` for the exact regression gate.
 See [format qualification](../../docs/storage-formats.md) for commands, the
 storage-quantization scope and the distinction from native GDS qualification.
 
-## Experimental native P/D lifecycle
+## Official native P/D candidates
 
-Use the exact patched engine revisions from [P/D setup](../../docs/pd.md#native-pd-with-an-explicit-tent-backend).
-Official engine dependency pins do not include these factories or drain fixes.
-GPU gates remain explicit and are deselected by the source-only default suite.
+Use the release environments and native transport dependencies in [P/D setup](../../docs/pd.md).
+GPU gates are explicitly marked and deselected by the source-only suite.
 
-- `test_native_pd_lifetime.py` (`integration`): real GPU bytes and native vLLM
-  control owners; delayed ACK, partial write, cancellation, shutdown and reuse.
-- `test_vllm_native_pd_e2e.py` (`e2e`): native MooncakeConnector/TENT plus
-  `vllm-router==0.1.15`; standalone P/D, both cache-selection orders and restart.
-  The pressure case caps the actual GPU block pool, requires preemption counters,
-  and compares concurrent outputs with monolithic controls.
-- `test_sglang_pd_e2e.py` (`e2e`): native SGLang/TENT and a shared 512MB Manager.
-  A test-only public plugin gates an actual WRITE, verifies quarantine until
-  drain, and records delayed/partial failures. Public `pause_generation(mode="retract")` and `continue_generation`
-  must produce a positive retraction count. New workers restore D-produced
-  cache state and both generations match monolithic output.
+- `test_vllm_native_pd_e2e.py`: NIXL and upstream router; standalone transfer,
+  cache orders, restart, observed pressure preemption and strict model output.
+- `test_sglang_pd_e2e.py`: native backend and external cache; observed retraction,
+  restarted recovery of D-produced state and strict monolithic control.
+- `test_vllm_connector_contract.py`: real released MultiConnector consumption of
+  best-effort cache versus reliable native P/D delivery.
 
-These tests also run with the installed OrbitKV artifact: its native binaries
-must match the frozen serving runtime. Test-only plugin code stays under
-`tests/support/` and is excluded from the wheel. Keep each `--basetemp`, failed
-attempt, control, JSONL event trace and archive outside the checkout.
-Permanent peer loss, cross-host revocation, RDMA, heterogeneous GPUs, hybrid
-P/D and rank changes remain separate qualification gates.
+Partial writes, cancellation during DMA, delayed ACKs and page reuse require
+independent native lifetime evidence before opening support. Retired fork-only
+fault gates and results remain at immutable commit `9aee895e` and its external
+handoff. Do not count those as official-release passes. Preserve failures,
+controls, wheel/engine hashes and raw runs outside the checkout.

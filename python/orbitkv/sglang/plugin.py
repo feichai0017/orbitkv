@@ -15,21 +15,6 @@ def register() -> None:
 
     from .admission import admit_request, enqueue_request
     from .events import initialize_layer_counter
-    from .pd import register_sglang_tent_backend
-
-    try:
-        if register_sglang_tent_backend():
-            from sglang.srt.disaggregation.lifecycle import (
-                register_pd_transfer_observer,
-            )
-
-            from .completion import observe_pd_transfer
-
-            register_pd_transfer_observer("orbitkv", observe_pd_transfer)
-    except Exception as error:
-        # SGLang logs and ignores ordinary plugin exceptions. A selected payload
-        # engine must stop startup when its required factory is unavailable.
-        raise SystemExit(f"Cannot select OrbitKV TENT payload engine: {error}") from error
 
     HookRegistry.register(
         "sglang.srt.managers.tp_worker.TpModelWorker.init_cuda_graphs",
@@ -56,8 +41,6 @@ def create_cache(ctx: Any) -> UnifiedRadixCache:
     from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
     from sglang.srt.runtime_context import get_disagg, get_memory
 
-    from .pd import validate_pd_cache_transport
-
     if ctx.disable_radix_cache:
         raise ValueError("OrbitKV direct GPU linker requires RadixCache")
     if ctx.enable_hierarchical_cache:
@@ -74,10 +57,6 @@ def create_cache(ctx: Any) -> UnifiedRadixCache:
             "select a backend with a complete recovery contract for that model"
         )
     disaggregation = get_disagg()
-    validate_pd_cache_transport(
-        disaggregation.disaggregation_mode,
-        disaggregation.disaggregation_transfer_backend,
-    )
     if not get_memory().enable_unified_cache_external_linker:
         raise ValueError(
             "OrbitKV direct GPU linker requires --enable-unified-cache-external-linker "

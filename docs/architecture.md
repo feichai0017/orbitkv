@@ -406,27 +406,15 @@ remains in [state demand and transfer planning](state-planning.md).
 
 ### P/D handoff
 
-The SGLang P/D path is deliberately separate from the external-cache linker.
-Pinned SGLang `0.5.20` owns bootstrap rooms, destination page allocation,
-parallel-rank mapping, chunk scheduling and request completion. With
-`SGLANG_MOONCAKE_TRANSFER_ENGINE=orbitkv`, the OrbitKV plugin registers an explicit
-payload factory in the experimental engine build; SGLang constructs it lazily.
-Official 0.5.20 does not ship this factory. The resulting adapter lowers
-SGLang's registered pointer ranges and WRITE batches into the same PyO3-backed
-Rust TENT owner as the vLLM P/D connector. It does not introduce another Python
-request state machine or send payload through the Cache Manager/control plane.
+Official engines own live P/D. vLLM uses NIXL and MultiConnector; SGLang uses its
+native disaggregation backend and router. OrbitKV adds an independent cache
+adapter, not a transport factory or request lifecycle. Manager shared-cache
+traffic continues through Rust/TENT. The default candidate reads cache on P
+and only saves on D so native P/D owns incoming destination writes.
 
-Rust registration tokens retain HBM/host registrations, and Rust batch
-completion retains all submitted addresses until each TENT task is terminal.
-On a transfer error the adapter invalidates the cached segment and returns
-failure to SGLang's room owner. The SGLang CLI still spells the backend
-`mooncake` because that is its fixed dispatch key; OrbitKV packages and loads
-only `libtent_shared.so`. The experimental vLLM profile likewise uses native
-MooncakeConnector and vllm-router with an explicit TENT factory. Existing custom
-vLLM owners remain until S3 destination-generation and remote-drain gates pass.
-SGLang's deferred-release timeout also needs a safe reclamation contract.
-See [P/D transfer](pd.md) for operation and current
-qualification limits.
+The old fork-only TENT factories and lifecycle observers are removed; historical
+patches/evidence remain upstream contribution material. Released model and fault
+qualification is separate from the earlier fork results. See [P/D transfer](pd.md).
 
 The first P/D-plus-cache composition uses the existing owners rather than a
 new coordinator. Both workers may attach the OrbitKV external linker to the

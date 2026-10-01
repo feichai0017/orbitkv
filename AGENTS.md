@@ -138,7 +138,6 @@ orbitkv/
 - `python/orbitkv/vllm/scheduler.py`: vLLM scheduler-side connector
 - `python/orbitkv/vllm/worker.py`: vLLM worker-side connector
 - `python/orbitkv/vllm/connector.py`: vLLM connector entry point
-- `python/orbitkv/vllm/transport.py`: thin TENT backend for the experimental native P/D profile
 - `python/orbitkv/sglang/linker.py`: direct SGLang GPU-page linker
 - `crates/orbitkv-channel/src/cache_client.rs`: query tickets, publish connection and restore lifetime
 - `python/orbitkv/client/connection.py`: Cache Manager socket selection for adapters
@@ -157,6 +156,12 @@ qualification and independent acceptance separately. Check official release tags
 an upgrade. Use main only to locate fixes and prepare upstream contributions.
 See `docs/adapters.md` and the `engine-integration` skill for ownership and
 removal gates; do not delete a correctness Hook before its replacement is consumed.
+
+The official vLLM cache profile requires `VLLM_USE_V2_MODEL_RUNNER=0` and one
+attention cache group; V2/recurrent serving is rejected pending safe released
+lifecycle contracts. P/D uses official native NIXL/MultiConnector or SGLang
+native disaggregation, with independent cache adapters. Do not reintroduce
+fork-only factories/callbacks. Manager shared-cache traffic stays on TENT.
 
 ### Rust
 

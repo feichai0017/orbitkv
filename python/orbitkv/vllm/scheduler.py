@@ -187,16 +187,6 @@ class SchedulerAdapter:
 
     def bind_gpu_block_pool(self, gpu_block_pool) -> None:
         self._gpu_block_pool = gpu_block_pool
-        if self._cache_groups.group_count <= 1:
-            return
-
-        # vLLM can cache an async-loaded dense group and expose it to a sibling
-        # before the sparse group has a usable state. OrbitKV is the sole HMA
-        # prefix index until vLLM exposes an atomic all-group cache hook.
-        def no_local_hma_prefix_hit(*_args, **_kwargs) -> None:
-            return None
-
-        gpu_block_pool.get_cached_block = no_local_hma_prefix_hit
 
     def _request_block_hashes(self, request: "Request") -> tuple[bytes, ...]:
         """Per-block keys from `Request.block_hashes` (see `ConnectorContext.hash_scale`).

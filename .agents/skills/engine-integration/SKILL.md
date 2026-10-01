@@ -35,32 +35,29 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
   Keep cancellation/drain in that consumed lifecycle; do not restore a duplicate
   private Scheduler abort Hook. Queue preparation and P/D observation Hooks are
   registered only when their startup options are enabled.
-- P/D uses the native lifecycle plus explicit TENT factories at the exact
-  experimental revisions in `docs/pd.md`; official pins lack these APIs.
-  The custom vLLM P/D package, handshake/proxy and partial-tail cache extension
-  are removed. Keep ordinary cache adapters independent; do not recreate them.
-- Native MultiConnector selects one load owner. Release unselected cache query
-  leases; an unselected P/D cleanup pull must never write or emit decode
-  completion. SGLang P restores historical state; D only saves while native
-  P/D owns incoming destinations. Preserve reliable native P/D delivery.
-- SGLang P/D telemetry consumes public immutable `PDTransferEvent` callbacks;
-  all six private P/D observation Hooks are removed. Callbacks never authorize
-  release. Timeout quarantines pages; per-attempt writer ACKs prove drain.
-  Retain source pages and all submitted layer futures until native quiescence.
-- Run native GPU lifetime and model composition gates for cancellation, partial
-  write, delayed ACK, shutdown, restart and observed preemption/retraction.
-  Permanent peer loss, cross-host revocation, RDMA and hybrid/rank combinations
-  remain open. A TENT call alone does not prove GPUDirect RDMA. Use batch status
-  for additive byte accounting and per-task status for terminal drain.
+- P/D uses official vLLM NIXL/MultiConnector and SGLang native disaggregation;
+  Manager shared-cache traffic still uses TENT. Do not reintroduce fork factories,
+  callbacks, custom connectors, handshake/proxy or partial-tail cache modes.
+- The candidate profile reads/writes cache on P and only saves on D. Native P/D
+  owns incoming destinations; cache retains completed state until its own drain.
+  Preserve reliable P/D delivery and release unselected cache query leases.
+- Official vLLM 0.30.0 requires V1 (`VLLM_USE_V2_MODEL_RUNNER=0`) and one attention
+  cache group. Reject V2/recurrent profiles before connection; the runner and
+  native-prefix monkey patches are removed. Reopen only after consumed released
+  ordering and atomic state hand-off pass GPU/model gates.
+- Run native model composition and lifetime gates separately. Output/restart
+  does not prove cancellation, partial-submit, delayed-ACK or page-reuse safety.
+  Earlier fork passes remain upstream contribution evidence, not release support.
 
 ## Replace internal coupling safely
 
-Inventory the concrete callers before editing `vllm/runtime.py`, the multi-group
-native-prefix bypass, `sglang/recovery.py`, private lifecycle Hooks or the SGLang
-TENT factory registration. Identify a released replacement or propose a minimal
-engine-generic upstream fix. Preserve safety until the replacement is consumed;
-then remove the old path in the same change. Do not add a generic facade merely
-to hide internal dependencies. A public adapter owns an interface and may remain.
+Audit every remaining Hook against `docs/engine-release-audit.md`. SGLang 0.5.20
+captures graphs before the tree-cache factory; preserve pre-capture events until
+a safe released callback exists. Its linker lookup lacks pending tickets, so
+pending-query admission remains a guarded internal Hook; queue preparation is
+opt-in. Do not describe these as public lifecycle integration. Keep native abort
+finish, cancellation/drain and page ownership until a replacement is consumed.
+Do not add a facade merely to hide internal coupling.
 
 For a stuck or incorrect request, read [the boundary tracing guide](references/lifecycle.md).
 Enqueue, layer readiness, final native drain and source retirement are distinct.

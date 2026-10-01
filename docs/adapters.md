@@ -18,8 +18,8 @@ automatically transferred to the new release.
 | DRAM/SSD/peer replicas, recovery planning, admission, leases and task lifetime | Existing OrbitKV Rust owners |
 | Raw DRAM restore | Native executor in the engine process, with Manager-retained sources |
 | Publish and SSD/codec execution | Manager physical workers |
-| P/D bootstrap and request lifecycle | Native engine lifecycle at the experimental revisions in [P/D setup](pd.md); thin TENT backends and independent cache adapters |
-| Remote memory movement | TENT; memory registration and completion do not define cache publication or DecodeReady |
+| P/D bootstrap, request lifecycle and payload | Official engine native P/D; vLLM NIXL and SGLang native backend, separately qualified with the cache |
+| Shared-cache memory movement | TENT between Managers; independent of live P/D transport |
 
 A hit is a recoverable state boundary across every required group, not simply a
 stored key. The engine supplies destination pages and their readiness; native work
@@ -36,7 +36,7 @@ Use release source, not an unversioned example, when comparing integrations:
 | --- | --- | --- |
 | [vLLM 0.30.0 LMCache MP entry](https://github.com/vllm-project/vllm/blob/ced6857afa0ea7b2e3f0846a62e1394e90f15607/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_mp_connector.py) and [LMCache 0.5.5 implementation](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/integration/vllm/lmcache_mp_connector.py) | Engine connector delegates external-cache behavior to a separately installed package | Keep a small official entry and one maintained adapter; storage and cache scheduling remain in Rust. |
 | [SGLang 0.5.20 LMCRadixCache](https://github.com/sgl-project/sglang/blob/94602c9c2b7cbdb8efd5c52802dac6a1c180089e/python/sglang/srt/mem_cache/storage/lmcache/lmc_radix_cache.py) and [LMCache 0.5.5 example](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/examples/sgl_integration/README.md) | Prefix lookup, load-back, finished-request storage and eviction integrate with native lifecycles; MP connects to a separate daemon | Preserve SGLang tree ownership through the existing UnifiedRadixCache external linker. Do not copy a second Radix tree or LMCache's ZMQ transport into OrbitKV. |
-| [LMCache 0.5.5 MP P/D recipe](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/docs/source/mp/disaggregated_prefill.rst) | Native NIXL handoff and cache reuse compose through MultiConnector, with separate P and D cache servers | Reuse the separation of responsibilities; retain TENT as our payload engine. Verify recipe prerequisites against the selected release. Shared P/D Manager use needs its own contention gate. |
+| [LMCache 0.5.5 MP P/D recipe](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/docs/source/mp/disaggregated_prefill.rst) | Native NIXL handoff and cache reuse compose through MultiConnector, with separate P and D cache servers | Reuse native NIXL for live P/D; retain TENT for Manager shared-cache transfers. Verify recipe prerequisites against the selected release. Shared P/D Manager use needs its own contention gate. |
 
 Later SGLang main changes toward LMCacheUnifiedRadixCache are not the 0.5.20
 release contract. API similarity and upstream support matrices do not qualify
@@ -78,15 +78,12 @@ Restore failures propagate with their retained GPU ownership; there is no separa
 availability flag or background health-polling thread. Plugin registration errors
 remain visible instead of silently selecting a conflicting connector.
 
-Two internal dependencies currently require deliberate replacement:
-
-- `runtime.py` wraps `GPUModelRunner.update_requests`: preempted saves must stop
-  before page reuse; restore must follow initialization/COW and precede recurrent
-  state preprocessing. Remove it only after the selected engine supplies that order.
-- `scheduler.py:bind_gpu_block_pool` disables native multi-group prefix hits to
-  prevent a dense group becoming visible before its recurrent state. Replace it
-  with correct all-state availability; preserve the fast native HBM path when the
-  full state is valid. A capability flag alone does not resolve publication races.
+The official-release profile requires `VLLM_USE_V2_MODEL_RUNNER=0` and one
+attention cache group. The V1 runner invokes the public preemption callback
+before updating pages. The `runtime.py` runner replacement and block-pool
+native-prefix override are deleted. V2 and multi-group/recurrent serving fail
+before opening a Manager connection; enabling a capability flag is insufficient
+to restore those profiles. Framework-neutral recovery contracts remain in Rust.
 
 Registration currently uses the external package plugin. Official upstream
 registration must replace duplicate registration, not hide name conflicts.
@@ -120,8 +117,8 @@ there is no additional Scheduler abort Hook.
 The ordinary cache profile registers two internal Hooks: graph initialization
 and pending-query admission. Enqueue preparation adds one Hook only when
 `ORBITKV_PREPARE_REQUESTS=1` or `ORBITKV_QUEUE_WARMUP=1` is set before startup.
-P/D observations consume the patched engine's public `PDTransferEvent` callback
-when `SGLANG_MOONCAKE_TRANSFER_ENGINE=orbitkv`; all six private P/D Hooks are removed.
+P/D transport factories and fork observation callbacks are removed. Native P/D
+uses the official engine lifecycle and is qualified separately.
 These remaining targets are version-coupled dependencies, not stable public APIs.
 Replace them with consumed factory/lifecycle/component contracts and then delete
 the duplicate logic. Unknown DSA, draft, auxiliary state and unsupported request
@@ -129,30 +126,19 @@ rings remain rejected until they have complete recovery contracts.
 
 ## P/D and cache composition
 
-Ordinary remote-cache recovery discovers metadata locally, obtains a source
-grant and performs TENT READ into Manager-owned storage before GPU restoration.
-Current live P/D performs TENT WRITE into decoder-authorized destinations.
-Neither operation direction inherently wins on latency, and neither proves RDMA.
+Manager shared-cache recovery uses local metadata discovery, an authoritative
+source grant and TENT READ before GPU restoration. Live P/D uses each official
+engine's native transport and lifecycle. vLLM uses NIXL plus MultiConnector;
+SGLang uses native disaggregation with the independent external linker.
 
-Native P/D uses the exact [experimental engine revisions](pd.md#native-pd-with-an-explicit-tent-backend).
-vLLM owns its MooncakeConnector lifecycle and uses the thin
-`vllm/transport.py` TENT backend plus upstream router. Its custom P/D package,
-handshake, proxy and partial-tail extension are removed. `MultiConnector`
-selects one load owner; the cache releases unselected query leases and native
-P/D sends only a cleanup pull when unselected. That pull cannot write pages or
-emit a decode completion. Both children may save completed state.
+The candidate vLLM profile reads/writes cache on P and uses save-only cache on D.
+SGLang likewise disables external restoration on D. Native P/D is the sole
+incoming destination writer; cache saves read completed state and retain their
+own leases until drain. Ordinary cache publication remains best effort.
 
-SGLang registers TENT through an explicit factory and reports completion through
-public decode-owned callbacks. Prefill may restore from OrbitKV. Decode saves
-completed state while native P/D owns destination writes; external restoration
-on those destinations is disabled. Timeout only quarantines unresolved pages;
-release requires per-attempt ACKs from all writers. Source pages and partial
-submissions drain before release. The public observer never authorizes release.
-
-Official vLLM 0.30.0 and SGLang 0.5.20 do not include these engine patches.
-Permanent peer loss, cross-host revocation, RDMA, hybrid P/D and rank changes
-remain unqualified. The [P/D guide](pd.md) describes restart requirements and
-model/fault gates; ordinary cache lifecycle Hooks remain S5.3 work.
+The [P/D guide](pd.md) records released configuration and qualification limits.
+Removed fork factories, callbacks and tests are preserved as immutable upstream
+contribution material; their passed results do not qualify the official engines.
 
 ## Native client
 
@@ -310,10 +296,9 @@ coordinate live P/D or watch saves in a shared local Manager.
 | `client/` | Connection configuration and GPU registration handoff |
 | `vllm/connector.py`, `scheduler.py`, `worker.py` | vLLM contract and scheduler/worker ownership |
 | `vllm/layout.py`, `metadata.py` | Cache groups and transfer intents |
-| `vllm/transport.py` | Thin TENT payload backend for native MooncakeConnector; no request state |
 | `sglang/layout.py`, `recovery.py` | Pool geometry and state/checkpoint handoff |
 | `sglang/events.py` | Graph-capture events and per-forward restore dependencies |
-| `sglang/linker.py`, `plugin.py`, `pd.py` | External linker, registration and current P/D transport adapter |
+| `sglang/linker.py`, `plugin.py` | External linker and backend registration |
 | `orbitkv-state`, `orbitkv-channel`, core execution owners | Shared semantics, native client and physical lifetime |
 
 Tests live in `python/tests/`; benchmark programs live in `benches/`; neither is

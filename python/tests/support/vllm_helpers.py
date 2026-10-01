@@ -125,6 +125,7 @@ class VLLMServer:
 
         env = os.environ.copy()
         env["PYTHONHASHSEED"] = "0"
+        env.setdefault("VLLM_USE_V2_MODEL_RUNNER", "0")
         python_source = str(PYTHON_ROOT)
         current_pythonpath = env.get("PYTHONPATH")
         env["PYTHONPATH"] = (
@@ -363,6 +364,7 @@ class CacheManager:
         # fails registration with "pinned to device N but got M".
         env.pop("CUDA_VISIBLE_DEVICES", None)
         env["PYTHONHASHSEED"] = "0"
+        env.setdefault("VLLM_USE_V2_MODEL_RUNNER", "0")
         env["PYO3_PYTHON"] = sys.executable
         env["PYTHONHOME"] = sys.base_prefix
         if libdir := sysconfig.get_config_var("LIBDIR"):

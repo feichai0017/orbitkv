@@ -1,4 +1,4 @@
-"""SGLang P/D correctness through OrbitKV's Rust/TENT payload engine."""
+"""Official SGLang native P/D composed with the external OrbitKV cache."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ pytestmark = [pytest.mark.e2e, pytest.mark.gpu]
 
 
 @pytest.mark.parametrize("channel_server", [{"tier": "dram", "pool_size": "512mb"}], indirect=True)
-def test_sglang_pd_tent_and_external_cache_match_monolithic(channel_server, request, tmp_path):
+def test_sglang_native_pd_and_external_cache_match_monolithic(channel_server, request, tmp_path):
     pytest.importorskip("sglang")
     torch = pytest.importorskip("torch")
     device_count = torch.cuda.device_count()
@@ -42,21 +42,17 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(channel_server, requ
     plugin_dir.mkdir()
     (plugin_dir / "METADATA").write_text("Name: orbitkv-source-plugin\nVersion: 0.0\n")
     (plugin_dir / "entry_points.txt").write_text(
-        "[sglang.srt.plugins]\norbitkv_fault_gate = tests.support.pd_faults:register_sglang\n"
+        "[sglang.srt.plugins]\norbitkv = orbitkv.sglang.plugin:register\n"
     )
 
     env = dict(os.environ)
     env["PYTHONPATH"] = os.pathsep.join(
         [str(PYTHON_ROOT), str(tmp_path), env.get("PYTHONPATH", "")]
     )
-    env["SGLANG_MOONCAKE_TRANSFER_ENGINE"] = "orbitkv"
-    env["SGLANG_PLUGINS"] = "orbitkv_fault_gate"
+    env["SGLANG_PLUGINS"] = "orbitkv"
     env["ORBITKV_SGLANG_ENDPOINT"] = f"unix://{channel_server.bootstrap_socket}"
     env["ORBITKV_TRANSFER_BACKEND"] = request.config.getoption("--orbitkv-transfer-backend")
     env["MC_FORCE_TCP"] = "1"
-    fault_root = tmp_path / "faults"
-    fault_root.mkdir()
-    env["ORBITKV_TEST_PD_FAULT_DIR"] = str(fault_root)
     env["SGLANG_DISAGGREGATION_DEFERRED_DECODE_KV_RELEASE_TIMEOUT"] = "1"
 
     logs = {
@@ -236,7 +232,7 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(channel_server, requ
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(model, local_files_only=True, trust_remote_code=True)
-    fragment = tokenizer.encode("A TENT P/D cache composition correctness sequence. ")
+    fragment = tokenizer.encode("A native P/D cache composition correctness sequence. ")
     prompt_tokens = (fragment * (513 // len(fragment) + 1))[:513]
     first_payload = {
         "input_ids": prompt_tokens,
@@ -253,85 +249,37 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(channel_server, requ
         )
         router_port = start_pd()
 
-        def events_since(start):
-            path = fault_root / "events.jsonl"
-            if not path.exists():
-                return []
-            complete = [
-                json.loads(line)
-                for line in path.read_text().splitlines(keepends=True)
-                if line.endswith("\n")
-            ]
-            return complete[start:]
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as caller:
-            for case in ("delayed", "partial"):
-                case_root = fault_root / case
-                case_root.mkdir()
-                event_start = len(events_since(0))
-                (fault_root / "arm.json").write_text(json.dumps({"name": case}))
-                pending = caller.submit(
-                    request_generation,
-                    router_port,
-                    {
-                        **first_payload,
-                        "rid": f"fault-{case}",
-                    },
-                )
-                try:
-                    deadline = time.monotonic() + 20
-                    while not (case_root / "first-write.json").exists():
-                        assert not pending.done(), pending.result() if pending.done() else None
-                        assert time.monotonic() < deadline, (
-                            "native P/D did not reach the GPU WRITE gate"
-                        )
-                        time.sleep(0.02)
-                    response = requests.post(
-                        f"http://127.0.0.1:{serving_ports['decode']}/abort_request",
-                        json={"abort_all": True},
-                        timeout=5,
-                    )
-                    response.raise_for_status()
-                    while not any(
-                        event["phase"] == "quarantined" for event in events_since(event_start)
-                    ):
-                        assert time.monotonic() < deadline, (
-                            "abort did not retain its destination pages"
-                        )
-                        time.sleep(0.02)
-                    held = events_since(event_start)
-                    assert not any(
-                        event["phase"] in {"completed", "cancelled", "failed"} for event in held
-                    )
-                    (case_root / "held.json").write_text(json.dumps(held, indent=2))
-                finally:
-                    (case_root / "release").touch()
-                deadline = time.monotonic() + 20
-                while not any(event["phase"] == "cancelled" for event in events_since(event_start)):
-                    assert time.monotonic() < deadline, (
-                        "late drain ACK did not release the cancelled pages"
-                    )
-                    time.sleep(0.02)
-                terminal = [
-                    event
-                    for event in events_since(event_start)
-                    if event["phase"] in {"completed", "cancelled", "failed"}
-                ]
-                assert len(terminal) == 1 and terminal[0]["phase"] == "cancelled"
-                try:
-                    result = pending.result(timeout=30)
-                except requests.HTTPError as error:
-                    result = {
-                        "status_code": error.response.status_code,
-                        "body": error.response.text,
-                    }
-                (case_root / "result.json").write_text(json.dumps(result, indent=2))
-
-        # A partial transport failure quarantines the native peer session.
-        # Recreate both workers before admitting new writes to that peer.
-        stop_all()
-        router_port = start_pd()
         decode_url = f"http://127.0.0.1:{serving_ports['decode']}"
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as caller:
+            cancelled = caller.submit(
+                request_generation,
+                router_port,
+                {
+                    **first_payload,
+                    "rid": "native-cancel",
+                    "sampling_params": {
+                        **first_payload["sampling_params"],
+                        "max_new_tokens": 512,
+                    },
+                },
+            )
+            deadline = time.monotonic() + 30
+            while True:
+                response = requests.get(decode_url + "/v1/loads?include=core", timeout=5)
+                response.raise_for_status()
+                if any(load["num_running_reqs"] for load in response.json()["loads"]):
+                    break
+                assert not cancelled.done(), "generation finished before cancellation"
+                assert time.monotonic() < deadline, "decode never admitted the cancellation case"
+                time.sleep(0.02)
+            response = requests.post(
+                decode_url + "/abort_request", json={"abort_all": True}, timeout=5
+            )
+            response.raise_for_status()
+            cancellation = cancelled.result(timeout=30)
+            assert cancellation["meta_info"]["finish_reason"]["type"] == "abort", cancellation
+            (tmp_path / "cancelled.json").write_text(json.dumps(cancellation, indent=2))
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as caller:
             pending = caller.submit(request_generation, router_port, first_payload)
             deadline = time.monotonic() + 30
@@ -362,8 +310,6 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(channel_server, requ
             json.dumps(fetch_orbitkv_metrics(channel_server.http_port), indent=2)
         )
 
-        for name in ("prefill", "decode"):
-            assert "SGLang P/D TENT ready:" in logs[name].read_text()
         stop_all()
 
         before_restart = fetch_orbitkv_metrics(channel_server.http_port)
@@ -402,7 +348,6 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(channel_server, requ
 
         monolithic_port = find_available_port()
         monolithic_env = dict(env)
-        monolithic_env.pop("SGLANG_MOONCAKE_TRANSFER_ENGINE")
         monolithic = launch(
             "monolithic",
             common

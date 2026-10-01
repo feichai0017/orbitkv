@@ -265,7 +265,7 @@ def test_hma_requires_boundary_state_hand_off_api():
 
 
 @pytest.mark.parametrize(
-    "use_v2,error", [(True, "kv_connector_block_state"), (False, "V2 model runner")]
+    "use_v2,error", [(True, "one attention cache group"), (False, "one attention cache group")]
 )
 def test_hma_rejects_incompatible_vllm_before_opening_cache_connections(monkeypatch, use_v2, error):
     from vllm.v1.kv_cache_interface import FullAttentionSpec, MambaSpec

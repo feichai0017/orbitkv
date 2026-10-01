@@ -22,9 +22,8 @@ does not establish OrbitKV compatibility.
 | Multiple engines on one node | Engines share one Manager and its cache budget | Shared endpoint and independent instance registrations are implemented; concurrent multi-engine serving and container isolation need separate qualification |
 | Independent matching replicas, TP=1 | Two engines, two Managers and etcd | Qwen3-8B sharing and restart gates pass on both engines over same-host TCP and the recorded H20/A100 TCP natural-text suite; [recorded scope](shared-cache-qualification.md#recorded-result) |
 | Shared cache across nodes | One Cache Manager per host with local global index + etcd metadata | Experimental; [two-host TCP correctness](shared-cache-qualification.md#two-host-tcp-2026-09-28) is recorded with numerical limits; RDMA and metadata scale/failure qualification remain open |
-| vLLM native P/D over OrbitKV TENT | Patched native MooncakeConnector, thin TENT backend and upstream router; optional Manager for historical reuse | Experimental same-A100 TCP composition, drain, preemption and restart gates; [exact profile](pd.md) |
-| SGLang P/D over OrbitKV TENT | Patched native lifecycle, public observations, TENT factory and upstream router; optional Manager | Experimental same-A100 TCP composition, fault/drain, retraction and restart gates; historical heterogeneous-output failure and RDMA remain open |
-| vLLM P/D through upstream NIXL | Prefill, decode, NIXL-aware router | Upstream vLLM connector; separate from OrbitKV cache |
+| vLLM native P/D plus cache | Official NIXL, MultiConnector, upstream router and independent Managers | Candidate: P read/write cache, D save-only; [gates and limits](pd.md) |
+| SGLang native P/D plus cache | Official disaggregation backend/router and independent Managers | Candidate: P restore, D save; [gates and limits](pd.md) |
 
 ```mermaid
 flowchart LR
@@ -219,15 +218,11 @@ P/D moves KV for the same request from prefill to decode. Remote caching finds
 reusable KV from an earlier request. These are independent paths; see
 [P/D and NIXL](pd.md) for the ownership and control-flow distinction.
 
-The [native TENT profile](pd.md#native-pd-with-an-explicit-tent-backend)
-uses patched native vLLM/SGLang lifecycles, thin OrbitKV payload backends and
-upstream routers. Use the exact engine revisions there; official release pins
-lack those APIs. The [local vLLM launcher](../scripts/run_pd_local.sh) consumes
-`MooncakeConnector` and `vllm-router`, with no OrbitKV proxy. Cache composition
-keeps one load owner per destination and independent historical-cache adapters.
-The native model/fault gates, restart requirements and remaining qualification
-limits are in [P/D setup](pd.md). OrbitKV ships no NIXL connector; the
-[NIXL comparison launcher](../scripts/run_nixl_local.sh) uses upstream code.
+The [native P/D candidate](pd.md) uses official vLLM 0.30.0 NIXL/MultiConnector
+and official SGLang 0.5.20 disaggregation, with independent OrbitKV caches and
+upstream routers. The [local vLLM launcher](../scripts/run_pd_local.sh) uses
+read/write cache on P and save-only cache on D. Ordinary cache serving does not
+require a P/D transport or router. Lifecycle fault qualification remains separate.
 
 ### Experimental vLLM P/D with NIXL plus OrbitKV cache
 
@@ -254,6 +249,7 @@ own instance ID.
 ### Prefill
 
 ```bash
+VLLM_USE_V2_MODEL_RUNNER=0 \
 PYTHONHASHSEED=42 \
 VLLM_NIXL_SIDE_CHANNEL_HOST=<p_node_ip> \
 VLLM_NIXL_SIDE_CHANNEL_PORT=5600 \
@@ -290,6 +286,7 @@ vllm serve /path/to/qwen3-8b \
 ### Decode
 
 ```bash
+VLLM_USE_V2_MODEL_RUNNER=0 \
 PYTHONHASHSEED=42 \
 VLLM_NIXL_SIDE_CHANNEL_HOST=<d_node_ip> \
 VLLM_NIXL_SIDE_CHANNEL_PORT=5601 \
