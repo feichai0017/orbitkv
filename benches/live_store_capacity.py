@@ -167,7 +167,7 @@ def run(
         fences = {node: _sync(managers[node]) for node in source_nodes}
         if not expect_degraded:
             for node in source_nodes:
-                _await_fence(managers["observer"], fences[node], manager_list, timeout=60)
+                _await_fence(managers["observer"], fences[node], manager_list, timeout=30)
             bootstrap_ms = (time.monotonic() - bootstrap_started) * 1000
             assert _metadata(managers["observer"])["index"]["coverage"] == (
                 "complete_at_watermarks"
@@ -210,7 +210,7 @@ def run(
                 fences = {node: _sync(managers[node]) for node in source_nodes}
                 visibility_started = time.monotonic()
                 for node in source_nodes:
-                    _await_fence(managers["observer"], fences[node], manager_list, timeout=60)
+                    _await_fence(managers["observer"], fences[node], manager_list, timeout=30)
                 visibility.append((time.monotonic() - visibility_started) * 1000)
                 selected = source_nodes[cycle % owners]
                 expected = _payload(
