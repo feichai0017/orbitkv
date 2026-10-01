@@ -395,8 +395,8 @@ unsafe assignment. It accepted the complete S2.8 delivery at `ad5bb8e6`.
 
 ### S2.9 — Scoped discovery and explicit coverage
 
-**Implemented; independent review pending. Depends on:** accepted S2.8.
-Implements the [subscription contract](distributed-design.md#subscription-coverage-and-local-query-semantics).
+**Independently accepted at `0b97be08`. Depends on:** accepted S2.8. Implements
+the [subscription contract](distributed-design.md#subscription-coverage-and-local-query-semantics).
 
 - Add exact namespace allowlists and canonical scope identity; initially use
   explicit configuration, not query-triggered subscription. Preserve model,
@@ -430,8 +430,17 @@ Stable churn has zero history gaps; the isolated repair phase records a real gap
 and reset; block churn adds zero etcd block/cursor revisions. Scope filtering
 retains one peer session and makes no serving, TTFT/ITL, tenant-isolation or
 cross-host claim. Raw/failed controls and frozen hashes remain outside the
-checkout. Do not mark this substage accepted until the independent reviewer
-checks the diff, reruns gates and verifies those artifacts.
+checkout.
+
+The independent reviewer accepted S2.9 without blocking findings after checking
+the complete `3f3b71a3..0b97be08` diff, rerunning the state/catalog unit suites,
+verifying all 104 matrix-manifest entries and ten zero exit files, matching the
+source archive to production commit `272803cf`, and confirming frozen-process,
+socket and GPU cleanup. Acceptance remains limited to two full Managers on one
+A100 host with forced TCP. Physical cross-host failure domains, three-host etcd
+HA, engine serving, P/D and parallelism profiles, RDMA, native GDS and S2.10's
+long live-store cells remain open. The signed-off external report is retained
+with the frozen S2.9 handoff; no serving or tenant-isolation claim is inferred.
 
 ### S2.10 — Sustained live-store and independent-domain qualification
 
