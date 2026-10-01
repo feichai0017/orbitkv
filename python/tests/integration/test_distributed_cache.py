@@ -597,6 +597,20 @@ def test_manager_scoped_inventory_keeps_outside_local_cache_and_exact_remote_byt
             port = find_available_port()
             source = node == "source"
             ssd_enabled = source and medium == "ssd"
+            manager_args = [
+                "--etcd-endpoints",
+                endpoint,
+                "--node-id",
+                node,
+                "--cluster-name",
+                cluster,
+                "--membership-ttl-secs",
+                "60",
+                "--metadata-namespace",
+                selected_scope,
+            ]
+            if not ssd_enabled:
+                manager_args.append("--enable-prometheus")
             manager = CacheManagerProcess(
                 port,
                 pool_size="64mb",
@@ -607,19 +621,7 @@ def test_manager_scoped_inventory_keeps_outside_local_cache_and_exact_remote_byt
                 ssd_backend="uring",
                 ssd_read_path="uring" if ssd_enabled else None,
                 log_path=tmp_path / f"scoped-{node}-manager.log",
-                extra_args=(
-                    "--etcd-endpoints",
-                    endpoint,
-                    "--node-id",
-                    node,
-                    "--cluster-name",
-                    cluster,
-                    "--membership-ttl-secs",
-                    "60",
-                    "--metadata-namespace",
-                    selected_scope,
-                    "--enable-prometheus",
-                ),
+                extra_args=tuple(manager_args),
             )
             stack.callback(manager.stop)
             assert manager.start(), manager.read_logs()
