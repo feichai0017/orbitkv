@@ -34,7 +34,14 @@ from .artifacts import external_path
 from .scoped_metadata import _etcd_revision, _process_sample, _summary
 
 
-def run(output: Path, owners: int, duration_seconds: int, index_budget: str, expect_degraded: bool):
+def run(
+    output: Path,
+    owners: int,
+    duration_seconds: int,
+    index_budget: str,
+    expect_degraded: bool,
+    seed: str,
+):
     import torch
 
     import orbitkv.orbitkv as native
@@ -45,11 +52,12 @@ def run(output: Path, owners: int, duration_seconds: int, index_budget: str, exp
     os.environ["MC_FORCE_TCP"] = "1"
     pages, block_bytes = 8, 4096
     payload_bytes = pages * block_bytes
-    identity = f"s2.10:capacity:{owners}:{uuid.uuid4().hex}"
+    identity = f"s2.10:capacity:{owners}:{seed}"
     (storage_namespace,) = _discover_storage_namespaces(output, [identity], pages, block_bytes)
     cluster = f"s210-capacity-{owners}-{uuid.uuid4().hex[:8]}"
     result = {
         "owners": owners,
+        "seed": seed,
         "duration_seconds": duration_seconds,
         "index_budget": index_budget,
         "expect_degraded": expect_degraded,
@@ -309,6 +317,7 @@ def run(output: Path, owners: int, duration_seconds: int, index_budget: str, exp
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--owners", type=int, choices=(1, 4, 16), required=True)
+    parser.add_argument("--seed", required=True)
     parser.add_argument("--duration-seconds", type=int, default=60)
     parser.add_argument("--index-budget", default="16mb")
     parser.add_argument("--expect-degraded", action="store_true")
@@ -329,6 +338,7 @@ def main():
             args.duration_seconds,
             args.index_budget,
             args.expect_degraded,
+            args.seed,
         )
     except BaseException as error:
         (args.output / "failure.txt").write_text(repr(error) + "\n")
