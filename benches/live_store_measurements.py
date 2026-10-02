@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import bisect
+import json
 import os
 import statistics
 from pathlib import Path
@@ -141,3 +143,103 @@ def _context_switch_delta(before, after):
         "voluntary": sum(final[key][0] - initial[key][0] for key in surviving),
         "nonvoluntary": sum(final[key][1] - initial[key][1] for key in surviving),
     }
+
+
+def _pressure_exposure(
+    output, condition, expected_rounds, pressure_cadence_ms, foreground_cadence_ms, shift
+):
+    def rows(name):
+        with (output / name).open() as file:
+            for line in file:
+                yield json.loads(line)
+
+    foreground = [row for row in rows("samples.jsonl") if row["measured"]]
+    bursts = []
+    actual = []
+    scheduling_lag = []
+    for row in rows("pressure-samples.jsonl"):
+        actual.append(row["actual_seconds"])
+        scheduling_lag.append((row["actual_seconds"] - row["scheduled_seconds"]) * 1000)
+        if condition == "pressure":
+            assert row["inventory"]["sequence"] - row["sequence_before"] == shift * 2
+            first, last = row["first_publication_mono_ns"], row["last_publication_mono_ns"]
+            assert 0 < first <= last
+            bursts.append((first, last))
+        else:
+            assert row["inventory"]["sequence"] == row["sequence_before"]
+    assert len(actual) == expected_rounds
+    interval_ms = [
+        (later - earlier) * 1000 for earlier, later in zip(actual, actual[1:], strict=False)
+    ]
+    installed = {}
+    poll_ms, poll_gaps, sampler_cpu = [], [], 0
+    previous_poll = None
+    for row in rows("observer-samples.jsonl"):
+        owner = row["owner"]
+        key = (owner["owner"], owner["view_id"], owner["applied_sequence"])
+        timestamp = owner["installed_mono_ns"]
+        assert installed.setdefault(key, timestamp) == timestamp
+        poll_ms.append((row["poll_end_mono_ns"] - row["poll_start_mono_ns"]) / 1e6)
+        sampler_cpu += row["sampler_cpu_ns"]
+        if previous_poll is not None:
+            poll_gaps.append((row["poll_start_mono_ns"] - previous_poll) / 1e6)
+        previous_poll = row["poll_start_mono_ns"]
+    install_times = sorted(installed.values())
+    starts = [first for first, _ in bursts]
+    ends = [last for _, last in bursts]
+    phases = set()
+    windows_without_install = []
+    direct_overlap = {"save": 0, "query": 0}
+    offered_overlap = {"save": 0, "query": 0}
+    for row in foreground:
+        window_start = row["round_start_mono_ns"]
+        window_end = window_start + foreground_cadence_ms * 1_000_000
+        pos = bisect.bisect_left(install_times, window_start)
+        if pos == len(install_times) or install_times[pos] >= window_end:
+            windows_without_install.append(row["round"])
+        if starts:
+            phase_index = bisect.bisect_right(starts, row["save_start_mono_ns"]) - 1
+            assert phase_index >= 0
+            phase = (row["save_start_mono_ns"] - starts[phase_index]) / (pressure_cadence_ms * 1e6)
+            phases.add(min(3, int(phase * 4)))
+        for operation in direct_overlap:
+            start, end = row[f"{operation}_start_mono_ns"], row[f"{operation}_end_mono_ns"]
+            pos = bisect.bisect_left(install_times, start)
+            if pos < len(install_times) and install_times[pos] <= end:
+                direct_overlap[operation] += 1
+            pos = bisect.bisect_left(ends, start)
+            if pos < len(starts) and starts[pos] <= end:
+                offered_overlap[operation] += 1
+    pressure_result = json.loads((output / "pressure-source-result.json").read_text())
+    rate_ratio = len(actual) * pressure_cadence_ms / 1000 / pressure_result["elapsed_seconds"]
+    report = {
+        "condition": condition,
+        "foreground_samples": len(foreground),
+        "source_rounds": len(actual),
+        "source_rate_ratio": rate_ratio,
+        "source_scheduling_lag_ms": _summary(scheduling_lag),
+        "source_interval_ms": _summary(interval_ms),
+        "minimum_source_interval_ms": min(interval_ms),
+        "observer_poll_ms": _summary(poll_ms),
+        "observer_poll_gap_ms": _summary(poll_gaps),
+        "observer_sampler_cpu_ms": sampler_cpu / 1e6,
+        "observed_unique_installs": len(install_times),
+        "offered_phase_quarters": sorted(phases),
+        "windows_without_observed_install": windows_without_install,
+        "observed_install_overlap_counts": direct_overlap,
+        "source_publication_overlap_counts": offered_overlap,
+        "unobserved_installs": "unknown; polling can miss superseded latest watermarks",
+    }
+    (output / "exposure.json").write_text(json.dumps(report, indent=2) + "\n")
+    assert 0.95 <= rate_ratio <= 1.05, report
+    assert max(interval_ms) <= 100 and min(interval_ms) >= pressure_cadence_ms / 2, report
+    assert max(scheduling_lag) <= 100, report
+    assert max(poll_gaps) <= 100, report
+    if condition == "pressure":
+        assert not windows_without_install, report
+        assert phases == {0, 1, 2, 3}, report
+        assert starts[0] <= foreground[0]["save_start_mono_ns"], report
+        assert ends[-1] >= foreground[-1]["gpu_completed_mono_ns"], report
+    else:
+        assert len(install_times) == 1, report
+    return report

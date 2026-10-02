@@ -70,9 +70,7 @@ def summarize(root: Path, media, seeds, qualification):
             assert quiet["pressure_result"]["changes"] == 0
             assert pressure["pressure_result"]["mode"] == "pressure"
             assert pressure["pressure_result"]["changes"] == (
-                (pressure["warmup_rounds"] + pressure["samples"])
-                * pressure["pressure_window_shift"]
-                * 2
+                pressure["pressure_rounds"] * pressure["pressure_window_shift"] * 2
             )
             for field in (
                 "samples",
@@ -83,6 +81,10 @@ def summarize(root: Path, media, seeds, qualification):
                 "pressure_keys",
                 "pressure_active_keys",
                 "pressure_window_shift",
+                "pressure_profile",
+                "pressure_rounds",
+                "pressure_cadence_ms",
+                "observer_sample_ms",
                 "artifacts",
                 "budgets",
                 "key_oracle_sha256",

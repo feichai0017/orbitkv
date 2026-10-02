@@ -474,7 +474,16 @@ profile only; a no-GPU build-host TCP byte-test failure remains recorded. The
 measurement-v2 implementation adds bounded publication/install timestamps,
 exact-sequence observation, separate serial/concurrent barriers, fixed-scope
 quiet/metadata-pressure controls and independent-pair statistics. It is
-**implemented, pending short pre-experiment and independent review**; no new
+**implemented, formal measurement readiness pending independent review**.
+The independent report `orbitkv-s210-measurement-review-20261003.md` accepts the
+bounded timestamp contract and nine capacity smoke cells at `6b0e4fb9`, while
+rejecting formal readiness on pressure exposure, sample guards and namespace
+configuration. The first frozen short experiment
+at `6b0e4fb9` passes all nine 1/4/16-owner endpoint cells with real remote bytes,
+but has only 20 samples/cell. Its isolation startup rejects an invalid synthetic
+namespace; the failure is preserved and the next harness uses actual registered
+storage namespaces. Review also requires independent sustained pressure cadence,
+explicit exposure checks and guarded warm-up/sample counts before formal freeze; no new
 visibility/isolation qualification is claimed. Evidence is under
 `/root/orbitkv-artifacts/s2-s51-20260930/s2-10-performance-qualification-20261002/`.
 The next dependent action is to review that implementation and its short-run

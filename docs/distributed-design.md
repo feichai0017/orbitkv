@@ -732,6 +732,19 @@ The formal isolation matrix has a fixed warm-up, at least 1,000 measured rounds
 per run, five order-balanced independent pairs per medium and the declared
 cadence. Per-run p99 ratios must all be at most 1.05, and the paired-run geometric
 mean ratio's predeclared 95% bootstrap upper bound must also be at most 1.05.
+Qualification commands require at least 50 warm-up cycles and 1,000 measured
+samples, with real restore checks enabled. Short duration runs cannot qualify
+visibility. The pressure profile has an independent source cadence (17 ms),
+1-second foreground cadence and symmetric 25 ms observer sampling. Actual
+publication times, operation endpoints and observed installed timestamps must
+show pressure across the entire measured interval, advancing observer windows
+and all four offered phase quarters. Source rate must stay within 5% of the
+predeclared cadence; source scheduling lateness, source gaps and observer polling
+gaps are bounded at 100 ms, and inter-burst intervals below half the source
+period fail collection as catch-up. Report sampler CPU/HTTP cost and conservative
+positive install-overlap counts; a missed/superseded install is unknown. The
+initial 1 Hz burst profile remains rejected evidence for sustained isolation.
+
 Requests within one run are never bootstrap units; increasing bootstrap resamples
 cannot compensate for fewer independent pairs. Warm-up runs at the same cadence
 and with the selected pressure condition; both warm-up and measured raw samples

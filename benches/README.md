@@ -768,3 +768,12 @@ estimates in a production process or qualify an automatic selector. Keep
 registration defaults unchanged until useful gains, shared-device admission and
 switching margins have their own evidence. `--report-only` must use the same
 comparison, tiers and other predeclared arguments.
+
+The S2.10 formal capacity command requires `--samples 1000 --warmup-cycles 50`
+with ordinary mode, 16 owners and real restores before `--enforce-thresholds`
+can run. Duration-only smoke runs cannot qualify the threshold. Isolation uses
+`--pressure-cadence-ms 17 --observer-sample-ms 25` independently of the 1000 ms
+foreground cadence; both quiet and pressure include the same observer sampler.
+`exposure.json` records offered phase coverage, observed installation overlap,
+source/sampler gaps and rate checks. It preserves unknown missed observations.
+All fields and minimum exposure checks must be frozen before a qualification run.

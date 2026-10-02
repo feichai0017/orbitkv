@@ -128,6 +128,8 @@ async fn external_metadata_only_pressure_source() {
         );
         let scheduled_seconds = (round * cadence_ms) as f64 / 1000.0;
         let actual_seconds = started.elapsed().as_secs_f64();
+        let mut first_publication_mono_ns = 0;
+        let sequence_before = inventory.sequence();
         if mode == "pressure" {
             for offset in 0..shift {
                 inventory.test_change(
@@ -135,6 +137,9 @@ async fn external_metadata_only_pressure_source() {
                     ReplicaMedium::Dram,
                     None,
                 );
+                if offset == 0 {
+                    first_publication_mono_ns = inventory.status().last_change_mono_ns;
+                }
             }
             for offset in 0..shift {
                 inventory.test_change(
@@ -151,6 +156,9 @@ async fn external_metadata_only_pressure_source() {
             json!({
                 "round": round, "scheduled_seconds": scheduled_seconds,
                 "actual_seconds": actual_seconds, "inventory": inventory.status(),
+                "sequence_before": sequence_before,
+                "first_publication_mono_ns": first_publication_mono_ns,
+                "last_publication_mono_ns": if mode == "pressure" { inventory.status().last_change_mono_ns } else { 0 },
             })
         )
         .unwrap();

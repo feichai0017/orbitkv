@@ -68,6 +68,10 @@ sync/flush in the measured path; compare them only on one host after matching th
 node epoch, incarnation, scope digest and sequence. Report HTTP observation delay
 separately. All/scoped establishes filtering benefit, while save/query isolation
 uses the same scope and matched quiet versus metadata-only pressure controls.
+Reject pressure runs whose foreground always lands in a quiet phase. Source
+cadence, actual publication/operation clocks, advancing observer windows and
+sampler overhead must be recorded symmetrically. Short capacity runs and runs
+that skip real restore cannot qualify the 16-owner threshold.
 
 For scoped-stream qualification, pair all-domain and scoped runs with the same
 exact namespace/key/payload mutations and coalescing. Report input/output filter

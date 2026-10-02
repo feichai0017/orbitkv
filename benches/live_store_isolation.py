@@ -6,8 +6,10 @@ import argparse
 import contextlib
 import hashlib
 import json
+import math
 import os
 import subprocess
+import threading
 import time
 import uuid
 from contextlib import ExitStack
@@ -29,7 +31,13 @@ from tests.support.cluster import etcd_server
 from tests.support.metrics import fetch_orbitkv_metrics
 
 from .artifacts import external_path
-from .live_store_measurements import MEASUREMENT_CONTRACT, _clock_domain, _process_sample, _summary
+from .live_store_measurements import (
+    MEASUREMENT_CONTRACT,
+    _clock_domain,
+    _pressure_exposure,
+    _process_sample,
+    _summary,
+)
 from .scoped_metadata import _etcd_revision
 
 PRESSURE_TEST = "cluster::inventory::tests::pressure::external_metadata_only_pressure_source"
@@ -105,6 +113,8 @@ def run(
     pressure_active_keys: int,
     pressure_window_shift: int,
     order_index: int,
+    pressure_cadence_ms: int,
+    observer_sample_ms: int,
 ):
     import torch
 
@@ -117,13 +127,16 @@ def run(
     pages, block_bytes = 8, 4096
     payload_bytes = pages * block_bytes
     identity = f"s2.10:isolation:{medium}:{seed}"
-    (local_namespace,) = _discover_storage_namespaces(output, [identity], pages, block_bytes)
-    pressure_namespace = "orbitkv:s2.10:metadata-only-pressure:v1"
+    local_namespace, pressure_namespace = _discover_storage_namespaces(
+        output, [identity, "s2.10:isolation:metadata-only-pressure:v1"], pages, block_bytes
+    )
     assert local_namespace != pressure_namespace
+    pressure_rounds = math.ceil((warmup_rounds + samples + 1) * cadence_ms / pressure_cadence_ms)
     cluster = f"s210-isolation-{uuid.uuid4().hex[:12]}"
     result = {
         "measurement_contract": MEASUREMENT_CONTRACT,
         "condition": condition,
+        "pressure_profile": f"sustained-{pressure_cadence_ms}ms-v1",
         "medium": medium,
         "seed": seed,
         "warmup_rounds": warmup_rounds,
@@ -135,6 +148,9 @@ def run(
         "pressure_keys": pressure_keys,
         "pressure_active_keys": pressure_active_keys,
         "pressure_window_shift": pressure_window_shift,
+        "pressure_rounds": pressure_rounds,
+        "pressure_cadence_ms": pressure_cadence_ms,
+        "observer_sample_ms": observer_sample_ms,
         "order_index": order_index,
         "budgets": {
             "dram_bytes": 67108864,
@@ -237,8 +253,8 @@ def run(
             cluster,
             pressure_namespace,
             condition,
-            warmup_rounds + samples,
-            cadence_ms,
+            pressure_rounds,
+            pressure_cadence_ms,
             pressure_keys,
             pressure_active_keys,
             pressure_window_shift,
@@ -272,6 +288,48 @@ def run(
             "scope_digest": metadata["stream"]["scope_digest"],
         }
         result["pressure_binding"] = ready
+        sampler_stop = threading.Event()
+        sampler_errors = []
+        initial_view = _owner_status(manager, owner)["view_id"]
+
+        def sample_observer():
+            with (output / "observer-samples.jsonl").open("w", buffering=1) as samples_file:
+                while not sampler_stop.is_set():
+                    started_ns = time.monotonic_ns()
+                    cpu_started_ns = time.thread_time_ns()
+                    try:
+                        row = _owner_status(manager, owner)
+                        assert row and row["fresh"] and row["view_id"] == initial_view, row
+                        ended_ns = time.monotonic_ns()
+                        samples_file.write(
+                            json.dumps(
+                                {
+                                    "poll_start_mono_ns": started_ns,
+                                    "poll_end_mono_ns": ended_ns,
+                                    "sampler_cpu_ns": time.thread_time_ns() - cpu_started_ns,
+                                    "owner": row,
+                                }
+                            )
+                            + "\n"
+                        )
+                    except BaseException as error:
+                        sampler_errors.append(repr(error))
+                        sampler_stop.set()
+                    sampler_stop.wait(
+                        max(0, observer_sample_ms / 1000 - (time.monotonic_ns() - started_ns) / 1e9)
+                    )
+
+        sampler = threading.Thread(
+            target=sample_observer, name="inventory-observer-sampler", daemon=True
+        )
+        sampler.start()
+
+        def stop_sampler():
+            sampler_stop.set()
+            sampler.join(timeout=6)
+            assert not sampler.is_alive()
+
+        stack.callback(stop_sampler)
 
         latencies = {
             name: []
@@ -295,6 +353,7 @@ def run(
 
         def foreground_round(round_id, measured, scheduled_seconds, actual_seconds):
             nonlocal ssd_written
+            round_start_mono_ns = time.monotonic_ns()
             if round_id > 0:
                 cleanup_started = time.monotonic_ns()
                 cleaned = _cleanup_dram(manager)
@@ -321,7 +380,8 @@ def run(
                 device,
                 [("kv:0", list(range(pages)), hashes)],
             )
-            manager_save_submit_ms = (time.monotonic_ns() - save_started) / 1_000_000
+            save_completed = time.monotonic_ns()
+            manager_save_submit_ms = (save_completed - save_started) / 1_000_000
             assert ok, message
             if ssd_enabled:
                 ssd_written += payload_bytes
@@ -369,6 +429,12 @@ def run(
             assert metrics_after.get("orbitkv_remote_fetch_bytes_total", 0) == 0
             sample = {
                 "round": round_id,
+                "round_start_mono_ns": round_start_mono_ns,
+                "save_start_mono_ns": save_started,
+                "save_end_mono_ns": save_completed,
+                "query_start_mono_ns": query_started,
+                "query_end_mono_ns": query_completed,
+                "gpu_completed_mono_ns": gpu_completed,
                 "measured": measured,
                 "scheduled_seconds": scheduled_seconds,
                 "actual_seconds": actual_seconds,
@@ -409,6 +475,7 @@ def run(
                 metadata_before = _metadata(manager)
                 measured_started = time.monotonic()
             assert pressure.poll() is None, (output / "pressure-source.log").read_text()
+            assert not sampler_errors, sampler_errors
             foreground_round(
                 round_id, round_id >= warmup_rounds, scheduled, time.monotonic() - started
             )
@@ -435,7 +502,7 @@ def run(
         result_path = output / "pressure-source-result.json"
         _until(lambda: result_path.exists(), [manager])
         pressure_result = json.loads(result_path.read_text())
-        total_rounds = warmup_rounds + samples
+        total_rounds = pressure_rounds
         expected_changes = (
             total_rounds * pressure_window_shift * 2 if condition == "pressure" else 0
         )
@@ -496,6 +563,16 @@ def run(
         result["etcd_revision_delta"] = after_revision - before_revision
         result["payload_oracle_sha256"] = payload_oracle.hexdigest()
         result["key_oracle_sha256"] = key_oracle.hexdigest()
+        stop_sampler()
+        assert not sampler_errors, sampler_errors
+        result["exposure"] = _pressure_exposure(
+            output,
+            condition,
+            pressure_rounds,
+            pressure_cadence_ms,
+            cadence_ms,
+            pressure_window_shift,
+        )
         stop.touch()
         pressure_exit = pressure.wait(timeout=30)
         pressure_log.close()
@@ -557,6 +634,8 @@ def main():
     parser.add_argument("--warmup-rounds", type=int, default=50)
     parser.add_argument("--samples", type=int, default=1000)
     parser.add_argument("--cadence-ms", type=int, default=1000)
+    parser.add_argument("--pressure-cadence-ms", type=int, default=17)
+    parser.add_argument("--observer-sample-ms", type=int, default=25)
     parser.add_argument("--pressure-keys", type=int, default=2048)
     parser.add_argument("--pressure-active-keys", type=int, default=1536)
     parser.add_argument("--pressure-window-shift", type=int, default=128)
@@ -569,6 +648,8 @@ def main():
         parser.error("--samples and --cadence-ms must be positive")
     if args.order_index < 0:
         parser.error("--order-index cannot be negative")
+    if args.pressure_cadence_ms <= 0 or args.observer_sample_ms <= 0:
+        parser.error("pressure and observer cadences must be positive")
     if args.pressure_active_keys <= args.pressure_window_shift:
         parser.error("pressure active keys must exceed the window shift")
     if args.pressure_keys < args.pressure_active_keys + args.pressure_window_shift:
@@ -595,6 +676,8 @@ def main():
             args.pressure_active_keys,
             args.pressure_window_shift,
             args.order_index,
+            args.pressure_cadence_ms,
+            args.observer_sample_ms,
         )
     except BaseException as error:
         (args.output / "failure.txt").write_text(repr(error) + "\n")

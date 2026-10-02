@@ -65,6 +65,10 @@ def _run(condition, medium, seed, order, p99):
         "pressure_keys": 32,
         "pressure_active_keys": 24,
         "pressure_window_shift": 4,
+        "pressure_profile": "sustained-17ms-v1",
+        "pressure_rounds": 1320,
+        "pressure_cadence_ms": 17,
+        "observer_sample_ms": 25,
         "artifacts": {"manager": {"sha256": "same"}},
         "order_index": order,
         "budgets": {},
@@ -88,7 +92,7 @@ def _run(condition, medium, seed, order, p99):
         },
         "pressure_result": {
             "mode": condition,
-            "changes": 22 * 4 * 2 if condition == "pressure" else 0,
+            "changes": 1320 * 4 * 2 if condition == "pressure" else 0,
         },
     }
 
@@ -121,3 +125,108 @@ def test_process_sample_reports_context_switch_and_affinity_fields():
     assert sample["memory_affinity"]
     assert sample["voluntary_context_switches"] >= 0
     assert sample["nonvoluntary_context_switches"] >= 0
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--samples", "20", "--warmup-cycles", "50"],
+        ["--samples", "1000", "--warmup-cycles", "0"],
+        ["--samples", "1000", "--warmup-cycles", "50", "--skip-restore"],
+    ],
+)
+def test_capacity_cli_rejects_unqualified_samples_before_runtime(tmp_path, arguments):
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(root / "python") + os.pathsep + str(root)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "benches.live_store_capacity",
+            "--owners",
+            "16",
+            "--seed",
+            "guard",
+            "--enforce-thresholds",
+            "--output",
+            str(tmp_path / "run"),
+            *arguments,
+        ],
+        cwd=root,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 2
+    assert "qualification requires" in result.stderr
+    assert not (tmp_path / "run").exists()
+
+
+def test_pressure_exposure_rejects_phase_lock_and_missing_observer_progress(tmp_path):
+    from benches.live_store_measurements import _pressure_exposure
+
+    base = 1_000_000_000
+    source = []
+    observer = []
+    for step in range(30):
+        first = base + step * 20_000_000
+        source.append(
+            {
+                "actual_seconds": step * 0.020,
+                "scheduled_seconds": step * 0.020,
+                "inventory": {"sequence": (step + 1) * 2},
+                "sequence_before": step * 2,
+                "first_publication_mono_ns": first,
+                "last_publication_mono_ns": first + 100_000,
+            }
+        )
+        observer.append(
+            {
+                "poll_start_mono_ns": first + 2_000_000,
+                "poll_end_mono_ns": first + 3_000_000,
+                "sampler_cpu_ns": 100,
+                "owner": {
+                    "owner": "source",
+                    "view_id": "view",
+                    "applied_sequence": step + 1,
+                    "installed_mono_ns": first + 1_000_000,
+                },
+            }
+        )
+    foreground = []
+    for step in range(4):
+        start = base + 2_000_000 + step * 125_000_000
+        foreground.append(
+            {
+                "round": step,
+                "measured": True,
+                "round_start_mono_ns": start,
+                "save_start_mono_ns": start,
+                "save_end_mono_ns": start + 100_000,
+                "query_start_mono_ns": start + 200_000,
+                "query_end_mono_ns": start + 500_000,
+                "gpu_completed_mono_ns": start + 600_000,
+            }
+        )
+
+    def write(name, values):
+        (tmp_path / name).write_text("".join(json.dumps(row) + "\n" for row in values))
+
+    write("samples.jsonl", foreground)
+    write("pressure-samples.jsonl", source)
+    write("observer-samples.jsonl", observer)
+    (tmp_path / "pressure-source-result.json").write_text(json.dumps({"elapsed_seconds": 0.6}))
+    report = _pressure_exposure(tmp_path, "pressure", 30, 20, 100, 1)
+    assert report["offered_phase_quarters"] == [0, 1, 2, 3]
+    assert not report["windows_without_observed_install"]
+    for row in observer:
+        row["owner"]["installed_mono_ns"] = base - 1
+    write("observer-samples.jsonl", observer)
+    with pytest.raises(AssertionError):
+        _pressure_exposure(tmp_path, "pressure", 30, 20, 100, 1)

@@ -125,6 +125,8 @@ def run(
     visibility_mode: str,
     barrier_concurrency: int,
     enforce_thresholds: bool,
+    samples: int | None,
+    warmup_cycles: int,
 ):
     import torch
 
@@ -144,6 +146,8 @@ def run(
         "owners": owners,
         "seed": seed,
         "duration_seconds": duration_seconds,
+        "requested_samples": samples,
+        "warmup_cycles": warmup_cycles,
         "index_budget": index_budget,
         "expect_degraded": expect_degraded,
         "pages": pages,
@@ -298,7 +302,12 @@ def run(
         cycle = 0
         remote_bytes = 0
         if not expect_degraded:
-            while time.monotonic() - started < duration_seconds:
+            while (
+                cycle < warmup_cycles + samples
+                if samples is not None
+                else time.monotonic() - started < duration_seconds
+            ):
+                measured = cycle >= warmup_cycles
                 cycle_started = time.monotonic()
                 save_started_ns = time.monotonic_ns()
                 pending_targets = {}
@@ -322,7 +331,9 @@ def run(
                         "minimum_sequence": before_sequence + pages * 2,
                         "save_start_mono_ns": owner_save_started_ns,
                     }
-                save_latency.append((time.monotonic_ns() - save_started_ns) / 1_000_000)
+                mutation_submit_loop_ms = (time.monotonic_ns() - save_started_ns) / 1_000_000
+                if measured:
+                    save_latency.append(mutation_submit_loop_ms)
                 targets = {}
                 for node, pending in pending_targets.items():
                     _until(
@@ -379,17 +390,18 @@ def run(
                 harness_completed_ns = time.monotonic_ns()
                 _assert_binding(managers["observer"], observer_binding)
                 installation = _installation_sample(targets, installed, harness_completed_ns)
-                publication_to_install.append(installation["publication_to_install_ms"])
-                save_start_to_install.append(installation["save_start_to_install_ms"])
-                install_to_harness.append(installation["install_to_harness_ms"])
-                if visibility_mode == "ordinary":
-                    ordinary_harness_wait.append(
-                        (harness_completed_ns - wait_started_ns) / 1_000_000
-                    )
-                elif visibility_mode == "serial-barrier":
-                    serial_barrier_verification.append(verification_ms)
-                else:
-                    concurrent_barrier_verification.append(verification_ms)
+                if measured:
+                    publication_to_install.append(installation["publication_to_install_ms"])
+                    save_start_to_install.append(installation["save_start_to_install_ms"])
+                    install_to_harness.append(installation["install_to_harness_ms"])
+                    if visibility_mode == "ordinary":
+                        ordinary_harness_wait.append(
+                            (harness_completed_ns - wait_started_ns) / 1_000_000
+                        )
+                    elif visibility_mode == "serial-barrier":
+                        serial_barrier_verification.append(verification_ms)
+                    else:
+                        concurrent_barrier_verification.append(verification_ms)
                 if not skip_restore:
                     selected = source_nodes[cycle % owners]
                     expected = _payload(
@@ -423,8 +435,10 @@ def run(
                             "measurement_contract": MEASUREMENT_CONTRACT,
                             "visibility_mode": visibility_mode,
                             "installation": installation,
+                            "measured": measured,
+                            "harness_completed_mono_ns": harness_completed_ns,
                             "barrier_verification_ms": verification_ms,
-                            "save_ms": save_latency[-1],
+                            "mutation_submit_loop_ms": mutation_submit_loop_ms,
                             "index": observer["index"],
                             "stream": observer["stream"],
                         }
@@ -435,7 +449,10 @@ def run(
                 remaining = 1 - (time.monotonic() - cycle_started)
                 if remaining > 0:
                     time.sleep(remaining)
-            assert time.monotonic() - started >= duration_seconds
+            if samples is not None:
+                assert len(publication_to_install) == samples
+            else:
+                assert time.monotonic() - started >= duration_seconds
         else:
             while time.monotonic() - started < duration_seconds:
                 cycle_started = time.monotonic()
@@ -503,6 +520,7 @@ def run(
             {
                 "status": "bounded_degradation" if expect_degraded else "passed",
                 "cycles": cycle,
+                "measured_samples": len(publication_to_install),
                 "wall_seconds": time.monotonic() - started,
                 "bootstrap_ms": bootstrap_ms,
                 "ordinary_publication_to_install_ms": _summary(
@@ -562,6 +580,8 @@ def main():
     parser.add_argument("--pages", type=int, default=8)
     parser.add_argument("--skip-restore", action="store_true")
     parser.add_argument("--duration-seconds", type=int, default=60)
+    parser.add_argument("--samples", type=int)
+    parser.add_argument("--warmup-cycles", type=int, default=0)
     parser.add_argument("--index-budget", default="16mb")
     parser.add_argument("--expect-degraded", action="store_true")
     parser.add_argument(
@@ -573,6 +593,18 @@ def main():
     parser.add_argument("--enforce-thresholds", action="store_true")
     parser.add_argument("--output", type=external_path, required=True)
     args = parser.parse_args()
+    if args.samples is not None and args.samples <= 0:
+        parser.error("--samples must be positive")
+    if args.warmup_cycles < 0 or (args.warmup_cycles and args.samples is None):
+        parser.error("nonnegative warm-up cycles require explicit --samples")
+    if args.expect_degraded and (args.samples is not None or args.warmup_cycles):
+        parser.error("degraded collection uses duration, not visibility sample qualification")
+    if args.enforce_thresholds and (
+        args.samples is None or args.samples < 1000 or args.warmup_cycles < 50 or args.skip_restore
+    ):
+        parser.error(
+            "qualification requires >=1000 measured samples, >=50 warm-up cycles and real restores"
+        )
     if args.duration_seconds <= 0:
         parser.error("duration must be positive")
     if args.pages <= 0 or args.pages > 1024:
@@ -600,6 +632,8 @@ def main():
             args.visibility_mode,
             args.barrier_concurrency,
             args.enforce_thresholds,
+            args.samples,
+            args.warmup_cycles,
         )
     except BaseException as error:
         (args.output / "failure.txt").write_text(repr(error) + "\n")
