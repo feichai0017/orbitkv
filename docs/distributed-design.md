@@ -745,6 +745,14 @@ period fail collection as catch-up. Report sampler CPU/HTTP cost and conservativ
 positive install-overlap counts; a missed/superseded install is unknown. The
 initial 1 Hz burst profile remains rejected evidence for sustained isolation.
 
+Before formal collection, every block's payload carries a little-endian u64
+generation and u64 block index in a fixed 16-byte header. This disambiguates the
+251-round periodic body without changing bytes per block or timed endpoints.
+The capacity run restores every owner's final payload after measurement, with
+an exact owner/view/sequence/record count, cleared destination and observer DRAM,
+remote byte evidence and native drain. Those final oracle operations are not
+visibility samples.
+
 Requests within one run are never bootstrap units; increasing bootstrap resamples
 cannot compensate for fewer independent pairs. Warm-up runs at the same cadence
 and with the selected pressure condition; both warm-up and measured raw samples

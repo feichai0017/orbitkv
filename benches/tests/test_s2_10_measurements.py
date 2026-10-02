@@ -52,6 +52,7 @@ def _run(condition, medium, seed, order, p99):
     summary = {"samples": 20, "p50": p99 / 2, "p95": p99 * 0.9, "p99": p99, "max": p99}
     return {
         "measurement_contract": "s2.10-performance-v2",
+        "payload_schema": "u64-generation-u64-block-le-v1",
         "status": "passed",
         "condition": condition,
         "medium": medium,
@@ -240,3 +241,20 @@ def test_pressure_exposure_rejects_phase_lock_and_missing_observer_progress(tmp_
     write("observer-samples.jsonl", observer)
     with pytest.raises(AssertionError):
         _pressure_exposure(tmp_path, "pressure", 30, 20, 100, 1)
+
+
+def test_payload_header_disambiguates_periodic_body_and_bounds_identity():
+    from benches.live_store_measurements import _payload, _payload_header
+
+    first = _payload_header(1, 7)
+    aliased_body = _payload_header(252, 7)
+    assert first != aliased_body
+    assert int.from_bytes(first[:8], "little") == 1
+    assert int.from_bytes(first[8:], "little") == 7
+    assert first != _payload_header(1, 8)
+    assert len(_payload_header(2**64 - 1, 2**64 - 1)) == 16
+    with pytest.raises(ValueError):
+        _payload(None, 1, 15, 1)
+    for generation, block in [(-1, 0), (2**64, 0), (0, -1), (0, 2**64)]:
+        with pytest.raises(ValueError):
+            _payload_header(generation, block)

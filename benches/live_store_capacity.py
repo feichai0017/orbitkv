@@ -22,7 +22,6 @@ from tests.integration.test_distributed_cache import (
     _discover_storage_namespaces,
     _etcd_keys,
     _metadata,
-    _payload,
     _restore,
     _sync,
     _until,
@@ -37,6 +36,7 @@ from .live_store_measurements import (
     MEASUREMENT_CONTRACT,
     _clock_domain,
     _installation_sample,
+    _payload,
     _process_sample,
     _summary,
 )
@@ -143,6 +143,7 @@ def run(
     cluster = f"s210-capacity-{owners}-{uuid.uuid4().hex[:8]}"
     result = {
         "measurement_contract": MEASUREMENT_CONTRACT,
+        "payload_schema": "u64-generation-u64-block-le-v1",
         "owners": owners,
         "seed": seed,
         "duration_seconds": duration_seconds,
@@ -520,7 +521,49 @@ def run(
                 < observer_status["index"]["expected_owner_views"]
             )
         else:
-            assert len([row for row in owner_rows if row["records"] == pages]) >= owners
+            final_rows = {row["owner"]: row for row in owner_rows}
+            final_oracle = {}
+            for owner, node in enumerate(source_nodes):
+                binding = source_bindings[node]
+                row = final_rows[binding["incarnation"]]
+                assert row["fresh"] and row["records"] == pages, row
+                assert row["view_id"] == installed_views[binding["incarnation"]]["view_id"]
+                assert row["applied_sequence"] == source_sequences[node]
+                if not skip_restore:
+                    _cleanup_dram(managers["observer"])
+                    expected = _payload(torch, pages, block_bytes, (cycle - 1) * owners + owner + 1)
+                    before = fetch_orbitkv_metrics(managers["observer"].http_port).get(
+                        "orbitkv_remote_fetch_bytes_total", 0
+                    )
+                    _restore(
+                        clients["observer"],
+                        "observer",
+                        tensors["observer"],
+                        hashes[node],
+                        f"capacity-final-{node}",
+                        expected,
+                        manager_list,
+                    )
+                    _wait_for_remote_drain(managers[node], managers["observer"], manager_list)
+                    after = fetch_orbitkv_metrics(managers["observer"].http_port)[
+                        "orbitkv_remote_fetch_bytes_total"
+                    ]
+                    assert after >= before + payload_bytes
+                    _assert_binding(managers[node], binding)
+                    assert _metadata(managers[node])["inventory_sequence"] == source_sequences[node]
+                    final_oracle[node] = {
+                        **binding,
+                        "sequence": source_sequences[node],
+                        "view_id": row["view_id"],
+                        "medium": "dram",
+                        "namespace": storage_namespace,
+                        "keys": [key.hex() for key in hashes[node]],
+                        "payload_sha256": hashlib.sha256(
+                            tensors["observer"].cpu().numpy().tobytes()
+                        ).hexdigest(),
+                        "remote_bytes": after - before,
+                    }
+            result["final_oracle"] = final_oracle
         after_revision = _etcd_revision(endpoint, f"/orbitkv/v2/{cluster}/")
         keys = _etcd_keys(endpoint, f"/orbitkv/v2/{cluster}/")
         assert after_revision == before_revision

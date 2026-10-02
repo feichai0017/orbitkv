@@ -73,6 +73,7 @@ def summarize(root: Path, media, seeds, qualification):
                 pressure["pressure_rounds"] * pressure["pressure_window_shift"] * 2
             )
             for field in (
+                "payload_schema",
                 "samples",
                 "warmup_rounds",
                 "cadence_ms",

@@ -493,7 +493,12 @@ the four-owner supported envelope remain unchanged. Follow-up review at
 DRAM pressure smoke. It still blocks formal readiness on publication-clock
 bounds and an SSD-only duplicated metrics flag; both failed pilots and separate
 review reports remain in the external directory. The next short candidate
-repairs those harness boundaries before any formal performance run.
+repairs those harness boundaries before any formal performance run. Independent
+review at `0e9dae0f` closes those blockers and accepts all seven short cells,
+including both io_uring conditions. The final formal freeze additionally requires
+the agreed generation/block payload header and an untimed final restore for
+every capacity owner; these strengthen the byte oracle without changing the
+50 ms/5% thresholds. The elevated pilot isolation ratios remain unqualified.
 
 - Execute the [frozen workload/acceptance matrix](distributed-design.md#performance-acceptance-and-ablations)
   on actual live DRAM and io_uring storage. Increase one load dimension at a time,

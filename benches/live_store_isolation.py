@@ -21,7 +21,6 @@ from tests.integration.test_distributed_cache import (
     _etcd_keys,
     _metadata,
     _owner_status,
-    _payload,
     _query_ready,
     _until,
     _wait_for_ssd_write,
@@ -34,6 +33,7 @@ from .artifacts import external_path
 from .live_store_measurements import (
     MEASUREMENT_CONTRACT,
     _clock_domain,
+    _payload,
     _pressure_exposure,
     _process_sample,
     _summary,
@@ -135,6 +135,7 @@ def run(
     cluster = f"s210-isolation-{uuid.uuid4().hex[:12]}"
     result = {
         "measurement_contract": MEASUREMENT_CONTRACT,
+        "payload_schema": "u64-generation-u64-block-le-v1",
         "condition": condition,
         "pressure_profile": f"sustained-{pressure_cadence_ms}ms-v1",
         "medium": medium,

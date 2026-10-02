@@ -260,3 +260,24 @@ def _pressure_exposure(
     else:
         assert len(install_times) == 1, report
     return report
+
+
+def _payload_header(generation, block):
+    if not 0 <= generation < 2**64 or not 0 <= block < 2**64:
+        raise ValueError("generation and block index must fit unsigned 64-bit fields")
+    return generation.to_bytes(8, "little") + block.to_bytes(8, "little")
+
+
+def _payload(torch, pages, block_bytes, generation):
+    if pages <= 0 or block_bytes < 16:
+        raise ValueError("payload requires positive pages and at least 16 bytes per block")
+    headers = b"".join(_payload_header(generation, block) for block in range(pages))
+    values = torch.arange(pages * block_bytes, device="cuda", dtype=torch.int64).reshape(
+        pages, block_bytes
+    )
+    offsets = torch.arange(pages, device="cuda", dtype=torch.int64).unsqueeze(1) * 17
+    payload = ((values + offsets + (generation % 251) * 31) % 251).to(torch.uint8)
+    payload[:, :16] = torch.tensor(list(headers), device="cuda", dtype=torch.uint8).reshape(
+        pages, 16
+    )
+    return payload.flatten()
