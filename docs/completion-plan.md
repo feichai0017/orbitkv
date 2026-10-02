@@ -36,7 +36,7 @@ record submitted, merged and released as different states.
 | --- | --- |
 | S0 | Agent handoff and Codex skill migration merged in PR #190. |
 | S1 | Evidence separation independently verified at `ec3add9b`; this delivery consolidates plans and release-based integration guidance. Acceptance covers S1 only; native CUDA qualification remains blocked on this host. |
-| S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. The current queue head is the frozen S2.10 same-host formal performance run on merged main. The measurement/oracle and release-source profile are independently accepted; the 16-owner visibility and 5% isolation cells await the five-run/pair results and review. Physical cross-host cache/HA, final serving, RDMA/GDS and S3-dependent cells remain open. |
+| S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. The current queue head is the bounded S2.10 pressure-fixture pacing repair after the first formal matrix stopped invalid. The measurement/oracle and release-source profile are independently accepted; the 16-owner visibility and 5% isolation cells await the five-run/pair results and review. Physical cross-host cache/HA, final serving, RDMA/GDS and S3-dependent cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
 | S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.30.0 adapter upgrade consumes native transfer results with local A100 cache/P/D evidence. Independent upgrade acceptance and public lifecycle/deployment gates remain open. |
@@ -445,8 +445,9 @@ fail. Depends on:** accepted protocol implementation from S2.8 and S2.9 for
 scoped claims. This carries forward S2's remaining performance, capacity, serving
 and cross-host obligations; it does not replace missing evidence with a new name.
 
-**Current next delivery:** finish and independently review the frozen formal
-same-host performance matrix on the PR #199 merged-main artifact. Merged-artifact
+**Current next delivery:** repair and independently review the pressure-fixture
+pacing/invalid-run cleanup, then freeze a new same-host performance campaign on
+the PR #199 merged-main artifact. Merged-artifact
 regression and the corrected measurement/oracle contracts are complete; the
 formal runner and release pressure-source profile have independent Codex launch
 acceptance. Keep the old 51.72 ms serial-barrier and all/scoped isolation failures
@@ -519,8 +520,22 @@ measured rounds per run, 1 Hz foreground, 17 ms source bursts, 25 ms symmetric
 observer sampling, unchanged budgets and 50 ms/5% thresholds, with no expansion.
 The nominal foreground duration is 26,250 seconds; the campaign budget is nine
 hours. The detached A100 runner writes live state and evidence below
-`candidate-d18a4a3b-release-pressure/formal-qualification-1/`. It is running;
-no formal performance result or expanded capacity is accepted yet.
+`candidate-d18a4a3b-release-pressure/formal-qualification-1/`. That campaign
+stopped invalid after its second cell. The first 16-owner run completed 50 warm-up
+and 1,000 measured rounds with publication-to-install p99 4.295433 ms, exact
+final owner bytes and zero etcd revision growth; one run does not qualify the
+five-run target. The DRAM quiet run then recorded a 0.205849 ms catch-up interval
+after 21.851274 ms scheduling lateness, violating the frozen 8.5 ms minimum.
+The remaining 23 cells were not started. The invalid run and its CUDA IPC cleanup
+warning remain archived; no old result is reclassified or replaced.
+
+The next bounded repair paces the existing source fixture against both its
+original 17 ms schedule and the prior completed iteration plus 8.5 ms. Every
+mutation, budget and threshold remains unchanged. Terminal measurement rejection
+must still exit nonzero after explicit drain/unregister and graceful Manager
+exit, with invalid result and cleanup evidence saved. Controlled source-delay
+regressions and independent Codex review precede a new, separately frozen formal
+campaign. No performance qualification or expanded capacity is accepted yet.
 
 - Execute the [frozen workload/acceptance matrix](distributed-design.md#performance-acceptance-and-ablations)
   on actual live DRAM and io_uring storage. Increase one load dimension at a time,

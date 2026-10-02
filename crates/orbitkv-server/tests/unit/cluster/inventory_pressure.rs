@@ -56,8 +56,17 @@ async fn external_metadata_only_pressure_source() {
     let stop = PathBuf::from(required("ORBITKV_PRESSURE_STOP_FILE"));
     let mode = required("ORBITKV_PRESSURE_MODE");
     assert!(matches!(mode.as_str(), "quiet" | "pressure"));
+    let stall_round = std::env::var("ORBITKV_PRESSURE_STALL_ROUND")
+        .ok()
+        .map(|value| value.parse::<usize>().unwrap());
+    let stall_ms = std::env::var("ORBITKV_PRESSURE_STALL_MS")
+        .ok()
+        .map(|value| value.parse::<u64>().unwrap())
+        .unwrap_or(0);
+    assert_eq!(stall_round.is_some(), stall_ms > 0);
     let rounds = number("ORBITKV_PRESSURE_ROUNDS");
     let cadence_ms = number("ORBITKV_PRESSURE_CADENCE_MS");
+    assert!(stall_round.is_none_or(|round| round < rounds));
     let keys = number("ORBITKV_PRESSURE_KEYS");
     let active = number("ORBITKV_PRESSURE_ACTIVE_KEYS");
     let shift = number("ORBITKV_PRESSURE_WINDOW_SHIFT");
@@ -126,11 +135,14 @@ async fn external_metadata_only_pressure_source() {
     );
     let mut samples = std::fs::File::create(artifact.join("pressure-samples.jsonl")).unwrap();
     let mut window = 0;
+    let minimum_gap = Duration::from_micros(cadence_ms as u64 * 500);
+    let mut not_before = started;
     for round in 0..rounds {
-        tokio::time::sleep_until(
-            (started + Duration::from_millis((round * cadence_ms) as u64)).into(),
-        )
-        .await;
+        let scheduled = started + Duration::from_millis((round * cadence_ms) as u64);
+        tokio::time::sleep_until(scheduled.max(not_before).into()).await;
+        if stall_round == Some(round) {
+            tokio::time::sleep(Duration::from_millis(stall_ms)).await;
+        }
         assert!(
             !stop.exists(),
             "pressure source stopped before completing its schedule"
@@ -164,6 +176,7 @@ async fn external_metadata_only_pressure_source() {
             "{}",
             json!({
                 "round": round, "scheduled_seconds": scheduled_seconds,
+                "injected_stall_ms": if stall_round == Some(round) { stall_ms } else { 0 },
                 "actual_seconds": actual_seconds, "inventory": inventory.status(),
                 "sequence_before": sequence_before,
                 "scheduled_mono_ns_lower": origin_lower + (round * cadence_ms) as u64 * 1_000_000,
@@ -173,6 +186,7 @@ async fn external_metadata_only_pressure_source() {
             })
         )
         .unwrap();
+        not_before = std::time::Instant::now() + minimum_gap;
     }
     tokio::time::sleep_until(
         (started + Duration::from_millis((rounds * cadence_ms) as u64)).into(),
@@ -202,6 +216,9 @@ async fn external_metadata_only_pressure_source() {
         "measurement_contract": "s2.10-performance-v2",
         "mode": mode,
         "rounds": rounds,
+        "minimum_gap_micros": minimum_gap.as_micros(),
+        "stall_round": stall_round,
+        "stall_ms": stall_ms,
         "cadence_ms": cadence_ms,
         "elapsed_seconds": elapsed_seconds,
         "final_sequence": inventory.sequence(),

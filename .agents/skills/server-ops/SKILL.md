@@ -90,3 +90,10 @@ are not a node-wide network scheduler; engine-local P/D WRITE is a separate
 submitter. Receiver credit/pacing is planned in S6, not an existing runtime flag.
 Source authority, network credits and destination lifetime need separate drain
 evidence. Report that distinction when diagnosing congestion or retained memory.
+
+Pressure qualification must pace after the prior completed source iteration as
+well as the original schedule. A delayed tick cannot emit compressed catch-up
+bursts. Keep the frozen minimum interval and mutation count; never fix this by
+lowering a threshold or dropping events. A terminal exposure failure remains an
+invalid run, but should still execute explicit local drain, unregister and
+normal Manager shutdown before raising and preserve that cleanup evidence.

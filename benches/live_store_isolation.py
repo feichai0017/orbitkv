@@ -567,14 +567,21 @@ def run(
         result["key_oracle_sha256"] = key_oracle.hexdigest()
         stop_sampler()
         assert not sampler_errors, sampler_errors
-        result["exposure"] = _pressure_exposure(
-            output,
-            condition,
-            pressure_rounds,
-            pressure_cadence_ms,
-            cadence_ms,
-            pressure_window_shift,
-        )
+        validation_error = None
+        try:
+            result["exposure"] = _pressure_exposure(
+                output,
+                condition,
+                pressure_rounds,
+                pressure_cadence_ms,
+                cadence_ms,
+                pressure_window_shift,
+            )
+        except AssertionError as error:
+            validation_error = error
+            result["validation_error"] = str(error)
+            if (output / "exposure.json").exists():
+                result["exposure"] = json.loads((output / "exposure.json").read_text())
         stop.touch()
         pressure_exit = pressure.wait(timeout=30)
         pressure_log.close()
@@ -607,7 +614,7 @@ def run(
         assert exit_code == 0 and shutdown_seconds <= 10
         result.update(
             {
-                "status": "passed",
+                "status": "passed" if validation_error is None else "invalid_measurement",
                 "wall_seconds": wall_seconds,
                 "achieved_samples_per_second": samples / wall_seconds,
                 "latencies": {name: _summary(values) for name, values in latencies.items()},
@@ -626,6 +633,8 @@ def run(
         (output / "isolation-result.json").write_text(
             json.dumps(result, indent=2, allow_nan=False) + "\n"
         )
+        if validation_error is not None:
+            raise validation_error
 
 
 def main():

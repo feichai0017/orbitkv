@@ -780,3 +780,12 @@ foreground cadence; both quiet and pressure include the same observer sampler.
 `exposure.json` records offered phase coverage, observed installation overlap,
 source/sampler gaps and rate checks. It preserves unknown missed observations.
 All fields and minimum exposure checks must be frozen before a qualification run.
+
+The metadata pressure fixture prevents catch-up bursts by respecting both the
+original schedule and half a source period after the prior iteration completes.
+For a controlled pacing regression only, set `ORBITKV_PRESSURE_STALL_ROUND=200`
+and `ORBITKV_PRESSURE_STALL_MS=38`; every event must remain present and the
+8.5 ms minimum interval still applies to the 17 ms profile. A 200 ms stall is an
+intentional invalid-exposure control: it must fail the 100 ms upper bound while
+retaining explicit drain and graceful cleanup evidence. These fault variables
+are not part of the ordinary formal workload.
