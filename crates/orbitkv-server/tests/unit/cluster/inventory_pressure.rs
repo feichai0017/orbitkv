@@ -8,6 +8,11 @@ use orbitkv_catalog::GlobalIndex;
 use orbitkv_core::ResidencyInventory;
 use serde_json::json;
 
+fn monotonic_ns() -> u64 {
+    let now = rustix::time::clock_gettime(rustix::time::ClockId::Monotonic);
+    u64::try_from(now.tv_sec).unwrap() * 1_000_000_000 + u64::try_from(now.tv_nsec).unwrap()
+}
+
 fn write_json(path: &Path, value: &serde_json::Value) {
     let temporary = path.with_extension("tmp");
     std::fs::write(&temporary, serde_json::to_vec_pretty(value).unwrap()).unwrap();
@@ -108,11 +113,15 @@ async fn external_metadata_only_pressure_source() {
     write_json(&artifact.join("pressure-source-ready.json"), &ready);
     wait_for_file(&go, Duration::from_secs(120)).await;
 
+    let origin_lower = monotonic_ns();
     let started = std::time::Instant::now();
+    let origin_upper = monotonic_ns();
     write_json(
         &artifact.join("pressure-started.json"),
         &json!({
-            "started_unix_ns": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+            "started_mono_ns_lower": origin_lower,
+        "started_mono_ns_upper": origin_upper,
+        "started_unix_ns": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
         }),
     );
     let mut samples = std::fs::File::create(artifact.join("pressure-samples.jsonl")).unwrap();
@@ -157,6 +166,8 @@ async fn external_metadata_only_pressure_source() {
                 "round": round, "scheduled_seconds": scheduled_seconds,
                 "actual_seconds": actual_seconds, "inventory": inventory.status(),
                 "sequence_before": sequence_before,
+                "scheduled_mono_ns_lower": origin_lower + (round * cadence_ms) as u64 * 1_000_000,
+                "scheduled_mono_ns_upper": origin_upper + (round * cadence_ms) as u64 * 1_000_000,
                 "first_publication_mono_ns": first_publication_mono_ns,
                 "last_publication_mono_ns": if mode == "pressure" { inventory.status().last_change_mono_ns } else { 0 },
             })

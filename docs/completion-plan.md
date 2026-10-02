@@ -488,7 +488,12 @@ visibility/isolation qualification is claimed. Evidence is under
 `/root/orbitkv-artifacts/s2-s51-20260930/s2-10-performance-qualification-20261002/`.
 The next dependent action is to review that implementation and its short-run
 contract before freezing the formal workload. Historical failure evidence and
-the four-owner supported envelope remain unchanged.
+the four-owner supported envelope remain unchanged. Follow-up review at
+`9c1731cd` accepts the guarded sample counts, actual namespace derivation and
+DRAM pressure smoke. It still blocks formal readiness on publication-clock
+bounds and an SSD-only duplicated metrics flag; both failed pilots and separate
+review reports remain in the external directory. The next short candidate
+repairs those harness boundaries before any formal performance run.
 
 - Execute the [frozen workload/acceptance matrix](distributed-design.md#performance-acceptance-and-ablations)
   on actual live DRAM and io_uring storage. Increase one load dimension at a time,

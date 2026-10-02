@@ -40,7 +40,7 @@ visibility endpoint per run:
 
 ```bash
 python -m benches.live_store_capacity \
-  --owners 16 --seed capacity-01 --duration-seconds 60 \
+  --owners 16 --seed capacity-01 --samples 1000 --warmup-cycles 50 \
   --visibility-mode ordinary --enforce-thresholds \
   --output /external/s2-10/capacity-16-ordinary
 

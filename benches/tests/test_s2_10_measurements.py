@@ -182,6 +182,8 @@ def test_pressure_exposure_rejects_phase_lock_and_missing_observer_progress(tmp_
                 "scheduled_seconds": step * 0.020,
                 "inventory": {"sequence": (step + 1) * 2},
                 "sequence_before": step * 2,
+                "scheduled_mono_ns_lower": first,
+                "scheduled_mono_ns_upper": first,
                 "first_publication_mono_ns": first,
                 "last_publication_mono_ns": first + 100_000,
             }
@@ -225,6 +227,14 @@ def test_pressure_exposure_rejects_phase_lock_and_missing_observer_progress(tmp_
     report = _pressure_exposure(tmp_path, "pressure", 30, 20, 100, 1)
     assert report["offered_phase_quarters"] == [0, 1, 2, 3]
     assert not report["windows_without_observed_install"]
+    source[-1]["first_publication_mono_ns"] += 120_000_000
+    source[-1]["last_publication_mono_ns"] += 120_000_000
+    write("pressure-samples.jsonl", source)
+    with pytest.raises(AssertionError):
+        _pressure_exposure(tmp_path, "pressure", 30, 20, 100, 1)
+    source[-1]["first_publication_mono_ns"] -= 120_000_000
+    source[-1]["last_publication_mono_ns"] -= 120_000_000
+    write("pressure-samples.jsonl", source)
     for row in observer:
         row["owner"]["installed_mono_ns"] = base - 1
     write("observer-samples.jsonl", observer)

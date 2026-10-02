@@ -168,6 +168,7 @@ def run(
             "restore_complete_ms": "start_restore through native wait_restore completion",
             "gpu_consumable_ms": "start_restore through final CUDA synchronization",
         },
+        "ssd_read_counter": "orbitkv_ssd_prefetch_bytes_total (io_uring reader completed bytes)",
         "scope": (
             "same-host A100, one full foreground Manager plus one test-owned "
             "production inventory-stream source, forced TCP"
@@ -218,7 +219,7 @@ def run(
                 pressure_namespace,
                 "--inventory-stream-coalesce-ms",
                 "2",
-                "--enable-prometheus",
+                *(() if ssd_enabled else ("--enable-prometheus",)),
             ),
         )
         stack.callback(manager.stop)
@@ -358,7 +359,7 @@ def run(
                 cleanup_started = time.monotonic_ns()
                 cleaned = _cleanup_dram(manager)
                 cleanup_ms = (time.monotonic_ns() - cleanup_started) / 1_000_000
-                assert cleaned["evicted_blocks"] == pages
+                assert cleaned["evicted_blocks"] == (0 if ssd_enabled else pages), cleaned
             else:
                 cleanup_ms = 0.0
             expected = _payload(torch, pages, block_bytes, round_id + 1)
@@ -419,9 +420,9 @@ def run(
             gpu_completed = time.monotonic_ns()
             assert torch.equal(tensor, expected)
             metrics_after = fetch_orbitkv_metrics(manager.http_port)
-            read_delta = metrics_after.get("orbitkv_ssd_read_bytes_total", 0) - metrics_before.get(
-                "orbitkv_ssd_read_bytes_total", 0
-            )
+            read_delta = metrics_after.get(
+                "orbitkv_ssd_prefetch_bytes_total", 0
+            ) - metrics_before.get("orbitkv_ssd_prefetch_bytes_total", 0)
             if ssd_enabled:
                 assert read_delta >= payload_bytes, metrics_after
             else:

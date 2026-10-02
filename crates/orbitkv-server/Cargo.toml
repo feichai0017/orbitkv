@@ -60,6 +60,7 @@ thiserror = "2"
 sha2 = "0.10"
 
 [dev-dependencies]
+rustix = { workspace = true, features = ["time"] }
 tempfile = "3"
 
 [build-dependencies]

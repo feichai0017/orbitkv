@@ -31,6 +31,7 @@ def _summary(values):
 def _process_sample(pids):
     result = {
         "thread_context_switches": {},
+        "thread_affinity": {},
         "context_switch_scope": "snapshot sum of live threads; exited threads excluded",
         "cpu_ticks": 0,
         "rss_kib": 0,
@@ -80,6 +81,10 @@ def _process_sample(pids):
                 for name in ("voluntary_ctxt_switches", "nonvoluntary_ctxt_switches")
             ]
             result["thread_context_switches"][identity] = counters
+            result["thread_affinity"][identity] = {
+                "cpus_allowed": fields["Cpus_allowed_list"].strip(),
+                "mems_allowed": fields["Mems_allowed_list"].strip(),
+            }
             result["voluntary_context_switches"] += counters[0]
             result["nonvoluntary_context_switches"] += counters[1]
         result["processes"] += 1
@@ -157,6 +162,7 @@ def _pressure_exposure(
     bursts = []
     actual = []
     scheduling_lag = []
+    publication_lag = []
     for row in rows("pressure-samples.jsonl"):
         actual.append(row["actual_seconds"])
         scheduling_lag.append((row["actual_seconds"] - row["scheduled_seconds"]) * 1000)
@@ -164,6 +170,8 @@ def _pressure_exposure(
             assert row["inventory"]["sequence"] - row["sequence_before"] == shift * 2
             first, last = row["first_publication_mono_ns"], row["last_publication_mono_ns"]
             assert 0 < first <= last
+            assert row["scheduled_mono_ns_lower"] <= row["scheduled_mono_ns_upper"] <= first
+            publication_lag.append((last - row["scheduled_mono_ns_lower"]) / 1e6)
             bursts.append((first, last))
         else:
             assert row["inventory"]["sequence"] == row["sequence_before"]
@@ -212,8 +220,13 @@ def _pressure_exposure(
                 offered_overlap[operation] += 1
     pressure_result = json.loads((output / "pressure-source-result.json").read_text())
     rate_ratio = len(actual) * pressure_cadence_ms / 1000 / pressure_result["elapsed_seconds"]
+    publication_gaps = [
+        (later[0] - earlier[0]) / 1e6 for earlier, later in zip(bursts, bursts[1:], strict=False)
+    ]
     report = {
         "condition": condition,
+        "publication_lateness_upper_ms": _summary(publication_lag),
+        "publication_gap_ms": _summary(publication_gaps),
         "foreground_samples": len(foreground),
         "source_rounds": len(actual),
         "source_rate_ratio": rate_ratio,
@@ -236,6 +249,10 @@ def _pressure_exposure(
     assert max(scheduling_lag) <= 100, report
     assert max(poll_gaps) <= 100, report
     if condition == "pressure":
+        assert max(publication_lag) <= 100, report
+        assert max(publication_gaps) <= 100 and min(publication_gaps) >= pressure_cadence_ms / 2, (
+            report
+        )
         assert not windows_without_install, report
         assert phases == {0, 1, 2, 3}, report
         assert starts[0] <= foreground[0]["save_start_mono_ns"], report

@@ -739,7 +739,7 @@ visibility. The pressure profile has an independent source cadence (17 ms),
 publication times, operation endpoints and observed installed timestamps must
 show pressure across the entire measured interval, advancing observer windows
 and all four offered phase quarters. Source rate must stay within 5% of the
-predeclared cadence; source scheduling lateness, source gaps and observer polling
+predeclared cadence; actual first/last publication lateness and gaps, source loop gaps and observer polling
 gaps are bounded at 100 ms, and inter-burst intervals below half the source
 period fail collection as catch-up. Report sampler CPU/HTTP cost and conservative
 positive install-overlap counts; a missed/superseded install is unknown. The

@@ -158,7 +158,7 @@ def run(
         "storage_namespace": storage_namespace,
         "cluster": cluster,
         "latency_endpoints": {
-            "mutation_submit_loop_ms": "all owners: metadata GET, DRAM cleanup, payload copy/CUDA sync and save submission",
+            "mutation_submit_loop_ms": "all owners: DRAM cleanup, payload copy/CUDA sync and save submission; sequence diagnostic reads occur after all submissions",
             "save_start_to_install_ms": "individual owner CacheManagerClient.save call start through exact terminal-sequence installation",
             "publication_to_install_ms": "terminal burst publication commit to same-sequence owner-view commit; next mutation starts only after observation",
         },
@@ -291,6 +291,7 @@ def run(
             for binding in source_bindings.values()
         )
         installed_views = _owner_statuses(managers["observer"])
+        source_sequences = {node: fences[node]["inventory_sequence"] for node in source_nodes}
         publication_to_install = []
         save_start_to_install = []
         install_to_harness = []
@@ -312,7 +313,7 @@ def run(
                 save_started_ns = time.monotonic_ns()
                 pending_targets = {}
                 for owner, node in enumerate(source_nodes):
-                    before_sequence = _metadata(managers[node])["inventory_sequence"]
+                    before_sequence = source_sequences[node]
                     cleaned = _cleanup_dram(managers[node])
                     assert cleaned["evicted_blocks"] == pages
                     payload = _payload(torch, pages, block_bytes, cycle * owners + owner + 1)
@@ -336,15 +337,23 @@ def run(
                     save_latency.append(mutation_submit_loop_ms)
                 targets = {}
                 for node, pending in pending_targets.items():
-                    _until(
-                        lambda node=node, minimum=pending["minimum_sequence"]: _metadata(
-                            managers[node]
-                        )["inventory_sequence"]
-                        >= minimum,
+                    source = _until(
+                        lambda node=node, minimum=pending["minimum_sequence"]: (
+                            status
+                            if (status := _metadata(managers[node]))["inventory_sequence"]
+                            >= minimum
+                            else None
+                        ),
                         manager_list,
                     )
-                    source = _metadata(managers[node])
-                    binding = _assert_binding(managers[node], source_bindings[node])
+                    stream = source["stream"]
+                    binding = {
+                        "node": stream["source_node"],
+                        "epoch": stream["source_node_epoch"],
+                        "incarnation": stream["source_incarnation"],
+                        "scope_digest": stream["scope_digest"],
+                    }
+                    assert binding == source_bindings[node], (binding, source_bindings[node])
                     assert source["inventory_sequence"] == pending["minimum_sequence"], source
                     published_ns = source["inventory_last_change_mono_ns"]
                     assert published_ns >= pending["save_start_mono_ns"]
@@ -390,6 +399,7 @@ def run(
                 harness_completed_ns = time.monotonic_ns()
                 _assert_binding(managers["observer"], observer_binding)
                 installation = _installation_sample(targets, installed, harness_completed_ns)
+                source_sequences = {node: target["sequence"] for node, target in targets.items()}
                 if measured:
                     publication_to_install.append(installation["publication_to_install_ms"])
                     save_start_to_install.append(installation["save_start_to_install_ms"])
