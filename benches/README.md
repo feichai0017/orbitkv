@@ -12,6 +12,7 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | `communication.py` | Real Query miss/hit, Publish D2H, Restore submit-to-ready and empty-restore controls using matching external artifacts |
 | `cpu_codec.rs` | Production scalar/AVX2/AVX-512/auto CPU FP8 conversion with an independent oracle before timing |
 | `cost_observations.py` | Same-binary off/on observation overhead, three reversed-order pairs on both engines |
+| `metadata.py` | Explicit full-Manager 0/2/5 ms metadata coalescing comparison using frozen binaries |
 | `single_node.py` | Fixed-capacity cold, HBM-hit, and post-pressure experiment |
 | `shared_cache.py` | Independent-replica serving requests with remote-byte, GPU-copy, output and reservation-drain evidence |
 | `launch.py` | Engine/backend commands and matched memory budgets |

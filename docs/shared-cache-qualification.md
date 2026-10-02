@@ -1,9 +1,10 @@
 # Shared-cache qualification
 
-The 2026-09-28/29 historical results below precede the local global-index cutover
-unless explicitly labeled otherwise. Their directory-RPC counts and catalog
-restart terminology describe that older revision. The cutover section records
-fresh qualification of the new metadata path.
+All recorded serving results below predate the S2.8 owner inventory-stream
+cutover. They remain historical controls and do not qualify the current
+candidate until rerun with frozen S2.8 artifacts. Their directory-RPC,
+publication/Watch and catalog-restart terminology describes the corresponding
+older revisions.
 
 This gate covers independent replicas of the same model, engine and TP=1 storage
 layout. Every engine uses its host's Cache Manager. Rust owns candidate lookup,
@@ -17,7 +18,7 @@ three results separate: same-host TCP, two-host TCP and two-host RDMA.
 
 ## Recorded result
 
-### Global-index cutover, 2026-09-29
+### Historical etcd-block global-index cutover, 2026-09-29
 
 The new `/orbitkv/v2` path uses fenced etcd publication and fixed-revision
 snapshot/Watch into each Manager's complete global index. The tests build native
@@ -206,10 +207,10 @@ python -m benches.shared_cache \
 Use `--engine sglang` for its native serving endpoint. The driver requires only
 the benchmark HTTP dependencies, not an installed engine or CUDA runtime.
 
-The source must publish new bytes. `POST /cache/sync` waits for already submitted
-saves and committed etcd residency, returning `published_revision`; wait for
-the consumer index via `/cache/metadata` to apply that revision, with a bounded error when synchronization
-cannot finish. Each consumer request must increase both Mooncake READ and GPU
+The source must expose new bytes. `POST /cache/sync` waits for already submitted
+saves and returns an `inventory_fence`; the driver sends it to the consumer's
+bounded `/cache/metadata/await` endpoint with the exact scope digest. Each
+consumer request must increase both Mooncake READ and GPU
 restore bytes, match the cold source output, and drain query, source-transfer
 and I/O reservations, including requester completion records awaiting a source
 acknowledgement. A response without these counters does not pass as a
@@ -287,6 +288,11 @@ RDMA, NVLink or GPUDirect.
 The repository's model-serving test starts etcd, two Managers and two replicas
 on one GPU. It checks ordinary sharing, a complete index rebuild after restarting
 the consumer, and a clean recomputation after the source restarts without its payload.
+The gate requires each explicitly restarted Manager to exit successfully within
+10 seconds without the cleanup helper's forced-kill fallback. It then observes
+old membership deletion and verifies an increased epoch and changed incarnation
+before testing the new process. This exercises inventory-stream shutdown as well
+as restart fencing. A crash can leave its old registration until lease expiry.
 It runs separately in the pinned vLLM and SGLang environments:
 
 ```bash

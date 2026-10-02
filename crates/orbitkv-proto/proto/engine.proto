@@ -180,3 +180,90 @@ message InventoryRecord {
   bool present = 4;
   ReplicaMetadata metadata = 5;
 }
+
+enum InventoryScopeMode {
+  INVENTORY_SCOPE_UNSPECIFIED = 0;
+  INVENTORY_SCOPE_ALL_NAMESPACES = 1;
+  INVENTORY_SCOPE_EXACT_NAMESPACES = 2;
+}
+
+message InventoryOpen {
+  string protocol = 1;
+  bytes cluster_uuid = 2;
+  string source_node = 3;
+  uint64 source_epoch = 4;
+  bytes source_incarnation = 5;
+  bytes requester_incarnation = 6;
+  bytes scope_digest = 7;
+  bytes session_id = 8;
+  optional uint64 resume_sequence = 9;
+  bytes installed_view_id = 10;
+  InventoryScopeMode scope_mode = 11;
+  repeated bytes scope_namespaces = 12;
+}
+
+message InventoryAck {
+  uint64 consumed_frame_id = 1;
+  bytes installed_view_id = 2;
+  uint64 applied_sequence = 3;
+}
+
+message InventoryFlushThrough { uint64 target_sequence = 1; }
+
+message InventoryClientFrame {
+  oneof body {
+    InventoryOpen open = 1;
+    InventoryAck ack = 2;
+    InventoryFlushThrough flush_through = 3;
+  }
+}
+
+message InventorySnapshotBegin {
+  bytes snapshot_id = 1;
+  bytes view_id = 2;
+  uint64 start_sequence = 3;
+}
+
+message InventorySnapshotPage {
+  bytes snapshot_id = 1;
+  uint64 page_number = 2;
+  repeated InventoryRecord records = 3;
+}
+
+message InventoryDelta {
+  uint64 from_exclusive = 1;
+  uint64 through_inclusive = 2;
+  repeated InventoryRecord records = 3;
+}
+
+message InventorySnapshotCommit {
+  bytes snapshot_id = 1;
+  bytes view_id = 2;
+  uint64 through_sequence = 3;
+  bytes transcript_digest = 4;
+  uint64 page_count = 5;
+}
+
+message InventoryProgress {
+  uint64 through_sequence = 1;
+  uint64 source_head_sequence = 2;
+}
+
+message InventoryResetRequired { string reason = 1; }
+
+message InventoryServerFrame {
+  uint64 frame_id = 1;
+  bytes session_id = 2;
+  oneof body {
+    InventorySnapshotBegin snapshot_begin = 3;
+    InventorySnapshotPage snapshot_page = 4;
+    InventoryDelta delta = 5;
+    InventorySnapshotCommit snapshot_commit = 6;
+    InventoryProgress progress = 7;
+    InventoryResetRequired reset_required = 8;
+  }
+}
+
+service Inventory {
+  rpc InventorySession(stream InventoryClientFrame) returns (stream InventoryServerFrame);
+}

@@ -19,8 +19,9 @@ def test_three_component_recovery(channel_server, monkeypatch, temporal_state):
     from sglang.srt.mem_cache.swa_memory_pool import SWAKVPool
     from sglang.srt.mem_cache.unified_cache.components import ComponentType
 
+    from orbitkv.sglang.events import _LayerDoneCounter
     from orbitkv.sglang.layout import GpuLayout
-    from orbitkv.sglang.linker import OrbitKVLinker, _LayerDoneCounter
+    from orbitkv.sglang.linker import OrbitKVLinker
     from tests.support.metrics import fetch_orbitkv_metrics
 
     # Real contiguous GPU buffers in the ordinary engine pool representation.

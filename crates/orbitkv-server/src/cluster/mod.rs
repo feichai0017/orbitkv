@@ -1,4 +1,5 @@
-mod publish;
+mod format;
+mod inventory;
 mod registration;
 mod watch;
 
@@ -15,9 +16,25 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::watch as signal;
 use tokio::task::JoinHandle;
 
-const RPC_TIMEOUT: Duration = Duration::from_secs(3);
+pub(crate) use inventory::{InventoryRuntime, InventoryRuntimeStatus};
+
+pub(super) const RPC_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_MEMBERS: usize = 4096;
 const MEMBER_BYTES: usize = 1024;
+
+#[derive(Debug, thiserror::Error)]
+pub(super) enum BootstrapError {
+    #[error("{0}")]
+    Transport(String),
+    #[error("{0}")]
+    Rejected(String),
+}
+
+impl From<String> for BootstrapError {
+    fn from(error: String) -> Self {
+        Self::Transport(error)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -25,6 +42,7 @@ struct Member {
     node_id: String,
     epoch: u64,
     owner: CacheOwner,
+    protocol: String,
     #[serde(skip)]
     lease: i64,
 }
@@ -34,6 +52,7 @@ pub(crate) struct Cluster {
     view: Arc<MembershipView>,
     client: Client,
     lease: i64,
+    inventory: InventoryRuntime,
     stop: signal::Sender<bool>,
     tasks: Vec<JoinHandle<()>>,
 }
@@ -87,10 +106,31 @@ impl Cluster {
         };
         let lease = grant.id();
         let (stop, _) = signal::channel(false);
+        let placeholder_format = format::ClusterFormat {
+            protocol: orbitkv_state::INVENTORY_STREAM_PROTOCOL.into(),
+            cluster_uuid: uuid::Uuid::nil(),
+            revision: 0,
+            encoded: Vec::new(),
+        };
+        let placeholder_member = Member {
+            node_id: node.into(),
+            epoch: 0,
+            owner: membership_owner(&view),
+            protocol: orbitkv_state::INVENTORY_STREAM_PROTOCOL.into(),
+            lease,
+        };
+        let runtime_view = Arc::clone(&view);
         let mut membership = Self {
             view,
             client,
             lease,
+            inventory: InventoryRuntime::new(
+                placeholder_format,
+                placeholder_member,
+                inventory.clone(),
+                index.clone(),
+                runtime_view,
+            ),
             stop,
             tasks: Vec::new(),
         };
@@ -104,55 +144,73 @@ impl Cluster {
                 return Err("initial membership lease acknowledgement expired".into());
             }
             let prefix = format!("/orbitkv/v2/{cluster}/");
-            watch::install_format(&mut membership.client, &prefix, cluster_id).await.map_err(|error| format!("metadata format: {error}"))?;
-            let member = registration::register(
-                &mut membership.client,
-                &prefix,
-                node,
-                membership.view.owner(),
-                lease,
-                cluster_id,
-            )
-            .await.map_err(|error| format!("member registration: {error}"))?;
+            let deadline = Instant::now() + RPC_TIMEOUT * 4;
+            let (format, member) = loop {
+                let attempt = async {
+                    let format = format::install(&mut membership.client, &prefix, cluster_id).await?;
+                    let member = registration::register(
+                        &mut membership.client,
+                        &prefix,
+                        node,
+                        membership.view.owner(),
+                        lease,
+                        cluster_id,
+                        &format,
+                    ).await?;
+                    Ok::<_, BootstrapError>((format, member))
+                }.await;
+                match attempt {
+                    Ok(result) if membership.view.registration_valid() => break result,
+                    Ok(_) => return Err("membership expired during metadata bootstrap".into()),
+                    Err(BootstrapError::Transport(error))
+                        if membership.view.registration_valid() && Instant::now() < deadline =>
+                    {
+                        warn!("Metadata bootstrap will retry without changing its lease or incarnation: {error}");
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                    Err(error) => return Err(format!("metadata bootstrap: {error}")),
+                }
+            };
             info!(
                 "Membership registered: node={} epoch={} incarnation={} endpoint={}",
                 member.node_id, member.epoch, member.owner.incarnation, member.owner.endpoint
+            );
+            membership.inventory = InventoryRuntime::new(
+                format.clone(),
+                member.clone(),
+                inventory.clone(),
+                index.clone(),
+                membership.view.clone(),
             );
 
             let mut lease_client = membership.client.clone();
             let view = Arc::clone(&membership.view);
             let mut stop = membership.stop.subscribe();
-            let published = inventory.clone();
             membership.tasks.push(tokio::spawn(async move {
                 tokio::select! {
                     _ = stop.changed() => {}
                     _ = maintain_lease(&mut lease_client, lease, ttl, cluster_id, &view) => {}
                 }
                 view.fence();
-                published.acknowledge(orbitkv_core::PublishedInventory::default());
             }));
             let client = membership.client.clone();
             let view = Arc::clone(&membership.view);
             let mut stop = membership.stop.subscribe();
             let watch_prefix = prefix.clone();
             let watch_member = member.clone();
+            let watch_inventory = membership.inventory.clone();
             membership.tasks.push(tokio::spawn(async move {
                 tokio::select! {
                     _ = stop.changed() => {}
-                    _ = watch::run(client, watch_prefix, cluster_id, watch_member, view.clone(), index.clone()) => {}
+                    _ = watch::run(client, watch_prefix, cluster_id, format, watch_member, view.clone(), watch_inventory.clone()) => {}
                 }
-                index.reset();
                 view.invalidate_snapshot();
+                watch_inventory.membership_unavailable();
             }));
-            let client = membership.client.clone();
-            let view = Arc::clone(&membership.view);
-            let mut stop = membership.stop.subscribe();
+            let stop = membership.stop.subscribe();
+            let followers = membership.inventory.clone();
             membership.tasks.push(tokio::spawn(async move {
-                tokio::select! {
-                    _ = stop.changed() => {}
-                    _ = publish::run(client, prefix, member, cluster_id, view, inventory.clone()) => {}
-                }
-                inventory.acknowledge(orbitkv_core::PublishedInventory::default());
+                inventory::follow_members(followers, stop).await;
             }));
             Ok(())
         }
@@ -162,6 +220,10 @@ impl Cluster {
             return Err(error);
         }
         Ok(membership)
+    }
+
+    pub(crate) fn inventory(&self) -> InventoryRuntime {
+        self.inventory.clone()
     }
 
     pub(crate) async fn shutdown(mut self) {
@@ -174,6 +236,10 @@ impl Cluster {
             warn!("Membership revoke failed; registration will expire: {error}");
         }
     }
+}
+
+fn membership_owner(view: &MembershipView) -> CacheOwner {
+    view.owner().clone()
 }
 
 impl Drop for Cluster {

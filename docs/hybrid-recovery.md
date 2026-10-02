@@ -1,5 +1,11 @@
 # Compiled hybrid recovery
 
+The current official vLLM 0.30.0 adapter supports V1 with one attention cache
+group (`VLLM_USE_V2_MODEL_RUNNER=0`). Multi-group/recurrent serving is rejected;
+historical hybrid evidence below does not reopen that profile. Shared recovery
+contracts and SGLang component work remain available with their stated limits.
+See [the released interface audit](engine-release-audit.md).
+
 OrbitKV's SGLang and vLLM hybrid adapters use the same compiled recovery
 contract for page demand and leased evidence. Every hybrid lookup must supply
 enough state to resume at one legal token boundary. An attention hit alone is

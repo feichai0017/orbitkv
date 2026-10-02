@@ -32,6 +32,15 @@ pub fn storage_namespace(identity: &str, page_first: bool, mut slots: Vec<Storag
     format!("orbitkv:v2:{:x}", digest.finalize())
 }
 
+pub fn is_storage_namespace(namespace: &str) -> bool {
+    namespace.strip_prefix("orbitkv:v2:").is_some_and(|digest| {
+        digest.len() == 64
+            && digest
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ContractError {
     #[error("token range end {end} precedes start {start}")]

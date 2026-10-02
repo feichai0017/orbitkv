@@ -7,7 +7,7 @@ fn fixed_tent_strings_are_bounded_even_without_a_terminator() {
 }
 
 #[test]
-fn tcp_loopback_moves_bytes_through_upstream_mooncake() {
+fn tcp_peers_move_merged_slices_and_count_each_byte_once() {
     unsafe {
         libc::setenv(c"MC_FORCE_TCP".as_ptr(), c"1".as_ptr(), 1);
     }
@@ -15,7 +15,11 @@ fn tcp_loopback_moves_bytes_through_upstream_mooncake() {
         TransferEngine::new("P2PHANDSHAKE", "127.0.0.1:0", "127.0.0.1", 0, &[])
             .expect("create Mooncake TENT"),
     );
-    let segment = engine.local_segment_name().expect("local segment");
+    let peer = Arc::new(
+        TransferEngine::new("P2PHANDSHAKE", "127.0.0.1:0", "127.0.0.1", 0, &[])
+            .expect("create peer TENT"),
+    );
+    let segment = peer.local_segment_name().expect("peer segment");
     let mut memory = vec![0u8; 8192];
     memory[..4096].fill(0xa5);
     let base = NonNull::new(memory.as_mut_ptr()).expect("memory pointer");
@@ -25,39 +29,49 @@ fn tcp_loopback_moves_bytes_through_upstream_mooncake() {
             .expect("register memory")
     };
     assert_eq!(registration.address(), base);
-    let notification_generation = engine
+    let peer_registration = unsafe {
+        peer.register_memory_owned(base, memory.len(), "cpu:0")
+            .expect("register peer memory")
+    };
+    let notification_generation = peer
         .open_notification_scope("loopback")
         .expect("open notification scope");
     let destination = unsafe { base.byte_add(4096) };
-    engine
+    let slices: Vec<_> = (0..4)
+        .map(|index| TransferSlice {
+            local: unsafe { base.byte_add(index * 1024) },
+            remote_address: unsafe { destination.byte_add(index * 1024) }.as_ptr() as u64,
+            length: 1024,
+        })
+        .collect();
+    let transferred = engine
         .submit_and_notify(
             TransferOp::Write,
             &segment,
-            &[TransferSlice {
-                local: base,
-                remote_address: destination.as_ptr() as u64,
-                length: 4096,
-            }],
+            &slices,
             Duration::from_secs(5),
             &Notification {
                 name: "loopback".to_string(),
                 message: "done".to_string(),
             },
         )
-        .expect("loopback write");
+        .expect("peer write");
+    assert_eq!(
+        transferred, 4096,
+        "merged task counters must not be added twice"
+    );
     assert_eq!(&memory[..4096], &memory[4096..]);
     assert_eq!(
-        engine
-            .wait_for_notification(
-                "loopback",
-                notification_generation,
-                &[("done".to_string(), 1)],
-                Duration::from_secs(5),
-            )
-            .expect("wait for notification"),
+        peer.wait_for_notification(
+            "loopback",
+            notification_generation,
+            &[("done".to_string(), 1)],
+            Duration::from_secs(5),
+        )
+        .expect("wait for notification"),
         Some("done".to_string())
     );
-    engine.close_notification_scope("loopback", notification_generation);
+    peer.close_notification_scope("loopback", notification_generation);
     let cancelled_generation = engine
         .open_notification_scope("cancelled")
         .expect("open cancelled notification scope");
@@ -74,6 +88,9 @@ fn tcp_loopback_moves_bytes_through_upstream_mooncake() {
     engine.close_notification_scope("cancelled", cancelled_generation);
     assert_eq!(waiter.join().expect("join waiter").unwrap(), None);
     let _ = engine.nic_load_stats().expect("query TENT NIC load stats");
+    peer_registration
+        .unregister()
+        .expect("unregister peer memory");
     registration.unregister().expect("unregister memory");
     let registration = unsafe {
         engine
@@ -170,6 +187,7 @@ fn uncertain_transfer_states_drain_all_tasks_before_returning() {
                 cancellations.set(cancellations.get() + 1);
                 Ok(())
             },
+            || panic!("failed batch must not read completion bytes"),
             || rounds.get() == 4,
         );
         assert!(result.is_err(), "{mode}");
@@ -199,6 +217,7 @@ fn uncertain_transfer_states_drain_all_tasks_before_returning() {
                 })
             },
             |_| panic!("terminal native status needs no cancellation"),
+            || panic!("failed batch must not read completion bytes"),
             || {
                 freed.set(true);
                 true
@@ -243,6 +262,7 @@ fn timeout_cancellation_waits_for_all_terminal_tasks_and_batch_reclamation() {
                 assert!(!cancelled[task].replace(true), "cancel a task at most once");
                 Ok(())
             },
+            || panic!("failed batch must not read completion bytes"),
             || {
                 assert!(terminal.iter().all(std::cell::Cell::get));
                 frees.set(frees.get() + 1);
@@ -302,6 +322,7 @@ fn timeout_cancellation_preserves_submission_polling_and_cancellation_errors() {
                     Ok(())
                 }
             },
+            || panic!("failed batch must not read completion bytes"),
             || {
                 assert_eq!(polls.get(), 2, "retain the owner until cancellation drains");
                 freed.set(true);
@@ -340,6 +361,7 @@ fn unsolicited_cancellation_remains_failure_even_when_another_timeout_was_observ
                 })
             },
             |_| panic!("an unsolicited terminal state must not request cancellation"),
+            || panic!("failed batch must not read completion bytes"),
             || true,
         );
         assert!(matches!(
@@ -350,7 +372,7 @@ fn unsolicited_cancellation_remains_failure_even_when_another_timeout_was_observ
 }
 
 #[test]
-fn batch_drain_counts_completed_bytes_once_and_handles_rejected_submission() {
+fn batch_drain_uses_batch_bytes_for_merged_tasks_and_handles_rejected_submission() {
     let rounds = std::cell::Cell::new(0);
     let result = drain_batch(
         2,
@@ -366,10 +388,14 @@ fn batch_drain_counts_completed_bytes_once_and_handles_rejected_submission() {
                 } else {
                     STATUS_PENDING
                 },
-                transferred_bytes: 11,
+                transferred_bytes: 22,
             })
         },
         |_| panic!("successful batch must not be cancelled"),
+        || {
+            assert_eq!(rounds.get(), 3);
+            Ok(22)
+        },
         || rounds.get() == 3,
     );
     assert_eq!(result.unwrap(), 22);
@@ -387,6 +413,7 @@ fn batch_drain_counts_completed_bytes_once_and_handles_rejected_submission() {
             })
         },
         |_| Ok(()),
+        || panic!("failed batch must not read completion bytes"),
         || true,
     );
     assert!(matches!(
@@ -396,4 +423,33 @@ fn batch_drain_counts_completed_bytes_once_and_handles_rejected_submission() {
             ..
         })
     ));
+}
+
+#[test]
+fn batch_counter_failure_still_reclaims_terminal_batch() {
+    let freed = std::cell::Cell::new(false);
+    let result = drain_batch(
+        1,
+        Duration::MAX,
+        Ok(()),
+        |_| {
+            Ok(native::TransferStatus {
+                status: STATUS_COMPLETED,
+                transferred_bytes: 11,
+            })
+        },
+        |_| panic!("completed task must not be cancelled"),
+        || {
+            Err(MooncakeError::Operation {
+                operation: "tent_overall_status",
+                status: -1,
+            })
+        },
+        || {
+            freed.set(true);
+            true
+        },
+    );
+    assert!(result.is_err());
+    assert!(freed.get());
 }

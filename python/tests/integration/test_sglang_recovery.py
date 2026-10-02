@@ -24,8 +24,9 @@ def test_hybrid_recovery_requires_and_restores_complete_state(channel_server, mo
         UnifiedCacheLinkerWrapper,
     )
 
+    from orbitkv.sglang.events import _LayerDoneCounter
     from orbitkv.sglang.layout import GpuLayout, GpuPool
-    from orbitkv.sglang.linker import OrbitKVLinker, _LayerDoneCounter
+    from orbitkv.sglang.linker import OrbitKVLinker
     from orbitkv.sglang.recovery import RecoveryLinkerWrapper
     from tests.support.metrics import fetch_orbitkv_metrics
 

@@ -135,7 +135,8 @@ not by itself prove that a TP=4 representation can be restored by TP=8.
    P. Start from the existing vLLM Mooncake adapter and separately integrate
    SGLang's handoff lifecycle. A basic P/D proxy is sufficient for this gate.
 4. Replace sharded Catalog discovery with complete local global indexes,
-   backed by etcd block metadata and revisioned snapshot/Watch. Qualify quorum
+   historically backed by etcd block metadata and revisioned snapshot/Watch;
+   the S2.8 candidate replaces block traffic with owner inventory streams. Qualify quorum
    loss, repair and metadata capacity. Cross-host TP/PP, peer-SSD mixed-load
    qualification and KV-aware routing have separate gates.
 

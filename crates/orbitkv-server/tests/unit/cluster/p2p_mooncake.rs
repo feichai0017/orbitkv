@@ -13,8 +13,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::etcd::{Etcd, join, view, wait_for};
+use super::gate::TcpGate;
 use crate::P2pTransferService;
 use crate::proto::engine::engine_server::EngineServer;
+use crate::proto::engine::inventory_server::InventoryServer;
 use cudarc::driver::CudaContext;
 use cudarc::driver::sys;
 use orbitkv_catalog::GlobalIndex;
@@ -194,6 +196,7 @@ async fn wait_for_grpc_ready(port: u16) {
 
 async fn spawn_engine_server(
     engine: Arc<OrbitKVEngine>,
+    inventory: crate::cluster::InventoryRuntime,
     port: u16,
 ) -> tokio::sync::oneshot::Sender<()> {
     let service = P2pTransferService::new(engine);
@@ -202,6 +205,7 @@ async fn spawn_engine_server(
     tokio::spawn(async move {
         Server::builder()
             .add_service(EngineServer::new(service))
+            .add_service(InventoryServer::new(inventory.service()))
             .serve_with_shutdown(addr, async {
                 let _ = stopped.await;
             })
@@ -210,6 +214,23 @@ async fn spawn_engine_server(
     });
     wait_for_grpc_ready(port).await;
     stop
+}
+
+async fn capture_inventory_fence(
+    engine: &OrbitKVEngine,
+    cluster: &crate::cluster::Cluster,
+) -> orbitkv_state::InventoryFence {
+    engine.flush_saves().await;
+    cluster.inventory().capture_fence().unwrap()
+}
+
+async fn wait_for_fence(index: &GlobalIndex, fence: &orbitkv_state::InventoryFence) {
+    wait_for(|| {
+        index
+            .owner_watermark(fence.source_incarnation)
+            .is_some_and(|(_, sequence)| sequence >= fence.inventory_sequence)
+    })
+    .await;
 }
 
 fn locate(index: &GlobalIndex, namespace: &str, hashes: &[Vec<u8>]) -> Vec<BlockCandidates> {
@@ -252,6 +273,46 @@ async fn wait_for_cache(
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the live-store assertion keeps engine, layout and payload identities explicit"
+)]
+async fn restore_cached_image(
+    engine: &OrbitKVEngine,
+    gpu: &GpuBuffer,
+    instance_id: &str,
+    request_id: &str,
+    layer: &str,
+    block_hashes: &[Vec<u8>],
+    expected: &[u8],
+) {
+    gpu.zero();
+    let result = engine
+        .count_prefix_hit_blocks_with_prefetch(
+            instance_id,
+            request_id,
+            block_hashes,
+            orbitkv_core::QueryMode::Demand,
+        )
+        .await
+        .expect("query local cache");
+    assert_eq!(result.blocks.len(), block_hashes.len());
+    let lease = engine
+        .create_query_lease(instance_id, result.blocks)
+        .expect("create local query lease");
+    let receiver = engine
+        .restore(
+            instance_id,
+            0,
+            DEVICE_ID,
+            &[vec![layer]],
+            &[(lease, vec![(0..block_hashes.len()).map(Some).collect()])],
+        )
+        .expect("restore local cache image");
+    restore_and_wait(engine, gpu, layer, block_hashes.len(), receiver).await;
+    assert_eq!(gpu.copy_to_host(), expected);
 }
 
 async fn wait_for_index_registration(
@@ -365,7 +426,8 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     );
 
     // ── 3. Start Engine A gRPC server ──
-    let _source_server = spawn_engine_server(Arc::clone(&engine_a), port_a).await;
+    let _source_server =
+        spawn_engine_server(Arc::clone(&engine_a), cluster_a.inventory(), port_a).await;
 
     // ── 4. Save blocks on Engine A ──
     let gpu_a = GpuBuffer::alloc(TOTAL_SIZE);
@@ -430,10 +492,8 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     .await;
 
     // ── 6. Wait for acknowledged owner inventory ──
-    engine_a
-        .flush_saves_and_inventory()
-        .await
-        .expect("publish inventory");
+    let source_fence = capture_inventory_fence(&engine_a, &cluster_a).await;
+    wait_for_fence(&stores, &source_fence).await;
     wait_for_index_registration(
         &stores,
         &cache_namespace,
@@ -583,8 +643,11 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         mooncake_nic_names: mooncake_nics(),
         ..EngineConfig::default()
     };
-    let engine_b =
-        OrbitKVEngine::new_with_config(16 << 20, false, config_b).expect("engine B should start");
+    let engine_b = Arc::new(
+        OrbitKVEngine::new_with_config(16 << 20, false, config_b).expect("engine B should start"),
+    );
+    let _target_server =
+        spawn_engine_server(Arc::clone(&engine_b), cluster_b.inventory(), port_b).await;
 
     let gpu_b = GpuBuffer::alloc(TOTAL_SIZE);
     gpu_b.zero();
@@ -665,10 +728,8 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     // ── 9b. Verify Engine B re-registered fetched blocks to global index ──
     // Mooncake-fetched blocks are now resident on B, so B must advertise them so
     // other nodes can discover and fetch from B (not just from A).
-    engine_b
-        .flush_saves_and_inventory()
-        .await
-        .expect("restored inventory");
+    let restored_fence = capture_inventory_fence(&engine_b, &cluster_b).await;
+    wait_for_fence(&stores, &restored_fence).await;
     wait_for_index_ownership(
         &stores,
         &cache_namespace,
@@ -681,11 +742,8 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
 
     // Eviction removes A's evidence while the copied replica on B remains usable.
     assert!(engine_a.cleanup_memory_cache().evicted_blocks > 0);
-    let revision = engine_a
-        .flush_saves_and_inventory()
-        .await
-        .expect("evicted inventory");
-    wait_for(|| stores.revision().is_some_and(|r| r >= revision)).await;
+    let evicted_fence = capture_inventory_fence(&engine_a, &cluster_a).await;
+    wait_for_fence(&stores, &evicted_fence).await;
     let remaining = locate(&stores, &cache_namespace, &stored_delayed);
     assert_eq!(remaining.len(), NUM_BLOCKS);
     for entry in remaining {
@@ -725,7 +783,8 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         )
         .await
         .unwrap();
-    engine_a.flush_saves_and_inventory().await.unwrap();
+    let fresh_fence = capture_inventory_fence(&engine_a, &cluster_a).await;
+    wait_for_fence(&stores, &fresh_fence).await;
     assert_eq!(
         peer.query_blocks_for_transfer(authorization)
             .await
@@ -827,6 +886,295 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
 }
 
 #[tokio::test]
+#[ignore = "requires CUDA, Mooncake and ETCD_BIN; live DRAM journal overflow and metadata loss"]
+async fn live_dram_journal_overflow_rebuilds_and_local_payload_survives_metadata_loss() {
+    orbitkv_common::logging::init_stdout_colored("debug");
+    let _cuda_ctx = CudaContext::new(0).expect("CUDA init");
+
+    let coordinator = Etcd::start(1).await;
+    let observer_view = view(get_free_port());
+    let (observer_cluster, observer_index, _) = join(
+        &coordinator,
+        "live-journal",
+        "observer",
+        observer_view.clone(),
+        60,
+    )
+    .await;
+    let etcd_gate = TcpGate::start(&coordinator.endpoints[0]).await;
+    let source_backend_port = get_free_port();
+    let peer_gate = TcpGate::start(&format!("http://127.0.0.1:{source_backend_port}")).await;
+    let source_port = peer_gate
+        .endpoint
+        .rsplit(':')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let source_view = view(source_port);
+    let source_index = Arc::new(GlobalIndex::new(
+        source_view.clone(),
+        1 << 20,
+        Arc::new(orbitkv_state::InventoryScope::AllNamespaces),
+    ));
+    let inventory = Arc::new(ResidencyInventory::new(1024));
+    let source_cluster = crate::cluster::Cluster::join(
+        std::slice::from_ref(&etcd_gate.endpoint),
+        "live-journal",
+        "source",
+        12,
+        source_view.clone(),
+        inventory.clone(),
+        source_index.clone(),
+    )
+    .await
+    .expect("join source through TCP gate");
+    wait_for(|| {
+        observer_view.permits(source_view.owner())
+            && source_view.permits(observer_view.owner())
+            && observer_index.status().registration_valid
+    })
+    .await;
+
+    const BLOCKS: usize = 64;
+    const BYTES: usize = BLOCKS * BLOCK_SIZE;
+    const INSTANCE: &str = "live-journal-source";
+    const NAMESPACE: &str = "live-journal-payload";
+    let engine = Arc::new(
+        OrbitKVEngine::new_with_config(
+            4 << 20,
+            false,
+            EngineConfig {
+                membership: Some(source_view.clone()),
+                global_index: Some(source_index),
+                inventory: Some(inventory.clone()),
+                mooncake_nic_names: Vec::new(),
+                ..EngineConfig::default()
+            },
+        )
+        .expect("create live-store engine"),
+    );
+    let _source_server = spawn_engine_server(
+        Arc::clone(&engine),
+        source_cluster.inventory(),
+        source_backend_port,
+    )
+    .await;
+    let gpu = GpuBuffer::alloc(BYTES);
+    let mut expected = vec![0u8; BYTES];
+    fill_test_pattern(&mut expected, BLOCK_SIZE);
+    gpu.copy_from_host(&expected);
+    engine
+        .register_context_layer_batch(
+            INSTANCE,
+            NAMESPACE,
+            DEVICE_ID,
+            0,
+            0,
+            1,
+            1,
+            &[LAYER.to_string()],
+            &[gpu.as_u64()],
+            &[BYTES],
+            &[BLOCKS],
+            &[BLOCK_SIZE],
+            &[0],
+            &[1],
+            TransferMode::Direct,
+            false,
+        )
+        .expect("register live-store GPU layer");
+    let block_ids = make_block_ids(BLOCKS);
+    let initial_hashes = make_block_hashes(BLOCKS, 71);
+    let initial_stored: Vec<_> = initial_hashes
+        .iter()
+        .map(|hash| group_hash(hash, 0))
+        .collect();
+    engine
+        .batch_save_kv_blocks_from_ipc(
+            INSTANCE,
+            0,
+            0,
+            DEVICE_ID,
+            vec![LayerSave {
+                layer_name: LAYER.into(),
+                block_ids: block_ids.clone(),
+                block_hashes: initial_hashes.clone(),
+            }],
+        )
+        .await
+        .expect("save initial live-store blocks");
+    let initial_fence = capture_inventory_fence(&engine, &source_cluster).await;
+    wait_for_fence(&observer_index, &initial_fence).await;
+    wait_for_index_registration(
+        &observer_index,
+        &engine.instance_namespace(INSTANCE).unwrap(),
+        &initial_stored,
+        BLOCKS,
+        Duration::from_secs(10),
+    )
+    .await;
+    let initial_sequence = initial_fence.inventory_sequence;
+
+    peer_gate.partition().await;
+    let transient_partition_started = Instant::now();
+    assert_eq!(engine.cleanup_memory_cache().evicted_blocks, BLOCKS);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let final_hashes = make_block_hashes(BLOCKS, 72);
+    let final_stored: Vec<_> = final_hashes
+        .iter()
+        .map(|hash| group_hash(hash, 0))
+        .collect();
+    engine
+        .batch_save_kv_blocks_from_ipc(
+            INSTANCE,
+            0,
+            0,
+            DEVICE_ID,
+            vec![LayerSave {
+                layer_name: LAYER.into(),
+                block_ids: block_ids.clone(),
+                block_hashes: final_hashes.clone(),
+            }],
+        )
+        .await
+        .expect("save replacement live-store blocks");
+    wait_for_cache(
+        &engine,
+        INSTANCE,
+        &final_hashes,
+        BLOCKS,
+        Duration::from_secs(5),
+    )
+    .await;
+    let through = inventory.sequence();
+    assert_eq!(
+        inventory.changes(initial_sequence, through),
+        Err(InventoryReadError::HistoryGap),
+        "live-store churn did not overflow the retained journal"
+    );
+    assert!(
+        locate(
+            &observer_index,
+            &engine.instance_namespace(INSTANCE).unwrap(),
+            &final_stored,
+        )
+        .iter()
+        .all(|row| row.replicas.is_empty()),
+        "partition exposed an unpublished replacement"
+    );
+    assert!(
+        locate(
+            &observer_index,
+            &engine.instance_namespace(INSTANCE).unwrap(),
+            &initial_stored,
+        )
+        .iter()
+        .all(|row| { row.replicas.len() == 1 && row.replicas[0].owner == *source_view.owner() }),
+        "partition discarded the last complete source view"
+    );
+    restore_cached_image(
+        &engine,
+        &gpu,
+        INSTANCE,
+        "partition-local-restore",
+        LAYER,
+        &final_hashes,
+        &expected,
+    )
+    .await;
+    let transient_partition_ms = transient_partition_started.elapsed().as_secs_f64() * 1000.0;
+
+    peer_gate.heal(Duration::ZERO);
+    let reconciliation_started = Instant::now();
+    let final_fence = capture_inventory_fence(&engine, &source_cluster).await;
+    wait_for_fence(&observer_index, &final_fence).await;
+    let namespace = engine.instance_namespace(INSTANCE).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let initial = locate(&observer_index, &namespace, &initial_stored);
+        let final_rows = locate(&observer_index, &namespace, &final_stored);
+        if observer_index
+            .owner_watermark(source_view.owner().incarnation)
+            .is_some_and(|(_, sequence)| sequence >= final_fence.inventory_sequence)
+            && initial.iter().all(|row| row.replicas.is_empty())
+            && final_rows
+                .iter()
+                .all(|row| row.replicas.len() == 1 && row.replicas[0].owner == *source_view.owner())
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "live-store snapshot did not converge after journal overflow"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let reconciliation_ms = reconciliation_started.elapsed().as_secs_f64() * 1000.0;
+    assert!(source_view.registration_valid());
+
+    etcd_gate.partition().await;
+    let expiry_started = Instant::now();
+    wait_for(|| !source_view.registration_valid()).await;
+    wait_for(|| {
+        let observer = observer_index.status();
+        observer.registration_valid
+            && !observer_view.permits(source_view.owner())
+            && locate(&observer_index, &namespace, &final_stored)
+                .iter()
+                .all(|row| row.replicas.is_empty())
+    })
+    .await;
+    assert!(observer_index.status().registration_valid);
+    assert!(!observer_view.permits(source_view.owner()));
+    restore_cached_image(
+        &engine,
+        &gpu,
+        INSTANCE,
+        "expired-membership-local-restore",
+        LAYER,
+        &final_hashes,
+        &expected,
+    )
+    .await;
+    let expiry_ms = expiry_started.elapsed().as_secs_f64() * 1000.0;
+    etcd_gate.heal(Duration::ZERO);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(
+        !source_view.registration_valid(),
+        "expired runtime silently resumed its old incarnation"
+    );
+
+    std::fs::write(
+        coordinator.directory.join("live-journal-overflow.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "initial_sequence": initial_sequence,
+            "final_sequence": through,
+            "final_fence": final_fence,
+            "journal_bytes": 1024,
+            "initial_records": BLOCKS,
+            "final_records": BLOCKS,
+            "transient_partition_ms": transient_partition_ms,
+            "reconciliation_ms": reconciliation_ms,
+            "lease_expiry_ms": expiry_ms,
+            "local_payload_bytes": BYTES,
+            "local_payload_exact_after_transient_partition": true,
+            "local_payload_exact_after_lease_expiry": true,
+            "last_complete_view_retained_during_transient_partition": true,
+            "observer_available_after_source_expiry": true,
+            "expired_incarnation_remained_fenced_after_heal": true,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    source_cluster.shutdown().await;
+    observer_cluster.shutdown().await;
+    peer_gate.shutdown().await;
+    etcd_gate.shutdown().await;
+}
+
+#[tokio::test]
 #[ignore = "requires CUDA, io_uring, nvCOMP 5.3 and Mooncake; set MC_FORCE_TCP=1 for same-host TCP"]
 async fn encoded_peer_payloads_restore_the_same_gpu_image() {
     use orbitkv_state::{AttentionRole, Scalar16, StorageFormat};
@@ -889,8 +1237,10 @@ async fn encoded_peer_payloads_restore_the_same_gpu_image() {
                 ..SsdCacheConfig::default()
             }),
         );
-        let _source_server = spawn_engine_server(source.clone(), port_a).await;
-        let _target_server = spawn_engine_server(target.clone(), port_b).await;
+        let _source_server =
+            spawn_engine_server(source.clone(), cluster_a.inventory(), port_a).await;
+        let _target_server =
+            spawn_engine_server(target.clone(), cluster_b.inventory(), port_b).await;
         let gpu_source = GpuBuffer::alloc(8192);
         let gpu_target = GpuBuffer::alloc(8192);
         gpu_source.copy_from_host(&[0xa0, 0x3f].repeat(4096));
@@ -945,7 +1295,8 @@ async fn encoded_peer_payloads_restore_the_same_gpu_image() {
             .await
             .unwrap();
         wait_for_cache(&source, "source", &hashes, 1, Duration::from_secs(10)).await;
-        source.flush_saves_and_inventory().await.unwrap();
+        let source_fence = capture_inventory_fence(&source, &cluster_a).await;
+        wait_for_fence(&stores, &source_fence).await;
         let namespace = source.instance_namespace("source").unwrap();
         wait_for_index_registration(
             &stores,

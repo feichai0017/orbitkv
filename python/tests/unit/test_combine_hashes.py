@@ -20,7 +20,7 @@ from vllm.v1.kv_cache_interface import (  # noqa: E402
 from orbitkv.orbitkv import BlockHashes, QueryLoading, QueryReady  # noqa: E402
 from orbitkv.vllm.config import ConnectorContext, OrbitKVConnectorMode  # noqa: E402
 from orbitkv.vllm.metadata import OrbitKVConnectorMetadata, SaveIntent  # noqa: E402
-from orbitkv.vllm.scheduler import SchedulerConnector, _QueryProbe  # noqa: E402
+from orbitkv.vllm.scheduler import SchedulerAdapter, _QueryProbe  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -47,7 +47,6 @@ def _make_ctx(
         "tp_rank": 0,
         "device_id": 0,
         "client": MagicMock(),
-        "state_manager": MagicMock(),
         "is_mla": False,
         "dcp_world_size": dcp_world_size,
         "dcp_rank": 0,
@@ -58,7 +57,7 @@ def _make_ctx(
 
 def _make_recurrent_scheduler():
     """Two-group HMA scheduler over a 2-block request."""
-    scheduler = SchedulerConnector(_make_ctx())
+    scheduler = SchedulerAdapter(_make_ctx())
     scheduler._cache_groups = SimpleNamespace(
         group_count=2,
         hash_group_index=0,
@@ -102,14 +101,6 @@ def test_recurrent_request_finished_holds_only_for_pending_saves():
     # No request-end recurrent save: nothing to wait for.
     assert (delay_free, params) == (False, None)
     assert "r1" not in scheduler._block_hashes
-
-
-def test_hma_binding_disables_local_prefix_lookup_before_scheduling():
-    scheduler = _make_recurrent_scheduler()
-    block_pool = SimpleNamespace(get_cached_block=lambda *_args: object())
-    scheduler.bind_gpu_block_pool(block_pool)
-
-    assert block_pool.get_cached_block(b"hash", [0, 1]) is None
 
 
 def test_hma_accepts_different_allocator_block_counts():
@@ -265,10 +256,10 @@ def test_effective_tp_cases(case: str, kwargs: dict, expected_rank: int, expecte
     ],
 )
 def test_use_page_first_detection(case: str, kwargs: dict, additional_config: dict, expected: bool):
-    from orbitkv.vllm.worker import WorkerConnector
+    from orbitkv.vllm.worker import WorkerAdapter
 
     ctx = _make_ctx(**kwargs)
-    worker = WorkerConnector(
+    worker = WorkerAdapter(
         ctx,
         vllm_config=SimpleNamespace(
             model_config=SimpleNamespace(get_head_size=lambda: 128),
@@ -282,7 +273,7 @@ def test_use_page_first_detection(case: str, kwargs: dict, additional_config: di
 
 
 def test_hma_disables_page_first_registration():
-    from orbitkv.vllm.worker import WorkerConnector
+    from orbitkv.vllm.worker import WorkerAdapter
 
     attention = FullAttentionSpec()
     attention.block_size = 16
@@ -295,7 +286,7 @@ def test_hma_disables_page_first_registration():
             SimpleNamespace(layer_names=("recurrent",), kv_cache_spec=recurrent),
         )
     )
-    worker = WorkerConnector(
+    worker = WorkerAdapter(
         _make_ctx(is_mla=True),
         vllm_config=SimpleNamespace(
             model_config=SimpleNamespace(get_head_size=lambda: 128), additional_config={}
@@ -312,7 +303,7 @@ def test_page_first_block_shard_is_a_partition():
     """Page-first distributes saves by block, not by layer. Across ranks the
     block stripes must be disjoint and cover every block — otherwise a block's
     page is dropped (never sealed) or saved twice."""
-    from orbitkv.vllm.worker import WorkerConnector
+    from orbitkv.vllm.worker import WorkerAdapter
 
     block_ids = tuple(range(13))
     block_hashes = tuple(bytes([i]) for i in block_ids)
@@ -322,7 +313,7 @@ def test_page_first_block_shard_is_a_partition():
     seen: list[int] = []
     for tp_rank in range(tp_size):
         ctx = _make_ctx(is_mla=True, tp_rank=tp_rank, tp_size=tp_size)
-        worker = WorkerConnector(
+        worker = WorkerAdapter(
             ctx,
             vllm_config=SimpleNamespace(
                 model_config=SimpleNamespace(get_head_size=lambda: 128), additional_config={}
@@ -343,10 +334,10 @@ def test_page_first_block_shard_is_a_partition():
 def test_page_first_saves_all_layers_for_this_ranks_block_stripe():
     """A page needs every layer, so a page-first rank saves ALL layers but only
     its block stripe (block_id % tp_size == tp_rank)."""
-    from orbitkv.vllm.worker import SaveTask, WorkerConnector
+    from orbitkv.vllm.worker import SaveTask, WorkerAdapter
 
     ctx = _make_ctx(is_mla=True, tp_rank=1, tp_size=2, device_id=1)
-    worker = WorkerConnector(
+    worker = WorkerAdapter(
         ctx,
         vllm_config=SimpleNamespace(
             model_config=SimpleNamespace(get_head_size=lambda: 128), additional_config={}
@@ -382,10 +373,10 @@ def test_page_first_saves_all_layers_for_this_ranks_block_stripe():
 
 
 def test_recurrent_save_omits_null_group_target():
-    from orbitkv.vllm.worker import SaveTask, WorkerConnector
+    from orbitkv.vllm.worker import SaveTask, WorkerAdapter
 
     ctx = _make_ctx()
-    worker = WorkerConnector(
+    worker = WorkerAdapter(
         ctx,
         vllm_config=SimpleNamespace(
             model_config=SimpleNamespace(get_head_size=lambda: 128), additional_config={}
@@ -420,10 +411,10 @@ def test_recurrent_save_omits_null_group_target():
 def test_page_first_layer_split_saves_own_layers_for_all_blocks():
     """Layer-split: each rank is the sole writer of its shard (its own layers),
     so it saves ALL blocks for its registered layers — no block striping."""
-    from orbitkv.vllm.worker import SaveTask, WorkerConnector
+    from orbitkv.vllm.worker import SaveTask, WorkerAdapter
 
     ctx = _make_ctx(is_mla=True, tp_rank=1, tp_size=2, device_id=1)
-    worker = WorkerConnector(
+    worker = WorkerAdapter(
         ctx,
         vllm_config=SimpleNamespace(
             model_config=SimpleNamespace(get_head_size=lambda: 128),
@@ -462,9 +453,9 @@ def test_page_first_layer_split_saves_own_layers_for_all_blocks():
 
 
 # ---------------------------------------------------------------------------
-# Tests — SchedulerConnector decode hash refresh
+# Tests — SchedulerAdapter decode hash refresh
 #
-# Verify that _consume_save_intent picks up new hashes produced during
+# Verify that _consume_full_block_saves picks up new hashes produced during
 # decode, not just the initial prefill snapshot.
 # ---------------------------------------------------------------------------
 
@@ -486,12 +477,12 @@ def _make_fake_blocks(block_ids: list[int]):
 
 
 class TestDecodeHashRefresh:
-    """Ensure SchedulerConnector refreshes block_hashes from the live Request
+    """Ensure SchedulerAdapter refreshes block_hashes from the live Request
     so decode-phase blocks are also saved."""
 
-    def _make_connector(self, dcp_world_size: int = 2) -> SchedulerConnector:
+    def _make_connector(self, dcp_world_size: int = 2) -> SchedulerAdapter:
         ctx = _make_ctx(block_size=16, dcp_world_size=dcp_world_size)
-        return SchedulerConnector(ctx)
+        return SchedulerAdapter(ctx)
 
     def test_prefill_only_saves(self):
         """Without hash refresh, only prefill blocks are saved."""
@@ -504,7 +495,7 @@ class TestDecodeHashRefresh:
         sc._allocated_blocks["r1"] = [[10, 11, 12, 13]]
         sc._scheduled_tokens["r1"] = 128  # 4 * 32
 
-        intent = sc._consume_save_intent("r1", 0)
+        intent = sc._consume_full_block_saves("r1")
         assert intent is not None
         assert len(intent.block_ids_by_group[0]) == 4
         assert len(intent.block_hashes) == 4
@@ -521,7 +512,7 @@ class TestDecodeHashRefresh:
         sc._scheduled_tokens["r1"] = 128  # 4 * 32
 
         # Save initial 4 blocks
-        intent = sc._consume_save_intent("r1", 0)
+        intent = sc._consume_full_block_saves("r1")
         assert intent is not None
         assert len(intent.block_ids_by_group[0]) == 4
 
@@ -532,14 +523,14 @@ class TestDecodeHashRefresh:
         sc._scheduled_tokens["r1"] += 64  # 2 * 32 more tokens
 
         # Before refresh: _block_hashes is stale (4 entries) → no new saves
-        stale_intent = sc._consume_save_intent("r1", 0)
+        stale_intent = sc._consume_full_block_saves("r1")
         assert stale_intent is None  # still capped at 4
 
         # Refresh hashes (simulates what build_connector_meta does)
         sc._block_hashes["r1"] = tuple(req.block_hashes)
 
         # Now the 2 decode blocks become saveable
-        intent2 = sc._consume_save_intent("r1", 0)
+        intent2 = sc._consume_full_block_saves("r1")
         assert intent2 is not None
         assert len(intent2.block_ids_by_group[0]) == 2
         assert intent2.block_ids_by_group == ((14, 15),)
@@ -570,21 +561,20 @@ class TestDecodeHashRefresh:
         sc._scheduled_tokens["r1"] = 48  # 3 virtual blocks beyond the external hit
         sc._allocated_blocks["r1"] = [[100, 101, 102, 103, 104, 105, 200, 201, 202]]
 
-        intent = sc._consume_save_intent("r1", 0)
+        intent = sc._consume_full_block_saves("r1")
 
         assert intent is not None
         assert intent.block_hashes == block_hashes[6:9]
         assert intent.block_ids_by_group == ((200, 201, 202),)
 
-    def test_save_only_mode_counts_precomputed_prefix_as_saveable(self):
-        """NIXL-loaded prefix should be saveable in OrbitKV save-only mode."""
-        sc = SchedulerConnector(_make_ctx(mode=OrbitKVConnectorMode.SAVE_ONLY))
+    @pytest.mark.parametrize(
+        "mode", [OrbitKVConnectorMode.SAVE_ONLY, OrbitKVConnectorMode.READ_WRITE]
+    )
+    @pytest.mark.parametrize("computed", [48, 63], ids=["partial-prefix", "full-hit-recompute"])
+    def test_native_restored_prefix_and_decode_blocks_are_saveable(self, mode, computed):
+        sc = SchedulerAdapter(_make_ctx(mode=mode))
         block_hashes = [_hash(i) for i in range(4)]
         req = _make_fake_request("r1", list(block_hashes))
-
-        # MultiConnector passes empty blocks and zero external tokens to
-        # non-owner children. In save-only mode, OrbitKV must later rely on
-        # scheduler output rather than this allocation callback.
         sc.update_state_after_alloc(req, _make_fake_blocks([]), num_external_tokens=0)
 
         scheduler_output = SimpleNamespace(
@@ -592,87 +582,41 @@ class TestDecodeHashRefresh:
                 SimpleNamespace(
                     req_id="r1",
                     block_ids=([10, 11, 12, 13],),
-                    num_computed_tokens=48,
+                    num_computed_tokens=computed,
                 )
             ],
-            scheduled_cached_reqs=SimpleNamespace(
-                req_ids=[],
-                new_block_ids=[],
-                num_computed_tokens=[],
-            ),
+            scheduled_cached_reqs=SimpleNamespace(req_ids=[]),
             num_scheduled_tokens={"r1": 1},
             preempted_req_ids=set(),
         )
-
         metadata = sc.build_connector_meta(scheduler_output)
-
-        intent = metadata.save_intents["r1"]
-        assert intent.block_ids_by_group == ((10, 11, 12),)
-        assert intent.block_hashes == tuple(block_hashes[:3])
-
-    def test_save_only_mode_handles_full_prompt_hit_recompute_token(self):
-        """vLLM backs full prompt hits up by one token before scheduling."""
-        sc = SchedulerConnector(_make_ctx(mode=OrbitKVConnectorMode.SAVE_ONLY))
-        block_hashes = [_hash(i) for i in range(4)]
-        req = _make_fake_request("r1", list(block_hashes))
-
-        sc.update_state_after_alloc(req, _make_fake_blocks([]), num_external_tokens=0)
-
-        scheduler_output = SimpleNamespace(
-            scheduled_new_reqs=[
-                SimpleNamespace(
-                    req_id="r1",
-                    block_ids=([10, 11, 12, 13],),
-                    num_computed_tokens=63,
-                )
-            ],
-            scheduled_cached_reqs=SimpleNamespace(
-                req_ids=[],
-                new_block_ids=[],
-                num_computed_tokens=[],
-            ),
-            num_scheduled_tokens={"r1": 1},
-            preempted_req_ids=set(),
+        valid_blocks = (computed + 1) // 16
+        assert not metadata.load_intents
+        assert metadata.save_intents["r1"] == SaveIntent(
+            block_ids_by_group=(tuple(range(10, 10 + valid_blocks)),),
+            block_hashes=tuple(block_hashes[:valid_blocks]),
         )
 
-        metadata = sc.build_connector_meta(scheduler_output)
-
-        intent = metadata.save_intents["r1"]
-        assert intent.block_ids_by_group == ((10, 11, 12, 13),)
-        assert intent.block_hashes == tuple(block_hashes)
-
-    def test_read_write_mode_does_not_save_unowned_precomputed_prefix(self):
-        """Default mode keeps old behavior for OrbitKV-owned read/write paths."""
-        sc = self._make_connector(dcp_world_size=1)
-        block_hashes = [_hash(i) for i in range(4)]
-        req = _make_fake_request("r1", list(block_hashes))
-
-        sc.update_state_after_alloc(req, _make_fake_blocks([]), num_external_tokens=0)
-
-        scheduler_output = SimpleNamespace(
-            scheduled_new_reqs=[
-                SimpleNamespace(
-                    req_id="r1",
-                    block_ids=([10, 11, 12, 13],),
-                    num_computed_tokens=48,
-                )
-            ],
-            scheduled_cached_reqs=SimpleNamespace(
-                req_ids=[],
-                new_block_ids=[],
-                num_computed_tokens=[],
-            ),
-            num_scheduled_tokens={"r1": 1},
-            preempted_req_ids=set(),
+        scheduler_output.scheduled_new_reqs = []
+        scheduler_output.scheduled_cached_reqs = SimpleNamespace(
+            req_ids=["r1"],
+            resumed_req_ids=set(),
+            new_block_ids=[None],
+            num_computed_tokens=[63],
         )
-
         metadata = sc.build_connector_meta(scheduler_output)
-
-        assert "r1" not in metadata.save_intents
+        assert not metadata.load_intents
+        if valid_blocks == 3:
+            assert metadata.save_intents["r1"] == SaveIntent(
+                block_ids_by_group=((13,),),
+                block_hashes=(block_hashes[3],),
+            )
+        else:
+            assert not metadata.save_intents
 
     def test_resumed_cached_request_replaces_block_table(self):
         """vLLM resumed reqs send the full block table, not append-only blocks."""
-        sc = SchedulerConnector(_make_ctx(mode=OrbitKVConnectorMode.SAVE_ONLY))
+        sc = SchedulerAdapter(_make_ctx(mode=OrbitKVConnectorMode.SAVE_ONLY))
         block_hashes = [_hash(i) for i in range(4)]
         req = _make_fake_request("r1", list(block_hashes))
 
@@ -703,16 +647,14 @@ class TestDecodeHashRefresh:
 class TestSchedulerQueryProbeReuse:
     """Repeated scheduler probes should not repeat server-side query leases."""
 
-    def _make_connector(self) -> tuple[SchedulerConnector, MagicMock]:
+    def _make_connector(self) -> tuple[SchedulerAdapter, MagicMock]:
         engine_client = MagicMock()
         engine_client.query_prefetch.return_value = QueryReady(2, b"lease-1")
         engine_client.release.return_value = None
-        state_manager = MagicMock()
         ctx = _make_ctx(
             client=engine_client,
-            state_manager=state_manager,
         )
-        return SchedulerConnector(ctx), engine_client
+        return SchedulerAdapter(ctx), engine_client
 
     def test_repeated_same_probe_reuses_query_result(self):
         sc, engine_client = self._make_connector()
@@ -742,7 +684,7 @@ class TestSchedulerQueryProbeReuse:
     def test_wait_for_full_prefix_is_forwarded(self):
         engine_client = MagicMock()
         engine_client.query_prefetch.return_value = QueryLoading()
-        sc = SchedulerConnector(_make_ctx(client=engine_client, wait_for_full_prefix=True))
+        sc = SchedulerAdapter(_make_ctx(client=engine_client, wait_for_full_prefix=True))
         hashes = [_hash(i) for i in range(4)]
 
         assert sc._query_recovery("r1", _QueryProbe(0, tuple(hashes)), 10000) is None
@@ -769,9 +711,7 @@ class TestSchedulerQueryProbeReuse:
 
     def test_save_only_mode_skips_query(self):
         engine_client = MagicMock()
-        sc = SchedulerConnector(
-            _make_ctx(client=engine_client, mode=OrbitKVConnectorMode.SAVE_ONLY)
-        )
+        sc = SchedulerAdapter(_make_ctx(client=engine_client, mode=OrbitKVConnectorMode.SAVE_ONLY))
         req = _make_fake_request("r1", [_hash(i) for i in range(4)])
 
         assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (0, False)

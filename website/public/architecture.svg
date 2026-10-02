@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="850" viewBox="0 0 1280 850" role="img" aria-labelledby="title desc">
   <title id="title">OrbitKV process ownership and communication paths</title>
-  <desc id="desc">Each engine owns HBM, framework scheduling and the Rust raw DRAM restore executor. Its Manager owns shared pinned DRAM, SSD, source grants and budgets. UDS transfers file descriptors; iceoryx2 carries commands; completion records and eventfd report progress. Manager Publish and SSD or encoded restores use CUDA IPC. Independent Managers discover historical cache locations in complete local indexes and authorize source reads over gRPC and transfer payloads with Mooncake TENT. Separate P/D adapters write current-request KV between engines. etcd replicates locations and membership; background publication and snapshot/Watch maintain local indexes. Raw restore plans are partitioned under one whole-operation fence. Raw restores publish per-layer CUDA events while retaining one final drain. vLLM uses piecewise graphs; SGLang captures persistent external event waits. A unified route optimizer and production-scale distributed qualification remain planned.</desc>
+  <desc id="desc">Each engine owns HBM, framework scheduling and the Rust raw DRAM restore executor. Its Manager owns shared pinned DRAM, SSD, source grants and budgets. UDS transfers file descriptors; iceoryx2 carries commands; completion records and eventfd report progress. Manager Publish and SSD or encoded restores use CUDA IPC. Independent Managers discover historical cache locations in complete local indexes and authorize source reads over gRPC and transfer payloads with Mooncake TENT. Experimental native P/D lifecycles use explicit TENT backends to write current-request KV between engines. etcd replicates locations and membership; background publication and snapshot/Watch maintain local indexes. Raw restore plans are partitioned under one whole-operation fence. Raw restores publish per-layer CUDA events while retaining one final drain. vLLM uses piecewise graphs; SGLang captures persistent external event waits. A unified route optimizer and production-scale distributed qualification remain planned.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 10 5 0 10" fill="#203b30"/></marker>
     <marker id="arrow-start" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M10 0 0 5 10 10" fill="#203b30"/></marker>
@@ -79,11 +79,11 @@
 <text x="1008" y="580" font-size="14" text-anchor="middle" font-weight="700">Local global index + exact source grants</text>
 <text x="1008" y="603" font-size="12" text-anchor="middle" fill="#60695f">Snapshot / Watch · leased residency versions</text>
 <path d="M500 236H780" fill="none" stroke="#203b30" stroke-width="1.5" marker-end="url(#arrow)"/>
-<text x="640" y="169" font-size="15" text-anchor="middle" font-weight="700">P/D HANDOFF</text>
+<text x="640" y="169" font-size="15" text-anchor="middle" font-weight="700">EXPERIMENTAL P/D</text>
 <text x="640" y="191" font-size="19" text-anchor="middle" font-weight="700">TENT WRITE</text>
 <text x="640" y="215" font-size="13" text-anchor="middle">Current-request KV</text>
-<text x="640" y="266" font-size="12" text-anchor="middle" fill="#60695f">vLLM: OrbitKV control</text>
-<text x="640" y="285" font-size="12" text-anchor="middle" fill="#60695f">SGLang: native rooms</text>
+<text x="640" y="266" font-size="12" text-anchor="middle" fill="#60695f">Native engine lifecycle</text>
+<text x="640" y="285" font-size="12" text-anchor="middle" fill="#60695f">Explicit TENT backends</text>
 <path d="M524 494H756" fill="none" stroke="#203b30" stroke-width="1.5" marker-end="url(#arrow)" marker-start="url(#arrow-start)"/>
 <text x="640" y="421" font-size="15" text-anchor="middle" font-weight="700">SHARED CACHE</text>
 <text x="640" y="448" font-size="19" text-anchor="middle" font-weight="700">TENT READ</text>

@@ -70,9 +70,9 @@ import { layers, localUrl } from "../data/site";
           <h3>Compose the handoff.</h3>
           <p>
             TENT WRITE moves current-request KV from prefill HBM to decode HBM.
-            vLLM uses OrbitKV's split connectors; SGLang keeps its native rooms
-            and loads the Rust TENT adapter. Cache reuse has a separate source
-            grant and completion contract.
+            Both engines own native P/D request lifecycles and use thin TENT
+            backends at the experimental revisions. Cache reuse has a separate
+            source grant and completion contract.
           </p>
         </article>
       </div>
@@ -151,7 +151,8 @@ import { layers, localUrl } from "../data/site";
         across fragmented parts remain execution work.
       </p>
       <p class="reading-copy">
-        Qualify matching replicas on two real hosts, then P/D with reusable cache.
+        Native P/D with reusable cache has same-A100 TCP gates; cross-host P/D
+        and independent failure domains still need qualification.
         Single-node preparation and stopping controls are implemented and stay
         opt-in after the first repeated measurements. Global-index scale, metadata churn and cross-host failure behavior
         require qualification before production claims.

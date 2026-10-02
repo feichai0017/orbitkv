@@ -1,6 +1,7 @@
 use super::*;
 
 pub(crate) mod etcd;
+pub(crate) mod gate;
 #[cfg(feature = "mooncake")]
 mod p2p_mooncake;
 

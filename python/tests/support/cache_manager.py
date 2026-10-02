@@ -73,15 +73,18 @@ def _torch():
 
 
 def find_available_port() -> int:
-    """Avoid outgoing TCP ports while GPU initialization delays the listener."""
+    """Find a listener port outside outgoing TCP and TENT auto-port ranges."""
     low, high = map(int, Path("/proc/sys/net/ipv4/ip_local_port_range").read_text().split())
     for _ in range(128):
         port = 1024 + secrets.randbelow(65536 - 1024)
-        if low <= port <= high:
+        # Pinned TENT CoroRpcAgent starts before the engine HTTP listener and
+        # independently chooses an RPC port in [15000, 17000).
+        if low <= port <= high or 15000 <= port < 17000:
             continue
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:
-                s.bind(("127.0.0.1", port))
+                s.bind(("0.0.0.0", port))
+                s.listen(1)
             except OSError as error:
                 if error.errno != errno.EADDRINUSE:
                     raise
@@ -198,8 +201,8 @@ class ClientContext:
     Client context that represents a vLLM instance.
 
     This class abstracts a vLLM instance by managing:
-    - GPU KV cache tensors (like WorkerConnector)
-    - Query operations (like SchedulerConnector)
+    - GPU KV cache tensors (like WorkerAdapter)
+    - Query operations (like SchedulerAdapter)
     - Context registration/unregistration
     """
 
@@ -249,7 +252,7 @@ class ClientContext:
         self._registered = False
 
     def register_kv_caches(self) -> None:
-        """Register KV cache tensors with the engine server (like WorkerConnector.register_kv_caches)."""
+        """Register KV cache tensors with the engine server (like WorkerAdapter.register_kv_caches)."""
         from orbitkv.client.gpu import serialize_gpu_buffer
 
         if self._registered:
@@ -326,7 +329,7 @@ class ClientContext:
         self._registered = True
 
     def unregister_context(self) -> None:
-        """Unregister context from server (like WorkerConnector.unregister_context)."""
+        """Unregister context from server (like WorkerAdapter.unregister_context)."""
         if not self._registered:
             return
 
@@ -382,6 +385,7 @@ class CacheManagerProcess:
         ssd_read_path: str | None = None,
         query_budget: str | None = None,
         query_instance_budget: str | None = None,
+        log_path: Path | None = None,
         extra_args: tuple[str, ...] = (),
     ):
         self.port = port
@@ -397,8 +401,10 @@ class CacheManagerProcess:
         self.ssd_read_path = ssd_read_path
         self.query_budget = query_budget
         self.query_instance_budget = query_instance_budget
+        self._configured_log_path = log_path
         self.extra_args = extra_args
         self.process: subprocess.Popen | None = None
+        self.command: tuple[str, ...] | None = None
         self._binary_path = find_cache_manager_binary()
         self._log_path: Path | None = None
         self._log_file = None
@@ -418,6 +424,7 @@ class CacheManagerProcess:
 
         # Set PYTHONPATH to include python package and venv site-packages
         python_dir = PYTHON_ROOT
+        configured_paths = [path for path in env.get("PYTHONPATH", "").split(":") if path]
         site_packages = [
             path
             for path in dict.fromkeys(
@@ -428,7 +435,9 @@ class CacheManagerProcess:
             )
             if path
         ]
-        env["PYTHONPATH"] = ":".join([str(python_dir), *site_packages])
+        env["PYTHONPATH"] = ":".join(
+            dict.fromkeys([str(python_dir), *configured_paths, *site_packages])
+        )
 
         cmd = [
             self._binary_path,
@@ -470,14 +479,20 @@ class CacheManagerProcess:
             )
         cmd.extend(["--bootstrap-socket", self.bootstrap_socket])
         cmd.extend(self.extra_args)
+        self.command = tuple(cmd)
 
         # Route logs to a tempfile so the pipe buffer cannot fill up and
         # block the server mid-startup, and so tests can read the log
         # contents via read_logs() (used by integration tests that assert
         # on server-side log signals).
-        fd, path = tempfile.mkstemp(prefix=f"orbitkv-cache-manager-{self.port}-", suffix=".log")
-        self._log_path = Path(path)
-        self._log_file = os.fdopen(fd, "wb")
+        if self._configured_log_path is not None:
+            self._log_path = self._configured_log_path
+            self._log_path.parent.mkdir(parents=True, exist_ok=True)
+            self._log_file = self._log_path.open("wb")
+        else:
+            fd, path = tempfile.mkstemp(prefix=f"orbitkv-cache-manager-{self.port}-", suffix=".log")
+            self._log_path = Path(path)
+            self._log_file = os.fdopen(fd, "wb")
 
         try:
             self.process = subprocess.Popen(
@@ -516,6 +531,22 @@ class CacheManagerProcess:
                 with contextlib.suppress(OSError):
                     Path(self.bootstrap_socket).unlink()
 
+    def terminate_gracefully(self, timeout: float = 10) -> tuple[int, float]:
+        """Require SIGTERM shutdown without falling back to SIGKILL."""
+        if self.process is None:
+            raise RuntimeError("Cache Manager is not running")
+        process = self.process
+        started = time.monotonic()
+        if process.poll() is None:
+            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+        returncode = process.wait(timeout=timeout)
+        elapsed = time.monotonic() - started
+        self.process = None
+        self._close_log()
+        with contextlib.suppress(OSError):
+            Path(self.bootstrap_socket).unlink()
+        return returncode, elapsed
+
     def is_running(self) -> bool:
         """Check if server process is still running."""
         return self.process is not None and self.process.poll() is None
@@ -531,6 +562,6 @@ class CacheManagerProcess:
             with contextlib.suppress(OSError):
                 self._log_file.close()
             self._log_file = None
-        if self._log_path and self._log_path.exists():
+        if self._configured_log_path is None and self._log_path and self._log_path.exists():
             with contextlib.suppress(OSError):
                 self._log_path.unlink()

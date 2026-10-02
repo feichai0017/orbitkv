@@ -34,7 +34,7 @@ from orbitkv.vllm.metadata import (  # noqa: E402
     RecoveryLoadHold,
     SaveIntent,
 )
-from orbitkv.vllm.scheduler import SchedulerConnector  # noqa: E402
+from orbitkv.vllm.scheduler import SchedulerAdapter  # noqa: E402
 from orbitkv.vllm.tp_shards import ShardedQueryReady  # noqa: E402
 
 VBS = 16
@@ -61,7 +61,7 @@ class _FakePool:
             self.freed.append(block.block_id)
 
 
-def _make_scheduler(world_size: int = 1) -> tuple[SchedulerConnector, _FakePool]:
+def _make_scheduler(world_size: int = 1) -> tuple[SchedulerAdapter, _FakePool]:
     ctx = ConnectorContext(
         instance_id="i",
         namespace="n",
@@ -71,9 +71,8 @@ def _make_scheduler(world_size: int = 1) -> tuple[SchedulerConnector, _FakePool]
         tp_rank=0,
         device_id=0,
         client=MagicMock(),
-        state_manager=MagicMock(),
     )
-    scheduler = SchedulerConnector(ctx)
+    scheduler = SchedulerAdapter(ctx)
     scheduler._cache_groups = SimpleNamespace(
         group_count=2,
         hash_group_index=0,
@@ -86,7 +85,7 @@ def _make_scheduler(world_size: int = 1) -> tuple[SchedulerConnector, _FakePool]
     return scheduler, pool
 
 
-def _register_request(scheduler: SchedulerConnector, req_id: str, num_hashes: int) -> None:
+def _register_request(scheduler: SchedulerAdapter, req_id: str, num_hashes: int) -> None:
     request = SimpleNamespace(
         request_id=req_id,
         block_hashes=[_hash(i) for i in range(num_hashes)],
@@ -266,7 +265,7 @@ def test_hma_requires_boundary_state_hand_off_api():
 
 
 @pytest.mark.parametrize(
-    "use_v2,error", [(True, "kv_connector_block_state"), (False, "V2 model runner")]
+    "use_v2,error", [(True, "one attention cache group"), (False, "one attention cache group")]
 )
 def test_hma_rejects_incompatible_vllm_before_opening_cache_connections(monkeypatch, use_v2, error):
     from vllm.v1.kv_cache_interface import FullAttentionSpec, MambaSpec

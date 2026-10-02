@@ -40,7 +40,7 @@ pub(crate) fn discover(
     #[cfg(feature = "mooncake")]
     if let Some(index) = index {
         for (candidate, remote) in candidates.iter_mut().zip(index.lookup(&keys)) {
-            candidate.set_peers(remote.replicas);
+            candidate.set_remote(remote.coverage, remote.replicas);
         }
     }
     candidates

@@ -337,7 +337,7 @@ impl PeerReader {
     /// alternatives. Directory hints still require authoritative source grants.
     pub(crate) fn discover(&self, rows: &mut [crate::planning::replica::ReplicaSet]) {
         for row in rows.iter_mut() {
-            row.set_peers(Vec::new());
+            row.set_remote(orbitkv_state::DiscoveryCoverage::Unavailable, Vec::new());
         }
         if !self.membership.permits(self.membership.owner()) || rows.is_empty() {
             return;
@@ -351,7 +351,7 @@ impl PeerReader {
             candidate
                 .replicas
                 .retain(|replica| self.membership.permits(&replica.owner));
-            row.set_peers(candidate.replicas);
+            row.set_remote(candidate.coverage, candidate.replicas);
         }
     }
 

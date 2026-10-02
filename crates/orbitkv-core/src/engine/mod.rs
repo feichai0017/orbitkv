@@ -86,8 +86,24 @@ pub struct OrbitKVEngine {
 #[derive(serde::Serialize)]
 pub struct MetadataStatus {
     pub index: orbitkv_catalog::IndexStatus,
-    pub published: crate::PublishedInventory,
     pub inventory_sequence: u64,
+    pub inventory_resident_records: usize,
+    pub inventory_journal_records: usize,
+    pub inventory_journal_bytes: usize,
+    pub inventory_journal_bytes_peak: usize,
+    pub inventory_journal_capacity_bytes: usize,
+    pub inventory_history_gaps: u64,
+    pub inventory_flush_through_sequence: u64,
+    pub inventory_delta_input_records: u64,
+    pub inventory_delta_input_bytes: u64,
+    pub inventory_delta_output_records: u64,
+    pub inventory_delta_frames: u64,
+    pub inventory_delta_encoded_bytes: u64,
+    pub inventory_coalescing_windows: u64,
+    pub inventory_coalescing_wait_micros: u64,
+    pub inventory_scope_filter_input_records: u64,
+    pub inventory_scope_filter_output_records: u64,
+    pub inventory_scope_filter_micros: u64,
 }
 
 impl OrbitKVEngine {
@@ -515,43 +531,42 @@ impl OrbitKVEngine {
         self.storage.writes.flush().await;
     }
 
-    /// Flush saves and return the etcd revision committing current residency.
-    /// Other Managers may still be applying that revision through Watch.
-    pub async fn flush_saves_and_inventory(&self) -> Result<i64, EngineError> {
-        self.storage.writes.flush().await;
-        let Some(inventory) = &self.storage.inventory else {
-            return Ok(0);
-        };
-        let valid = || {
-            self.storage
-                .global_index
-                .as_ref()
-                .is_some_and(|index| index.status().registration_valid)
-        };
-        if !valid() {
-            return Err(EngineError::Storage(
-                "metadata publisher registration expired".into(),
-            ));
-        }
-        let revision = inventory.flush().await.map_err(EngineError::Storage)?;
-        if !valid() {
-            return Err(EngineError::Storage(
-                "metadata publisher registration expired".into(),
-            ));
-        }
-        Ok(revision)
-    }
-
     pub fn metadata_status(&self) -> Option<MetadataStatus> {
         let index = self.storage.global_index.as_ref()?.status();
         let inventory = self.storage.inventory.as_ref()?;
-        let mut published = inventory.published();
-        published.ready &= index.registration_valid;
+        let inventory_status = inventory.status();
         Some(MetadataStatus {
             index,
-            published,
-            inventory_sequence: inventory.sequence(),
+            inventory_sequence: inventory_status.sequence,
+            inventory_resident_records: inventory_status.resident_records,
+            inventory_journal_records: inventory_status.journal_records,
+            inventory_journal_bytes: inventory_status.journal_bytes,
+            inventory_journal_bytes_peak: inventory_status.journal_bytes_peak,
+            inventory_journal_capacity_bytes: inventory_status.journal_capacity_bytes,
+            inventory_history_gaps: inventory_status.history_gaps,
+            inventory_flush_through_sequence: inventory_status.flush_through_sequence,
+            inventory_delta_input_records: inventory_status.delta_input_records,
+            inventory_delta_input_bytes: inventory_status.delta_input_bytes,
+            inventory_delta_output_records: inventory_status.delta_output_records,
+            inventory_delta_frames: inventory_status.delta_frames,
+            inventory_delta_encoded_bytes: inventory_status.delta_encoded_bytes,
+            inventory_coalescing_windows: inventory_status.coalescing_windows,
+            inventory_coalescing_wait_micros: inventory_status.coalescing_wait_micros,
+            inventory_scope_filter_input_records: inventory_status.scope_filter_input_records,
+            inventory_scope_filter_output_records: inventory_status.scope_filter_output_records,
+            inventory_scope_filter_micros: inventory_status.scope_filter_micros,
         })
+    }
+
+    pub fn metadata_owner_statuses(
+        &self,
+        after: Option<uuid::Uuid>,
+        limit: usize,
+    ) -> Option<Vec<orbitkv_catalog::OwnerIndexStatus>> {
+        self.storage
+            .global_index
+            .as_ref()
+            .map(|index| index.owner_statuses(after, limit))
     }
 
     /// Flush write pipeline and SSD writer.

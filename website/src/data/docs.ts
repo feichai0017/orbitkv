@@ -37,12 +37,13 @@ export const docGroups = [
       { slug: "peer-control", title: "Peer control boundary" },
       { slug: "shared-cache-qualification", title: "Shared-cache qualification" },
       { slug: "distributed-cache", title: "Distributed global index" },
+      { slug: "distributed-design", title: "Inventory and recovery design" },
       {
         slug: "distributed-comparison",
         title: "LMCache, FlexKV & Mooncake comparison",
       },
       { slug: "pd", title: "P/D, cache reuse & NIXL" },
-      { slug: "pd-mooncake-push", title: "Experimental Mooncake P/D" },
+      { slug: "pd-mooncake-push", title: "Retired P/D protocol" },
     ],
   },
   {
@@ -67,6 +68,7 @@ export const docGroups = [
     description: "Follow the implementation gates and contribute changes.",
     items: [
       { slug: "completion-plan", title: "Completion stages & acceptance" },
+      { slug: "engine-release-audit", title: "Released engine interface audit" },
       { slug: "rust-quality", title: "Rust quality gates" },
       { slug: "releases", title: "Python releases" },
     ],

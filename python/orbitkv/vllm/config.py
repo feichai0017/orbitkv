@@ -15,7 +15,6 @@ from orbitkv.logging_utils import get_connector_logger
 
 if TYPE_CHECKING:
     from orbitkv import CacheManagerClient
-    from orbitkv.vllm.state_manager import ServiceStateManager
 
 logger = get_connector_logger()
 _TRANSFER_BACKENDS = ("direct", "kernel")
@@ -129,7 +128,6 @@ class ConnectorContext:
     tp_rank: int | None
     device_id: int | None
     client: CacheManagerClient
-    state_manager: ServiceStateManager
     is_mla: bool = False
     collapse_mla_tp: bool = True
     transfer_backend: str = "direct"

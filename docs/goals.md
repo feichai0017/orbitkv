@@ -10,7 +10,7 @@ engine adapter; begin with the [single-node quickstart](single-node.md).
 | Capability | Scope |
 | --- | --- |
 | Prefix reuse | DRAM/SSD recovery after GPU eviction or engine restart, with the Manager kept alive |
-| Engine integration | vLLM 0.29.0 and SGLang 0.5.20, direct GPU transfers through CUDA IPC |
+| Engine integration | vLLM 0.30.0 and SGLang 0.5.20 pins, direct GPU transfers through CUDA IPC; release-specific [qualification scope](completion-plan.md#s51--release-and-interface-audit) |
 | Hybrid recovery | Compiled prefix/window/checkpoint requirements for [supported layouts](hybrid-recovery.md) |
 | Resource control | Byte budgets for reads, leased results and GPU transfers; cancellation and completion fences |
 | Observability | Prometheus metrics, optional request timelines and reproducible Qwen3-8B workloads |

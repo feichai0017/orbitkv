@@ -66,8 +66,75 @@ fn cli_membership_requires_stable_node_identity() {
     assert!(Cli::try_parse_from(flags).is_err());
     let cli = Cli::try_parse_from(flags.into_iter().chain(["--node-id", "node-a"])).unwrap();
     assert_eq!(cli.node_id.as_deref(), Some("node-a"));
+    assert_eq!(cli.peer_advertise_addr, None);
     assert_eq!(cli.membership_ttl_secs, 30);
+    assert_eq!(cli.inventory_stream_coalesce_ms, 0);
+    assert!(cli.metadata_namespace.is_empty());
+    assert!(!cli.metadata_empty_scope);
     assert!(Cli::try_parse_from(["orbitkv-cache-manager", "--membership-ttl-secs", "0"]).is_err());
+    assert!(
+        Cli::try_parse_from([
+            "orbitkv-cache-manager",
+            "--inventory-stream-coalesce-ms",
+            "6"
+        ])
+        .is_err()
+    );
+    let advertised = Cli::try_parse_from([
+        "orbitkv-cache-manager",
+        "--etcd-endpoints",
+        "http://127.0.0.1:2379",
+        "--node-id",
+        "node-a",
+        "--peer-advertise-addr",
+        "10.0.0.2:50055",
+    ])
+    .unwrap();
+    assert_eq!(
+        advertised.peer_advertise_addr.unwrap().to_string(),
+        "10.0.0.2:50055"
+    );
+}
+
+#[test]
+fn cli_metadata_scope_distinguishes_all_exact_and_empty() {
+    let namespace = orbitkv_state::storage_namespace("model", false, Vec::new());
+    let exact = Cli::try_parse_from([
+        "orbitkv-cache-manager",
+        "--etcd-endpoints",
+        "http://127.0.0.1:2379",
+        "--node-id",
+        "node-a",
+        "--metadata-namespace",
+        &namespace,
+        "--metadata-namespace",
+        &namespace,
+    ])
+    .unwrap();
+    assert_eq!(exact.metadata_namespace, [namespace.clone(), namespace]);
+    assert!(!exact.metadata_empty_scope);
+    let empty = Cli::try_parse_from([
+        "orbitkv-cache-manager",
+        "--etcd-endpoints",
+        "http://127.0.0.1:2379",
+        "--node-id",
+        "node-a",
+        "--metadata-empty-scope",
+    ])
+    .unwrap();
+    assert!(empty.metadata_empty_scope);
+    assert!(
+        Cli::try_parse_from([
+            "orbitkv-cache-manager",
+            "--etcd-endpoints",
+            "http://127.0.0.1:2379",
+            "--node-id",
+            "node-a",
+            "--metadata-namespace",
+            "model-display-name",
+        ])
+        .is_err()
+    );
 }
 
 #[test]

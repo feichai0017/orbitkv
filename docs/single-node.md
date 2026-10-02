@@ -9,13 +9,17 @@ No Catalog or peer gRPC listener is needed for this deployment.
 
 | Adapter | Validated release | Single-node path | Current limit |
 | --- | --- | --- | --- |
-| vLLM `OrbitKVConnector` | `0.29.0` | KV connector callbacks, CUDA IPC, UDS/iceoryx2 | Full/MLA, Full + SWA, Full + aligned recurrent groups, and their combination; equal logical block sizes; cross-host TP remains unsupported |
+| vLLM `OrbitKVConnector` | `0.30.0` local upgrade gates; independent acceptance open | KV connector callbacks, CUDA IPC, UDS/iceoryx2 | Implemented Full/MLA, Full + SWA and aligned recurrent groups require equal logical block sizes; historical model/topology cells need release-specific requalification; cross-host TP remains unsupported |
 | SGLang `OrbitKVLinker` | `0.5.20` | RadixCache external linker, CUDA IPC, UDS/iceoryx2 | Full MHA/MLA, Full + SWA, Full + recurrent/conv, and their combination; ordinary contiguous pools; multi-rank serving remains unqualified |
 
 Start with a single-rank model and one Manager. Check
 [model qualification](models.md) and the
 [hybrid recovery rules](hybrid-recovery.md) before enabling other layouts.
 The first release is being prepared; the commands below build from source.
+
+The official vLLM cache profile requires `VLLM_USE_V2_MODEL_RUNNER=0`
+and one attention cache group. Set this environment variable before starting
+vLLM; unsupported V2/recurrent profiles fail at startup.
 
 ## Install and start the common manager
 
@@ -87,7 +91,7 @@ Install the validated vLLM release and the wheel in one environment:
 
 ```bash
 uv venv .venv/vllm-release --python 3.11
-uv pip install --python .venv/vllm-release/bin/python 'vllm==0.29.0' --torch-backend=cu130
+uv pip install --python .venv/vllm-release/bin/python 'vllm==0.30.0' --torch-backend=cu130
 uv pip install --python .venv/vllm-release/bin/python --reinstall "$WHEEL"
 ```
 
@@ -231,10 +235,8 @@ workload. To validate the current adapters, use the
 matching GPU host.
 
 For experimental multi-node cache sharing, use [P2P deployment](p2p.md).
-vLLM P/D handoff via OrbitKV's split P/D connectors or upstream NIXL is a
-separate request-transfer path; see [P/D transfer](pd.md). SGLang can retain
-its native P/D control plane while using OrbitKV's Rust TENT payload engine;
-the external two-GPU gate remains open.
+Live P/D uses official vLLM NIXL/MultiConnector or SGLang native disaggregation,
+with independent external-cache adapters; see [P/D qualification](pd.md).
 
 ## Deployment variants
 
@@ -244,7 +246,7 @@ the external two-GPU gate remains open.
 | Multiple engine instances sharing one host manager | Instances can use the same local socket; use immutable model identities and qualify concurrency for the workload | Instances can use the same local socket; rank/layout-scoped namespaces isolate incompatible pages, and concurrent multi-rank recovery still needs a GPU gate |
 | Replicas on separate hosts | One manager per host with a local global index, etcd metadata and Mooncake fetch; experimental | The same node-local adapter connection with one manager per host; remote fetch and multi-rank behavior still need qualification |
 | One TP replica split across hosts | Unsupported by the current scheduler-to-manager query fan-out | Not qualified by the current single-rank GPU gate |
-| P/D handoff | Experimental OrbitKV `PdPrefillConnector`/`PdDecodeConnector`, or upstream vLLM NIXL | Native SGLang P/D control with OrbitKV TENT payload; P/D plus external-cache gate implemented, external H20 run pending |
+| P/D handoff | Official NIXL/MultiConnector composition candidate | Official native disaggregation composition candidate; [gates and limits](pd.md) |
 
 The current embedded directory has one metadata copy per shard. Do not infer
 production multi-node resilience from the validated single-node paths.

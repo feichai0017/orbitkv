@@ -105,11 +105,18 @@ def _install_vllm_stubs() -> None:
     class SupportsHMA:
         pass
 
+    @dataclass
+    class KVConnectorTransferResults:
+        finished_sending: set[str] = field(default_factory=set)
+        finished_recving: set[str] = field(default_factory=set)
+        failed_recving: set[str] = field(default_factory=set)
+
     base.KVConnectorRole = KVConnectorRole
     base.KVConnectorBase_V1 = KVConnectorBase_V1
     base.KVConnectorMetadata = KVConnectorMetadata
     base.KVConnectorWorkerMetadata = KVConnectorWorkerMetadata
     base.SupportsHMA = SupportsHMA
+    base.KVConnectorTransferResults = KVConnectorTransferResults
 
     metrics = _ensure_module("vllm.distributed.kv_transfer.kv_connector.v1.metrics")
 

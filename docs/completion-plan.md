@@ -7,11 +7,11 @@ the reviewer independently checks its consumed path, tests and evidence.
 
 ## Release baseline and reference policy
 
-Official latest non-prerelease versions were checked on **2026-09-29**:
+Official latest non-prerelease versions were checked on **2026-09-30**:
 
 | Project | Reference release / commit | OrbitKV qualification |
 | --- | --- | --- |
-| [vLLM](https://github.com/vllm-project/vllm/releases/tag/v0.30.0) | `v0.30.0` / `ced6857afa0ea7b2e3f0846a62e1394e90f15607` | Upgrade target. Current dependency/submodule and recorded serving gates remain **0.29.0** until S5.1 passes. |
+| [vLLM](https://github.com/vllm-project/vllm/releases/tag/v0.30.0) | `v0.30.0` / `ced6857afa0ea7b2e3f0846a62e1394e90f15607` | Dependency/submodule upgraded. A100 Qwen3-8B DRAM/SSD and eager/graph gates pass locally; independent upgrade acceptance and broader model/topology qualification remain open. |
 | [SGLang](https://github.com/sgl-project/sglang/releases/tag/v0.5.20) | `v0.5.20` / `94602c9c2b7cbdb8efd5c52802dac6a1c180089e` | Current dependency/submodule and recorded serving baseline. |
 | [LMCache](https://github.com/LMCache/LMCache/releases/tag/v0.5.5) | `v0.5.5` / `05a013b29da78cf2321b9b46ec5039dde2fb0bb0` | Integration and matched-comparison reference, not evidence of OrbitKV support. |
 
@@ -36,10 +36,10 @@ record submitted, merged and released as different states.
 | --- | --- |
 | S0 | Agent handoff and Codex skill migration merged in PR #190. |
 | S1 | Evidence separation independently verified at `ec3add9b`; this delivery consolidates plans and release-based integration guidance. Acceptance covers S1 only; native CUDA qualification remains blocked on this host. |
-| S2 | Next runtime stage: metadata reliability and capacity qualification. |
+| S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. The 16-owner visibility and 5% isolation performance gates fail; physical cross-host cache/HA, final serving, RDMA/GDS and S3-dependent cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
-| S5 | Partial: existing adapters; release alignment, public interfaces and deployment gates below. |
+| S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.30.0 adapter upgrade consumes native transfer results with local A100 cache/P/D evidence. Independent upgrade acceptance and public lifecycle/deployment gates remain open. |
 | S6 | Partial: observations/limited choices exist; unified executed decisions remain open. |
 | S7 | Open: consumed retention/checkpoint compiler beyond recovery validation. |
 | S8 | Partial: existing wheel workflow; final images, artifact gates and publication remain open. |
@@ -50,6 +50,20 @@ listed lifetime dependencies. Hardware gaps leave their cells open and do not st
 independent work. Use **implementation open**, **implementation partial**,
 **qualification open**, **deferred research**, and **release gate** precisely.
 
+The [distributed inventory and recovery design](distributed-design.md) specifies
+the authorized evolution beyond the current etcd block index. Its delivery queue
+is S2.7–S2.10 below, followed by the consumed S6/S7 substages; the design is not an
+implementation or acceptance claim. Finish and independently review the current
+S2.6 delivery first. Existing S3 lifetime gates still control any new payload
+concurrency, reuse or reclamation. Cross-host qualification remains open until
+its actual failure-domain evidence exists.
+
+S3 work may proceed against the already accepted S2.5 metadata contracts while
+S2.7–S2.10 progress; it must requalify affected boundaries after S2.8 cutover.
+S3 does not wait for S2.10's S3-dependent crash-reclamation cells. Likewise,
+unavailable hardware blocks only the dependent qualification profile, not the
+independent protocol or native-lifetime implementation.
+
 ## Baseline: preserve these implementations
 
 | Area | Present implementation | Remaining boundary |
@@ -57,9 +71,9 @@ independent work. Use **implementation open**, **implementation partial**,
 | Local transport | UDS bootstrap, iceoryx2 descriptors, shared arenas and bounded operation ownership | Page-generation coverage, explicit registration data and live-process stall handling |
 | Raw copies | Contiguous/strided DMA, bounded multipart Restore, engine-local execution | Residual overhead and earlier multipart consumption |
 | Compute overlap | Qualified raw single-part layer/group readiness; coarse dependencies where required | SSD/codec pipelines and legal multipart overlap |
-| Distributed discovery | Complete local indexes, fenced etcd publication, snapshot/Watch; no Catalog directory RPCs | Sustainable churn/capacity, quota recovery and separate host-failure domains |
+| Distributed discovery | Local `GlobalIndex`, bounded scoped owner streams, explicit coverage and independently accepted same-host live-store correctness; no directory RPCs | 5% isolation and 16-owner performance remediation, plus separate host-failure domains |
 | Remote recovery | Source authorization, TENT READ, release reconciliation, peer DRAM/SSD | Permanent requester loss and transfer/partition fault qualification |
-| Engine support | vLLM 0.29.0 and SGLang 0.5.20 local recovery and TP=1 replica sharing | Explicit multi-instance, container, P/D and TP/PP qualification cells |
+| Engine support | vLLM 0.30.0 local recovery under qualification; SGLang 0.5.20 unchanged; historical 0.29.0 local recovery and replica-sharing evidence retained | New-release model/topology requalification; multi-instance, container, P/D and TP/PP cells |
 | Cost decisions | Resource-scoped observations, shadow estimates and guarded experimental peer choices | One consumed planner for complete routes, legal boundaries and P/D authority |
 | Hybrid semantics | Declared recovery contracts and compiled page demands | General read-set/retention IR, checkpoint placement and semantic reclamation |
 | Packaging | Wheel construction and installed-artifact gates already exist | New final artifact requalification, independent service images and publication |
@@ -126,6 +140,381 @@ core inventory and metadata diagnostics.
   authorization, bounded memory/queues, local cache still usable during metadata
   loss, and a repeatable capacity/recovery report. A fenced runtime restarts with
   a new incarnation; it cannot silently resume using the expired one.
+
+### S2.1 — Quota and index-budget recovery
+
+The real-etcd metadata-owner gate now covers backend quota exhaustion, a stalled
+publication cursor, compaction/defragmentation/alarm disarm and resumed publication
+without resurrecting a deleted replica. A separate small-index case rejects all
+partial results, keeps lease renewal alive beyond its initial conservative
+validity window and rebuilds only after eviction permits a complete snapshot.
+The existing lost-reply, paginated-snapshot, incarnation, leader-loss and
+quorum-loss gates remain part of this substage's validation. The leader-loss
+rerun exposed startup failure on an unavailable balanced endpoint after a lease
+was granted. Metadata bootstrap now retries transport failures with the same
+lease/incarnation under a finite startup budget; format/identity rejection is
+terminal. A repeated registration reconciles only its exact committed owner and
+lease without advancing the node epoch or stealing another registration.
+
+This scope uses etcd 3.5.21 processes on one container/host and the actual Rust
+publisher, Watch, membership and index owners. Synthetic residency records enter
+the publisher directly; it does not qualify GPU storage publication, journal
+churn through live stores, data-plane availability, cross-host HA or capacity.
+Those S2 obligations remain open. The [metadata gate recipe](distributed-cache.md#quota-and-index-budget-recovery)
+records commands, external evidence and operational recovery boundaries.
+
+### S2.2 — Watch delay, partition and compaction recovery
+
+A test-owned TCP gate now isolates one Manager's actual etcd connection while the
+real etcd service remains writable. It delays Watch responses, severs existing
+HTTP/2 streams, permits source publication and compaction through an independent
+connection, then heals the Manager connection. The reader retains its last
+complete index during the transient partition, hides the index while compacted
+history is rebuilt and exposes only the final complete snapshot afterward.
+
+The gate exposed a real classification defect: tonic reports an HTTP/2 Watch-body
+reset as gRPC `Unknown`. Treat only `Unknown` messages that identify HTTP/2 or
+transport failure as resumable disconnections; other unknown statuses still
+force a rebuild. Resume starts at the last applied revision, and etcd compaction
+or missing previous metadata then triggers the normal reset/snapshot path. The
+[Watch fault recipe](distributed-cache.md#watch-delay-partition-and-compaction)
+records the observed lag/rebuild measurements and remaining scope.
+
+This substage uses synthetic publication records and one etcd process on one
+host. It does not close sustained inventory-journal overflow, concurrent live
+DRAM/SSD publication, local-cache availability through Manager metadata loss,
+multi-host partitions or the measured operating envelope.
+
+### S2.3 — Measured metadata scaling smoke
+
+The real-etcd capacity gate registers 1, 4 and 16 source owners with 512 keys per
+owner, publishes complete owner states, starts a fresh reader to measure snapshot
+rebuild and deletes half of every owner's records. It reports transaction
+latency, observed Watch lag, rebuild time, logical index bytes, process CPU ticks
+and RSS, and etcd backend growth. A fixed 500 ms delay lets etcd backend-size
+statistics settle outside the timed publication and Watch samples.
+
+Three repetitions pass on both the current H20 container and the separate A100
+host using identical frozen artifacts. At the largest checked point (16 owners,
+8,192 records), the two hosts report publication p50 0.64/0.71 ms, observed Watch
+p50 about 2.08 ms, snapshot rebuild medians 56.2/60.1 ms and 2,315,392 logical
+index bytes. The 1 ms observer makes Watch values quantized diagnostics rather
+than transport-only latency. See the [capacity smoke recipe](distributed-cache.md#measured-metadata-scaling-smoke).
+
+The final correction verifies every retained key, owner/incarnation, sequence and
+complete metadata on both the original and rebuilt readers. Codex independently
+reran that frozen gate and accepted S2.3 at `680eaa1a`; the earlier sandbox bind
+failure is retained separately as an environmental control.
+
+This is a tested smoke envelope, not a maximum: one etcd process per run,
+synthetic Publisher records, no inference load and at most 16 registered sources.
+Larger node/key/update loads, sustained live-store journal churn, concurrent
+Managers, three-host etcd and failure-domain capacity remain open.
+
+### S2.4 — Bounded live-DRAM journal and metadata-loss correctness
+
+An A100 gate now sends real GPU blocks through the production Engine DRAM store,
+evicts them and saves replacements while a test-owned TCP gate disconnects the
+source Cluster from real etcd. A 1 KiB inventory journal advances from sequence
+64 to 192 and explicitly reports a history gap. The observer retains its last
+complete view during the partition; after reconnection the publisher snapshot
+removes every old key and publishes every replacement under the exact source
+owner. Zeroed GPU memory restores exactly 65,536 local bytes both during the
+transient partition and after the source's real lease disappears from an
+available observer. Healing cannot revive the expired incarnation.
+
+Codex independently reran the frozen A100 artifact and accepted the final
+observer-availability barrier at `f7d953a8`. This is one bounded live-DRAM
+correctness scenario using Engine and Cluster owners in one test process. It is
+not sustained churn or a capacity envelope, and does not qualify a complete
+Manager process, SSD, cross-host cache, P/D, RDMA, native GDS or three-host etcd.
+See the [live metadata-loss recipe](distributed-cache.md#live-dram-journal-overflow-and-metadata-loss).
+
+### S2.5 — Full-Manager DRAM and io_uring metadata-fault correctness
+
+The Python distributed gate now runs an independent client process against two
+real Cache Manager processes and one real etcd process. DRAM and explicit
+io_uring SSD cases each cover a no-fault remote restore, three rounds of source
+publication/eviction/re-save while only the source's etcd transport is severed,
+snapshot recovery after healing, and a second partition through actual lease
+expiry. Every round and block uses a distinct deterministic payload; every
+restore zeroes the GPU destination and compares all bytes.
+
+The test reads the isolated etcd namespace as an independent oracle, validates
+the exact source incarnation and location-key digest, and requires the complete
+set of retained hashes under the expected DRAM or SSD medium. Deleted hashes
+must be absent. For SSD, each save waits for io_uring completion, evicts DRAM and
+requires the SSD-read counter to advance before accepting restored bytes. Before
+testing the expired source from the second Manager, its own DRAM is evicted so a
+local hit cannot mask remote rejection. Healing cannot re-register the old
+source incarnation.
+
+The implementation run passes both media on one A100 host with frozen Manager,
+wheel, extension, TENT and etcd artifacts. It covers five eight-block rounds per
+medium and forces repeated 1 KiB journal overflow through `e4cfc810`. Codex
+independently reran both media and accepted the complete S2.5 delivery at
+`f3a44ce1`.
+This is same-host multi-process correctness, not cross-host HA, native GDS, a
+large sustained-capacity envelope or an engine-serving qualification. See the
+[Manager process recipe](distributed-cache.md#manager-process-dram-and-io_uring-metadata-faults).
+
+### S2.6 — Sustained metadata churn and capacity
+
+**Independently accepted at `ab306965`.** A 60-second ignored release gate uses
+16 registered production Publishers and real etcd to rotate 24,576 active DRAM/
+SSD metadata records through 245,760 changes. It starts fresh complete-index
+readers during eviction rounds, checks every final key, source incarnation,
+sequence and medium, and measures publication latency, Watch lag, rebuild time,
+logical index bytes, bounded publication batches, CPU/RSS and etcd growth against
+thresholds committed before execution. Manager metadata status also exposes the
+live residency count and retained journal current/peak bytes, capacity and
+history-gap count; the accepted S2.5 gate consumes these fields on the actual
+storage path.
+
+The committed workload contract and command are in the
+[sustained-capacity recipe](distributed-cache.md#sustained-metadata-churn-and-capacity).
+The frozen candidate at `85f0f656` passes once locally and three times on the
+A100 host. All A100 runs sustain 4,032 changes/second; publication p95 is
+1.02–1.04 ms, Watch p95 is 3.46–3.47 ms, fresh-reader snapshots finish within
+374 ms, and target convergence finishes within 454 ms. The exact final 24,576
+records, 7,015,680-byte index peak and every predeclared resource bound pass.
+The same frozen Manager/wheel also reruns the S2.5 DRAM/io_uring gate successfully
+with the new journal diagnostics. Codex independently repeated the capacity gate
+at 4,032.52 changes/second and both Manager media cases in 38.34 seconds, verified
+the frozen evidence and accepted the substage with no blocking findings. This
+one-host/one-etcd-member gate cannot close three-host or independent-failure-domain
+qualification.
+
+### S2.7 — Bounded coalescing and frozen comparison baseline
+
+**Independently accepted at `afa72863`. Depends on:** independently accepted S2.6
+implementation and its available frozen gates. Missing cross-host hardware does
+not block this local protocol-preserving optimization. Follow the
+[publication contract](distributed-design.md#publication-and-coalescing).
+
+- Coalesce a bounded contiguous inventory interval before forming publication
+  transactions. Preserve every final key/medium generation, final deletes,
+  cursor CAS and lost-reply reconciliation. A flush bypasses intentional wait;
+  the input cursor advances only after the entire covered interval commits.
+- Measure original/coalesced mutations, transaction and Watch bytes, intentional
+  delay, actual visibility, CPU/RSS and local save/query interference. Freeze
+  zero-window and coalesced artifacts for later A/B comparisons.
+- Reuse the accepted exact Manager DRAM/io_uring gate and sustained capacity
+  workload; add deterministic cases only for new interval/barrier contracts.
+
+**Acceptance:** final puts/deletes and generations match the oracle; no early
+barrier completion; bounded buffers; demonstrated mutation reduction on repeated
+churn without hiding freshness or hit-rate regressions. This does not implement
+the inventory-stream protocol or qualify a larger deployment.
+
+The S2.7 candidate reads bounded contiguous intervals in `ResidencyInventory`,
+keeps the newest record per key/medium, and holds the fully covered input cursor
+until the final etcd transaction. Flush interrupts the wait. The explicit
+[coalescing benchmark](distributed-cache.md#bounded-etcd-publication-coalescing)
+compares the frozen S2.6 binary with candidate 0/2/5 ms profiles. All 20 rotated
+A100 runs and the selected-default S2.5/S2.6 regressions pass the predeclared
+limits. The default remains 0; 2 ms is a qualified opt-in tradeoff. Evidence is
+frozen outside the checkout. Codex independently checked all 20 runs and 4,200
+raw samples, reran the real-etcd cursor and 60-second capacity gates plus both
+full-Manager media cases, verified frozen hashes and accepted the same-host
+substage without blocking findings. Cross-host and serving cells remain open.
+
+### S2.8 — Owner inventory streams and coordinated protocol cutover
+
+**Independently accepted at `ad5bb8e6`. Depends on:** accepted S2.7. Implements the
+[background protocol](distributed-design.md#background-inventory-protocol),
+[barrier replacement](distributed-design.md#synchronization-api-cutover) and
+[cutover contract](distributed-design.md#cutover-rollback-and-handoff).
+
+- Keep etcd membership/epochs and one shared format guard. Add bounded Manager
+  inventory sessions on the existing peer listener, initially for all namespaces.
+  Retain source-authoritative inventory and the existing `GlobalIndex` owner.
+- Implement per-owner snapshot scan plus complete journal replay, atomic install,
+  contiguous watermarks, duplicate/reconnect repair, multi-subscriber wakeups,
+  bounded ACK credit and session/snapshot limits. Separate inventory degradation
+  from membership fencing. Expose coverage instead of partial-as-complete results.
+- Replace `published_revision` with the source inventory fence and bounded
+  requester await endpoint; update all actual consumers. Keep regular discovery
+  free of directory/coordinator RPCs and preserve source grants and drain.
+- Cut over with frozen rollback artifacts and an offline format migration;
+  remove block publication/Watch decoding and the old barrier together. Do not
+  ship two production metadata authorities or mixed-version fallback.
+- Run the exact protocol fault matrix, real-etcd/Manager byte gates and both
+  engines' shared-cache gates on available GPU hardware. Use independent expected
+  mutations/payloads as the oracle; etcd no longer contains block records.
+
+**Acceptance:** all-domain correctness matches the frozen baseline; no block or
+publisher-cursor mutations reach etcd; metadata pressure stays bounded and local
+service progresses; old protocols/incarnations cannot join or authorize; the
+coordinated rollback works. Same-host acceptance leaves cross-host cells open.
+
+The S2.8 candidate removes the etcd block publisher and block Watch decoder,
+keeps the common format/epoch/member namespace, and rejects the frozen format.
+The existing peer listener now carries bounded all-namespace snapshot/delta
+sessions into per-owner hidden staging in `GlobalIndex`. Page count, transcript,
+session/view identity, contiguous intervals, generations and membership gate the
+atomic install. Frame credit, sessions, concurrent snapshots, aggregate queued
+bytes, pacing and fence waiters are bounded. `POST /cache/sync` returns a source
+inventory fence; `/cache/metadata/await` accepts only an installed matching owner
+view. The offline migration tool performs a dry-run/archive and exact CAS in
+both directions without restoring live leases or old cursors.
+
+The first independent review at `6f3d37c7` found that a mismatched view ID was
+checked after installation, replay did not close the snapshot-page phase, a
+replacement that fit only after withdrawing its old view could retry forever,
+idle reconnect did not restore freshness, standalone sync returned 409, and the
+Manager gate stopped before the real lease key expired. Candidate `46f23928`
+validates view/page phase before commit, performs bounded owner withdrawal for a
+budgeted rebuild, refreshes only equal installed progress, retains a local-only
+sync result, waits for exact lease removal, aborts abandoned source input tasks,
+and bounds aggregate-credit and response-queue waits. The rejected report,
+environment failures and corrected probes remain with the evidence.
+
+The second independent review at `a25169af` found a budget-repair race: an etcd
+membership progress revision could clear the retired state while the old owner
+view was being removed in bounded batches. The partially cleaned view could then
+resume at its old cursor and report complete coverage with missing rows. Commit
+`344ef6c9` makes withdrawal monotonic across membership refresh; only a complete
+replacement snapshot can make that still-live owner active again. The review's
+120,000-record stress case now converges to all 110,000 final rows after 172
+membership refreshes, with both reconnects using full bootstrap.
+
+Frozen A100 evidence at native `344ef6c9` and harness `53314d52` passes the
+real-etcd stream reset/overflow gate, membership/leader/quorum gates, a 60-second
+16-owner all-to-all run, full-Manager DRAM/io_uring faults, live DRAM overflow and
+the 260-block TCP P2P restore. The capacity run sustains 245,760 changes at
+4,083.12 changes/s with 29.53 ms visibility p99, a 7,929,600-byte index,
+697,538-byte queue peak and zero etcd DB growth during churn. Five-run 0/2 ms
+Manager comparisons retain exact GPU restores and zero etcd revisions; 2 ms
+reduces median stream bytes by 83.57% while visibility p95 rises from 1.68 to
+5.17 ms. Default waiting remains 0. Scope filtering, physical cross-host and
+serving gates remain open. Codex independently reran the frozen runtime gates and
+the 120,000-record withdrawal/membership-refresh race, then verified that the
+targeted regression passes on the fix and fails after restoring the historical
+unsafe assignment. It accepted the complete S2.8 delivery at `ad5bb8e6`.
+
+### S2.9 — Scoped discovery and explicit coverage
+
+**Independently accepted at `0b97be08`. Depends on:** accepted S2.8. Implements
+the [subscription contract](distributed-design.md#subscription-coverage-and-local-query-semantics).
+
+- Add exact namespace allowlists and canonical scope identity; initially use
+  explicit configuration, not query-triggered subscription. Preserve model,
+  representation and group identity. Scope changes require a new bootstrap.
+- Consume complete-at-watermarks, partial-hints and unavailable states in local
+  discovery/diagnostics. Empty filtered intervals may advance a cursor; missing
+  owner views cannot prove absence. Member changes update coverage incrementally.
+- Account active/staging/reverse-index memory; invalidate owners immediately and
+  clean their rows in bounded batches. Measure lookup lock time under churn.
+- Compare all-domain and scoped streams against the same in-scope key/payload
+  oracle. Report remaining peer-session and all-to-all fanout costs explicitly.
+
+**Acceptance:** no lost in-scope candidates or cross-scope matches, no false
+negative-completeness claim, lower matching-workload metadata bytes, and bounded
+repair without a directory RPC. Filtering is not tenant authentication.
+
+Production candidate `272803cf` and frozen harness `fddf6c14` implement protocol
+v4, canonical all/exact/empty scope identity, source-side snapshot/replay/delta
+filtering, scope-bound resume/await and incrementally maintained coverage. Exact
+allowlists use complete generated storage namespaces, allow at most 256 entries
+and a 64 KiB Open; scope changes restart/bootstrap rather than reuse old views.
+Real-etcd and full-Manager DRAM/io_uring gates cover empty/filtered views,
+reconnect/gap/restart, membership/incarnation transitions, budget withdrawal and
+scope-outside local service with exact GPU bytes.
+
+The frozen same-host A100 forced-TCP matrix runs five independent matched pairs
+with 10/10 exit zero. Scoped median stream bytes are 61,616 versus 236,683
+all-domain (ratio 0.2603), with maximum async/barrier visibility p99 of
+26.714/6.815 ms and scoped/all median bootstrap/repair ratios of 0.9921/1.0044.
+Stable churn has zero history gaps; the isolated repair phase records a real gap
+and reset; block churn adds zero etcd block/cursor revisions. Scope filtering
+retains one peer session and makes no serving, TTFT/ITL, tenant-isolation or
+cross-host claim. Raw/failed controls and frozen hashes remain outside the
+checkout.
+
+The independent reviewer accepted S2.9 without blocking findings after checking
+the complete `3f3b71a3..0b97be08` diff, rerunning the state/catalog unit suites,
+verifying all 104 matrix-manifest entries and ten zero exit files, matching the
+source archive to production commit `272803cf`, and confirming frozen-process,
+socket and GPU cleanup. Acceptance remains limited to two full Managers on one
+A100 host with forced TCP. Physical cross-host failure domains, three-host etcd
+HA, engine serving, P/D and parallelism profiles, RDMA, native GDS and S2.10's
+long live-store cells remain open. The signed-off external report is retained
+with the frozen S2.9 handoff; no serving or tenant-isolation claim is inferred.
+
+### S2.10 — Sustained live-store and independent-domain qualification
+
+**Same-host correctness independently accepted at `65c51aaa`; qualification
+remains partial because the frozen 16-owner visibility and 5% isolation gates
+fail. Depends on:** accepted protocol implementation from S2.8 and S2.9 for
+scoped claims. This carries forward S2's remaining performance, capacity, serving
+and cross-host obligations; it does not replace missing evidence with a new name.
+
+- Execute the [frozen workload/acceptance matrix](distributed-design.md#performance-acceptance-and-ablations)
+  on actual live DRAM and io_uring storage. Increase one load dimension at a time,
+  establish the supported envelope, and exercise expected bounded degradation
+  outside it. Include the 30-minute live cell and two-hour fault/contention soak.
+- Use three etcd voting members across real independent failure domains; test
+  leader/host loss, quorum partition, lease expiry, rejoin and cold bootstrap while
+  cache traffic continues. Separate physical TCP and RDMA profiles.
+- Reproduce shared-cache serving in both pinned engine environments. Record
+  freshness, effective hits, TTFT/ITL, transfer bytes, CPU/RSS, rebuild and resource
+  drain; metadata-only benchmark wins do not qualify serving gains.
+
+**Acceptance:** exact convergence and no stale authorization, predeclared envelope
+and recovery targets met, frozen implementation and independent-review evidence,
+and truthful topology/medium exclusions. S3-dependent crash reclamation remains
+open until native termination proof is available. Keep blocked hardware cells
+explicit and continue only work independent of them.
+
+Production commit `50f77954` adds graceful inventory-stream shutdown and
+abort-safe live session accounting. SIGTERM fences membership before gRPC waits,
+then normal lifecycle drain and lease revocation finish. The strict full-Manager
+gate observes member deletion before same-node restart, increasing epoch, changed
+incarnation and refusal of the old source. Pre-fix `272803cf` times out after ten
+seconds with an active stream; soak restarts exit in at most 0.42 seconds and the
+separate strict two-start process gate takes about 1.32 seconds, both within the
+ten-second limit. An intermediate soak exposed follower-task cancellation
+leaking the diagnostic active count; the final candidate returns current and peak
+session counts to the one-session topology after receiver/source replacement.
+
+The frozen same-host A100 workload uses actual Manager Publish/Query/Restore and
+forced TCP. All/scoped DRAM and all/scoped io_uring SSD each run at least 30
+minutes, totaling 7,200 exact cycles and 7,200.50 steady seconds. The first five
+matched pairs per medium preserve exact namespace/key/payload oracles but run
+faster than the predeclared one-round-per-second cadence; scoped stream-byte
+ratios are 0.2551 DRAM and 0.2519 SSD, with median bootstrap/repair ratios within
+1.10. SSD recovery clears both source and requester DRAM and observes source SSD
+reads plus remote bytes. Fixed-membership churn creates no etcd block/cursor
+writes. The replacement five-pair matrix runs at the predeclared one round per
+second. Correctness, cadence, stream reduction and bootstrap/repair pass, but both
+DRAM and SSD have per-run save/query p99 ratios and 95% confidence bounds above
+1.05. The isolation performance cell therefore fails; median-only evidence is
+not used to override it.
+
+The final candidate runs 7,181 mixed DRAM/SSD cycles over 7,200.10 seconds while
+injecting stream partition/heal, a slow subscriber, journal overflow, receiver
+restart, source restart, source lease expiry and epoch-3 recovery. It records zero
+wrong bytes and stale authorizations, exact final coverage, bounded index/queue,
+one current/peak session in each direction and local save/query p99 pressure
+regressions of 2.13%/-2.93%. Quiet and fault-inclusive visibility are reported
+separately; the intentional slow-subscriber window is not presented as ordinary
+freshness.
+
+The real-Manager supported owner envelope stops at four. A 16-owner run is exact
+and complete but fails the frozen 50 ms target at 51.72 ms visibility p99, so it
+is retained as an unsupported boundary. Five matched 16 MiB/1 MiB index-pressure
+runs degrade explicitly to `partial_hints`, keep two of four owner views, remain
+under the configured budget and clear staging. The earlier 256 MiB soak, shutdown
+timeout, harness failures and the session-counter failure remain archived.
+
+A100 and the CPU host now have verified bidirectional data IP connectivity, but
+the current/H20 environment cannot reach their data plane or execute CUDA. Three
+independent etcd failure domains therefore remain blocked. The final integrated
+S2.9/PR #198 wheel and official vLLM 0.30.0/SGLang 0.5.20 shared-cache serving,
+physical cross-host cache traffic, RDMA, native GDS and S3 crash reclamation are
+not qualified by this substage. Do not mark S2 or full S2.10 complete from this
+same-host delivery.
 
 ## S3 — Transfer lifetime and generation-safe ownership
 
@@ -211,9 +600,45 @@ layer hooks. The current contracts live in [transport](transport.md) and
 **Depends on:** S2/S3 for new lifetime behavior; consume S4 when ready. S5.1 may
 start independently. **Owners:** engine adapters, existing native client owners
 and narrowly scoped upstream engine interfaces. Reference released LMCache
-integration contracts from [the adapter guide](adapters.md#lmcache-reference).
+integration contracts from [the adapter guide](adapters.md#lmcache-and-flexkv-reference).
 
 ### S5.1 — Release and interface audit
+
+**vLLM 0.30.0 implementation delivered with local qualification; independent
+review open.** Dependency and submodule use the exact release above. Cache and
+P/D workers return native `KVConnectorTransferResults`; failed receive and
+finished receive share one snapshot, replacing `PdWorkerMetadata` and its
+duplicate queue. Best-effort cache publication explicitly returns false for
+`requires_kv_delivery`. The native MultiConnector consumer is covered by a
+released-engine test. No 0.29/0.30 compatibility alias remains.
+
+The following records the earlier release-upgrade delivery. Its hybrid and
+custom P/D evidence is historical; the current restricted, official native P/D
+profile and its final installed-wheel gates are tracked in S5.4.
+
+The complete CUDA 13 wheel passes build/repair/isolated import. Its installed
+production package passes A100 Qwen3-8B DRAM eager, DRAM graph and forced-io_uring
+SSD eager gates (six checks each; the recurrent-only check is inapplicable).
+Same-GPU TCP P/D and save-only MultiConnector each pass one gate; the latter
+uses DecodeBench as the load owner and does not qualify live P/D/cache overlap.
+Fourteen exact native recovery tests and three released connector-contract tests
+pass. Fixed Qwen3.5-0.8B passes seven checks each for DRAM eager, DRAM graph and
+forced-io_uring SSD eager modes. The full A100 selection totals 58 passes and
+three inapplicable dense-model recurrent skips.
+These profiles use TP=1/PP=1; multi-GPU, RDMA and historical model/topology cells
+remain separately unqualified on the new release.
+Source-only Python passes 413 tests, with one skip and 160 deselected. The
+generated `python/uv.lock` is ignored by repository policy; its resolved 0.30.0
+snapshot is archived with the wheel rather than force-added.
+All 44 Python production modules match the tested wheel byte for byte. The first
+six gates preserve all 146 installed-artifact hashes and 72 test-file hashes;
+the extended hybrid/recovery selection also preserves its installed/test hashes
+and returns GPU usage to zero. Local full Rust tests reach 47 CUDA-device failures
+in `orbitkv-core` on this GPU-inaccessible host; they are not recorded as passed.
+The PR's CI covers both CUDA builds, Clippy, Python and wheel packaging separately.
+Evidence: `/root/orbitkv-artifacts/engine-native-lifecycle-20260930/vllm-0.30/`.
+Previous 0.29.0 model, topology and performance measurements remain historical.
+This delivery does not close S5.3/S5.4 or establish a performance advantage.
 
 - Audit vLLM 0.30.0 and SGLang 0.5.20 by exact release commits above, and LMCache
   0.5.5 against those interfaces. Check recipe prerequisites in release source;
@@ -227,12 +652,71 @@ integration contracts from [the adapter guide](adapters.md#lmcache-reference).
   public support claims. Keep one maintained release implementation per engine.
 - Audit reuse of native vLLM P/D: layout/state coverage, rank mapping, source
   retention, cancellation, error reporting and composition with cache restore.
-  Record concrete gaps before expanding or deleting `vllm/pd/`.
+  Native P/D cutover and remaining qualification are tracked in S5.4.
 
 **Acceptance:** release/API inventory with exact callers and an upstream issue/PR
 or a bounded local responsibility for each remaining internal dependency.
 
 ### S5.2 — Minimal official cache backends
+
+**Local adapter cleanup implemented and checked on A100; independent review open.**
+The public vLLM entry constructs only `SchedulerAdapter` or `WorkerAdapter`,
+closes native connections on initialization failure, and inherits unchanged
+optional callbacks. The unused service availability owner and its health thread
+are removed; restore exceptions still retain destinations until native drain.
+SGLang event ownership lives in `events.py`, and disabled-backend plugin/admission
+paths leave native and GPU modules unloaded. Registration conflicts are explicit.
+In that earlier cleanup, Prefill and Decode directly owned their P/D worker callbacks and request state;
+the intermediate Handlers, class-callback mixin and generic executor facade are
+removed. SGLang cancellation consumes the released cache finish/linker release
+chain instead of a duplicate Scheduler abort Hook. Ordinary cache registration
+has two internal Hooks; enqueue preparation remains opt-in. The later S5.4
+cutover removes those custom P/D owners and fork observation Hooks entirely;
+the following evidence records the earlier cleanup, not current native P/D support.
+
+The initial cleanup's source-only gate passed 414 tests. With frozen native artifacts, the pinned
+SGLang 0.5.20 admission/event gate passes 22 tests and the vLLM 0.29.0 native
+recovery-contract gate passes seven. These integration tests use controlled
+completion and CUDA-event doubles, not real GPU DMA. The vLLM gate also corrects
+a pre-existing async-load expectation reproduced on the unchanged baseline: a
+forward-consumed recovery reports a synchronous scheduler hit.
+The A100 Qwen3-8B TP=1/PP=1 serving gates pass: vLLM reports six passed and one
+hybrid-only assertion skipped; SGLang passes DRAM and io_uring SSD recovery.
+The gates compare model outputs with controls, check native cache reuse and
+verify external loads after process restart. The dense model leaves hybrid
+serving qualification open.
+The SGLang event/linker gate passes 19 tests, including real GPU page overwrite,
+full/window/checkpoint recovery on DRAM/SSD, and controlled failure/drain cases.
+
+Two initial SGLang SSD starts failed at TCPStore binding before model loading.
+A minimal reproduction showed that loopback availability did not imply wildcard
+availability. The test port helper now checks wildcard bind/listen; a real-socket
+regression protects this boundary, and the fixture retains Manager logs.
+Both failures and the successful rerun remain in external evidence. The original
+fixture deleted its temporary Manager logs during the first run; its pytest and
+engine logs remain available.
+
+The P/D ownership follow-up passes 413 source-only tests, including 139 P/D
+contracts; the assertion-only test for the removed Handler layer is deleted.
+SGLang's pinned admission/event gate passes 24 tests, now including native
+cache-finish cancellation and successful-finish preservation. A reusable vLLM
+P/D E2E gate runs two TP=1/PP=1 eager workers on one A100 over forced TCP:
+129/257/769-token prompts, including chunked prefill, produce the same text and
+output tokens as native execution; 198,180,864 payload bytes are reported and
+all sender/waiter gauges drain. This profile does not qualify multi-GPU/RDMA,
+hybrid P/D, live handoff/cache composition or the proxy HTTP service itself.
+SGLang DRAM/SSD serving recovery also passes again (two cases), as do four
+GPU recurrent/window recovery cases including cancellation of published pages.
+The seven frozen native artifacts are unchanged; postflight finds no engine or
+Manager processes and GPU usage returns to zero.
+The obsolete Python P/D launcher is removed: it selected ordinary cache
+connectors and invoked the removed `orbitkv-router` binary. The maintained
+deployment entry is `scripts/run_pd_local.sh`.
+Follow-up evidence: `/root/orbitkv-artifacts/adapter-cleanup-20260930/pd-followup/`.
+
+Overall S5.2 acceptance, engine upgrades, upstream registration, and additional
+multi-GPU/P/D qualification remain open.
+Evidence: `/root/orbitkv-artifacts/adapter-cleanup-20260930/`.
 
 - vLLM: retain `OrbitKVConnector` and distinct scheduler/worker responsibilities.
   Implement released lookup/allocation, registration, load/save and terminal
@@ -257,12 +741,30 @@ status is reported separately from local adapter qualification.
 
 ### S5.3 — Public lifecycle and hybrid-state contracts
 
-- vLLM: replace the `runtime.py` runner patch only after the released interface
+The 2026-09-30 source check confirms that released 0.30.0 and current vLLM main
+invoke preemption drain after page initialization in the **V2 runner**, and
+synchronous restore after recurrent preprocessing. The official V1 runner
+already calls preemption before page updates. The generic preemption-ordering fix is submitted
+as [vLLM #59410](https://github.com/vllm-project/vllm/pull/59410), linked to
+[#59409](https://github.com/vllm-project/vllm/issues/59409), at `2f868f14` based on
+main `91dab0eb`. It supersedes the earlier unsubmitted `98b917d5` patch. Local
+qualification includes 46 A100 worker tests and one native MultiConnector
+Qwen3-8B output gate; the upstream contributor-eligibility gate still needs
+maintainer validation. It is not merged or released. Evidence:
+`/root/orbitkv-artifacts/engine-native-lifecycle-20260930/vllm-upstream/submission-20260930/HANDOFF.md`.
+The release-only profile now uses V1 and rejects multi-group/recurrent serving;
+its `runtime.py` and native-prefix override are removed. The recurring-state
+ordering gap remains an upstream requirement for reopening that profile. SGLang PR #40595 (external-linker construction) and #40896 (load-failure
+lifecycle) are open; #40759 (Mamba lifecycle proof of concept) is closed unmerged.
+Do not delete consumed safety behavior based on these proposals.
+
+- vLLM: the runner patch is removed for V1 single-group serving. Reopen V2 and
+  recurrent profiles only after the released interface
   guarantees preemption/save drain before page reuse and restore after page
   initialization/COW but before recurrent state preprocessing. Prefer a generic
   ordering fix to a new callback when the existing contract suffices.
-- Replace `scheduler.py`'s blanket multi-group native-prefix bypass with correct
-  atomic state-group availability/recovery. Audit existing divergent-hit APIs;
+- The multi-group native-prefix bypass is removed with that serving profile.
+  Reopening it requires correct atomic state-group availability/recovery. Audit existing divergent-hit APIs;
   changing a capability flag alone does not prove all states ready.
 - SGLang: move generic recurrent checkpoint allocation/commit/abort and external
   linker lifecycle support into engine components where accepted. Shrink
@@ -282,29 +784,36 @@ status is reported separately from local adapter qualification.
 profile; all-state readiness, GPU ownership and resident-prefix behavior pass.
 Unreleased required fixes keep only their dependent profiles experimental.
 
-### S5.4 — Native P/D lifecycle with TENT payloads
+### S5.4 — Official native P/D and independent cache
 
-- Keep cache offload/reuse and live P/D handoff independently selectable. Prefer
-  native engine bootstrap, request states and DecodeReady authority; add a
-  released, explicit TENT transport construction boundary without replacing a
-  module's global class. TENT API calls do not establish GPUDirect RDMA use.
-- SGLang: replace `install_sglang_tent_backend` class substitution and private
-  completion/release Hooks. Keep native bootstrap/rank logic. Optional failed-peer
-  probing waits for S3's stable native liveness contract.
-- vLLM: reuse native P/D after S5.1 proves lifecycle/layout equivalence. Fill real
-  upstream gaps in focused PRs; then remove superseded custom handshake, request
-  states and proxy code. Keep only examples needed to launch the chosen upstream
-  router, with one tested production handoff path.
-- Qualify cold/partial/full P/D plus cache reuse. Exactly one owner writes each
-  destination range, commits DecodeReady and authorizes release. `MultiConnector`
-  registration/order alone does not establish safe composition.
-- Preserve producer events, destination generations and physical drain on abort,
-  preemption, restart and partial submission. Close heterogeneous-GPU strict-output
-  failures with matched native controls, not relaxed output assertions.
+**Release-only cutover implemented; qualification and independent acceptance open.**
+Use official vLLM 0.30.0 and SGLang 0.5.20. Live vLLM P/D uses NIXL and
+MultiConnector; SGLang uses native disaggregation. Manager shared-cache traffic
+continues to use TENT. There is no maintained engine fork runtime.
 
-**Acceptance:** real transfer/output/drain evidence for both P and D, standalone
-cache and composed modes. Retire old paths only in the same change that proves
-the replacement; do not keep TE/TENT compatibility fallbacks or duplicate owners.
+- Preserve retirement of custom connectors, handshake/proxy and partial-tail
+  cache extensions, plus unselected query-lease release and valid save ranges.
+  Remove the fork-only TENT adapters, observation callbacks and runtime gates.
+- Candidate composition: P reads/writes the independent cache; D uses save-only
+  cache and native P/D owns incoming writes. Test other cache-selection orders
+  separately. Python owns engine callbacks/layout/events, Rust owns cache
+  transfers, batching, leases and resource lifetime.
+- Combine accepted S2.8 only; do not absorb unaccepted S2.9. Freeze the new wheel,
+  run official-engine cold/warm/restart/failure DRAM/SSD and shared-cache gates,
+  and verify installed engine files before/after.
+- Require real native P/D output, cancellation, preemption/retraction, restart,
+  partial-submit, delayed-ACK and page-reuse evidence before opening each profile.
+  Model output alone does not close native transfer lifetime qualification.
+- Preserve fork patches/tests at immutable commit `9aee895e` and prior evidence
+  under `/root/orbitkv-artifacts/native-pd-cutover-20260930/HANDOFF.md` as upstream
+  material. They do not establish official release support.
+- Current reproduction and limits: [P/D setup](pd.md). New evidence belongs under
+  `/root/orbitkv-artifacts/release-native-pd-20261001/`. Cross-host fault domains,
+  RDMA, hybrid/rank combinations and native GDS remain unqualified.
+
+**Acceptance:** independently reproduce the claimed released-engine and frozen
+wheel gates. Open profiles only with proven ownership and fault handling; no
+fork-only factory, callback, default configuration or CI dependency may remain.
 
 ### S5.5 — Deployment matrix and upstream maintenance
 

@@ -1,14 +1,147 @@
 """An isolated etcd process shared by distributed runtime gates."""
 
+import contextlib
 import os
+import select
+import socket
 import subprocess
+import threading
 import time
 from contextlib import contextmanager
+from urllib.parse import urlsplit
 
 import pytest
 import requests
 
 from .cache_manager import find_available_port
+
+
+class TcpGate:
+    """Test-owned TCP fault gate that can sever and reject existing streams."""
+
+    def __init__(self, target: str):
+        parsed = urlsplit(target)
+        if parsed.scheme != "http" or parsed.hostname is None or parsed.port is None:
+            raise ValueError(f"unsupported TCP gate target: {target}")
+        self._target = (parsed.hostname, parsed.port)
+        self._listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._listener.bind(("127.0.0.1", find_available_port()))
+        self._listener.listen()
+        self._listener.settimeout(0.1)
+        self.endpoint = f"http://127.0.0.1:{self._listener.getsockname()[1]}"
+        self._condition = threading.Condition()
+        self._connections: set[tuple[socket.socket, socket.socket]] = set()
+        self._partitioned = False
+        self._delay_seconds = 0.0
+        self._stopped = False
+        self._thread = threading.Thread(target=self._serve, name="orbitkv-etcd-gate", daemon=True)
+        self._thread.start()
+
+    def partition(self) -> None:
+        with self._condition:
+            self._partitioned = True
+            connections = list(self._connections)
+        for pair in connections:
+            self._close_pair(pair)
+        deadline = time.monotonic() + 5
+        with self._condition:
+            while self._connections:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("TCP gate connections did not drain")
+                self._condition.wait(remaining)
+
+    def heal(self) -> None:
+        with self._condition:
+            self._partitioned = False
+
+    def set_delay(self, seconds: float) -> None:
+        if seconds < 0:
+            raise ValueError("TCP gate delay cannot be negative")
+        with self._condition:
+            self._delay_seconds = seconds
+
+    def close(self) -> None:
+        with self._condition:
+            self._stopped = True
+            connections = list(self._connections)
+        with contextlib.suppress(OSError):
+            self._listener.close()
+        for pair in connections:
+            self._close_pair(pair)
+        self._thread.join(timeout=5)
+        if self._thread.is_alive():
+            raise TimeoutError("TCP gate listener did not stop")
+
+    def _serve(self) -> None:
+        while True:
+            with self._condition:
+                if self._stopped:
+                    return
+            try:
+                downstream, _ = self._listener.accept()
+            except TimeoutError:
+                continue
+            except OSError:
+                return
+            with self._condition:
+                if self._partitioned or self._stopped:
+                    downstream.close()
+                    continue
+            try:
+                upstream = socket.create_connection(self._target, timeout=2)
+                downstream.settimeout(None)
+                upstream.settimeout(None)
+            except OSError:
+                downstream.close()
+                continue
+            pair = (downstream, upstream)
+            with self._condition:
+                if self._partitioned or self._stopped:
+                    self._close_pair(pair)
+                    continue
+                self._connections.add(pair)
+            threading.Thread(
+                target=self._proxy,
+                args=(pair,),
+                name="orbitkv-etcd-gate-connection",
+                daemon=True,
+            ).start()
+
+    def _proxy(self, pair: tuple[socket.socket, socket.socket]) -> None:
+        downstream, upstream = pair
+        try:
+            while True:
+                with self._condition:
+                    if self._partitioned or self._stopped:
+                        return
+                readable, _, _ = select.select(pair, (), (), 0.1)
+                for source in readable:
+                    destination = upstream if source is downstream else downstream
+                    data = source.recv(16 * 1024)
+                    if not data:
+                        return
+                    with self._condition:
+                        delay = self._delay_seconds
+                    if delay:
+                        time.sleep(delay)
+                    destination.sendall(data)
+        except (OSError, ValueError):
+            pass
+        finally:
+            self._close_pair(pair)
+            with self._condition:
+                self._connections.discard(pair)
+                self._condition.notify_all()
+
+    @staticmethod
+    def _close_pair(pair: tuple[socket.socket, socket.socket]) -> None:
+        for connection in pair:
+            with contextlib.suppress(OSError):
+                connection.shutdown(socket.SHUT_RDWR)
+            with contextlib.suppress(OSError):
+                connection.close()
 
 
 @contextmanager

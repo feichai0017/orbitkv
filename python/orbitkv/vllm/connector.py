@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Iterable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 from vllm.config import CUDAGraphMode
 from vllm.distributed.kv_transfer.kv_connector.v1.base import (
     KVConnectorBase_V1,
     KVConnectorRole,
+    KVConnectorTransferResults,
     SupportsHMA,
 )
 from vllm.distributed.parallel_state import get_pp_group, get_tensor_model_parallel_rank
@@ -30,9 +30,10 @@ from orbitkv.vllm.config import (
 from orbitkv.vllm.layout import CacheGroupLayout
 from orbitkv.vllm.metadata import OrbitKVConnectorMetadata
 from orbitkv.vllm.metrics import OrbitKVConnectorStats, OrbitKVPromMetrics
-from orbitkv.vllm.scheduler import SchedulerConnector
-from orbitkv.vllm.state_manager import ServiceStateManager
-from orbitkv.vllm.worker import WorkerConnector
+
+if TYPE_CHECKING:
+    from orbitkv.vllm.scheduler import SchedulerAdapter
+    from orbitkv.vllm.worker import WorkerAdapter
 
 logger = get_connector_logger()
 
@@ -40,31 +41,32 @@ logger = get_connector_logger()
 class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
     """v1 KV connector for OrbitKV with separated scheduler/worker logic."""
 
+    @property
+    def requires_kv_delivery(self) -> bool:
+        return False
+
     def __init__(self, vllm_config, role: KVConnectorRole, kv_cache_config=None):
         super().__init__(vllm_config, role, kv_cache_config)
 
+        if vllm_config.kv_transfer_config is None:
+            raise ValueError("OrbitKV requires kv_transfer_config")
         instance_id = resolve_instance_id(vllm_config)
         tp_size = vllm_config.parallel_config.tensor_parallel_size
         world_size = vllm_config.parallel_config.world_size
         is_mla = detect_mla(vllm_config)
         cache_groups = tuple(getattr(kv_cache_config, "kv_cache_groups", ()) or ())
-        if cache_groups and CacheGroupLayout.from_config(kv_cache_config).has_recurrent_state:
-            if not vllm_config.use_v2_model_runner:
-                raise RuntimeError(
-                    "OrbitKV recurrent Restore requires vLLM's V2 model runner so "
-                    "state is restored before checkpoint migration."
-                )
-            from vllm.v1.core.sched.output import SchedulerOutput
-
-            if "kv_connector_block_state" not in getattr(
-                SchedulerOutput, "__dataclass_fields__", {}
-            ):
-                raise RuntimeError(
-                    "OrbitKV HMA requires vLLM SchedulerOutput.kv_connector_block_state "
-                    "to hand off pinned Mamba boundary states; this vLLM build does not "
-                    "provide it. Use a build with the boundary-state hand-off before "
-                    "enabling OrbitKV for hybrid models."
-                )
+        if len(cache_groups) > 1 or (
+            cache_groups and CacheGroupLayout.from_config(kv_cache_config).has_recurrent_state
+        ):
+            raise RuntimeError(
+                "OrbitKV on official vLLM 0.30.0 supports one attention cache group; "
+                "hybrid recovery requires an upstream atomic state hand-off."
+            )
+        if vllm_config.use_v2_model_runner:
+            raise RuntimeError(
+                "OrbitKV on official vLLM 0.30.0 requires VLLM_USE_V2_MODEL_RUNNER=0 "
+                "to drain preempted saves before GPU page reuse."
+            )
         collapse_mla_tp = is_mla and len(cache_groups) <= 1
         dcp_world_size = (
             getattr(vllm_config.parallel_config, "decode_context_parallel_size", 1) or 1
@@ -128,35 +130,23 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             if torch.cuda.is_available():
                 device_id = _resolve_device_id()
 
-        assert vllm_config.kv_transfer_config is not None
-        server_host = os.environ.get(
-            "ORBITKV_HOST"
-        ) or vllm_config.kv_transfer_config.get_from_extra_config(
+        get_option = vllm_config.kv_transfer_config.get_from_extra_config
+        server_host = os.environ.get("ORBITKV_HOST") or get_option(
             "orbitkv.host", "http://127.0.0.1"
         )
-        server_port = os.environ.get(
-            "ORBITKV_PORT"
-        ) or vllm_config.kv_transfer_config.get_from_extra_config("orbitkv.port", 50055)
+        server_port = os.environ.get("ORBITKV_PORT") or get_option("orbitkv.port", 50055)
         mode = OrbitKVConnectorMode.from_config(
-            vllm_config.kv_transfer_config.get_from_extra_config(
-                "orbitkv.mode", OrbitKVConnectorMode.READ_WRITE.value
-            )
+            get_option("orbitkv.mode", OrbitKVConnectorMode.READ_WRITE.value)
         )
         transfer_backend = resolve_transfer_backend(
             is_mla,
-            vllm_config.kv_transfer_config.get_from_extra_config("orbitkv.transfer_backend", None),
+            get_option("orbitkv.transfer_backend", None),
         )
-        wait_for_full_prefix = bool(
-            vllm_config.kv_transfer_config.get_from_extra_config(
-                "orbitkv.wait_for_full_prefix", False
-            )
-        )
+        wait_for_full_prefix = bool(get_option("orbitkv.wait_for_full_prefix", False))
         default_endpoint = f"{server_host}:{server_port}"
         tp_shards = TpShardTopology.from_config(
             default_endpoint=default_endpoint,
-            configured_endpoints=vllm_config.kv_transfer_config.get_from_extra_config(
-                "orbitkv.tp_shard_endpoints", None
-            ),
+            configured_endpoints=get_option("orbitkv.tp_shard_endpoints", None),
             global_tp_size=tp_size,
             global_world_size=world_size,
         )
@@ -170,12 +160,11 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             )
         shard_index = tp_shards.shard_index(tp_rank) if tp_rank is not None else 0
         namespace = tp_shards.namespace(base_namespace, shard_index)
-        self._engine_endpoint = tp_shards.endpoints[shard_index]
         self._connections = connect_cache(
             endpoints=tp_shards.endpoints,
             shard_index=shard_index,
             all_shards=role == KVConnectorRole.SCHEDULER,
-            get_option=vllm_config.kv_transfer_config.get_from_extra_config,
+            get_option=get_option,
         )
         clients = self._connections.clients
         client = clients[self._connections.selected_index]
@@ -186,8 +175,6 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             client.bootstrap_socket,
         )
 
-        self._state_manager = ServiceStateManager(client)
-
         self._ctx = ConnectorContext(
             instance_id=instance_id,
             namespace=namespace,
@@ -197,7 +184,6 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             tp_rank=tp_rank,
             device_id=device_id,
             client=client,
-            state_manager=self._state_manager,
             is_mla=is_mla,
             collapse_mla_tp=collapse_mla_tp,
             transfer_backend=transfer_backend,
@@ -216,52 +202,48 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
         # cannot build a cross-layer (uniform) KV cache for MLA. Requesting it
         # is silently ignored upstream and falls back to per-layer — surface
         # that instead of pretending the request was honored.
-        env_cross_layer = os.environ.get("ORBITKV_CROSS_LAYER_BLOCKS", "1") == "1"
-        self._prefer_cross_layer = env_cross_layer and not is_mla and len(cache_groups) <= 1
-        if is_mla and env_cross_layer:
+        self._prefer_cross_layer = cross_layer_blocks and not is_mla and len(cache_groups) <= 1
+        if is_mla and cross_layer_blocks:
             logger.warning(
                 "[OrbitKVConnector] ORBITKV_CROSS_LAYER_BLOCKS=1 is ignored for MLA "
                 "models: cross-layer KV cache is unsupported by MLA attention backends; "
                 "using per-layer registration."
             )
 
-        self._scheduler: SchedulerConnector | None = None
-        self._worker: WorkerConnector | None = None
-        if role == KVConnectorRole.SCHEDULER:
-            pd_tail_save = bool(
-                vllm_config.kv_transfer_config.get_from_extra_config("orbitkv.pd_tail_save", False)
-            )
-            pd_tail_load = bool(
-                vllm_config.kv_transfer_config.get_from_extra_config("orbitkv.pd_tail_load", False)
-            )
-            self._scheduler = SchedulerConnector(
-                self._ctx,
-                clients=clients,
-                pd_tail_save=pd_tail_save,
-                pd_tail_load=pd_tail_load,
-                vllm_config=vllm_config,
-                kv_cache_config=kv_cache_config,
-            )
-            # Open the liveness stream from the scheduler process only. One
-            # stream per vllm replica is enough — if any tp worker crashes,
-            # the scheduler dies too, closing this stream and triggering
-            # server-side cleanup of the instance's CUDA IPC mappings.
-            for index, client in enumerate(clients):
-                client.start_session_watcher(
-                    instance_id,
-                    tp_shards.namespace(base_namespace, index),
-                    self._ctx.effective_tp_size,
-                    self._ctx.effective_world_size,
-                )
-        else:
-            from orbitkv.vllm.runtime import install_restore_boundary
+        self._scheduler: SchedulerAdapter | None = None
+        self._worker: WorkerAdapter | None = None
+        try:
+            if role == KVConnectorRole.SCHEDULER:
+                from orbitkv.vllm.scheduler import SchedulerAdapter
 
-            install_restore_boundary()
-            self._worker = WorkerConnector(
-                self._ctx,
-                vllm_config=vllm_config,
-                kv_cache_config=kv_cache_config,
-            )
+                self._scheduler = SchedulerAdapter(
+                    self._ctx,
+                    clients=clients,
+                    kv_cache_config=kv_cache_config,
+                )
+                # Open the liveness stream from the scheduler process only. One
+                # stream per vllm replica is enough — if any tp worker crashes,
+                # the scheduler dies too, closing this stream and triggering
+                # server-side cleanup of the instance's CUDA IPC mappings.
+                for index, client in enumerate(clients):
+                    client.start_session_watcher(
+                        instance_id,
+                        tp_shards.namespace(base_namespace, index),
+                        self._ctx.effective_tp_size,
+                        self._ctx.effective_world_size,
+                    )
+            else:
+                from orbitkv.vllm.worker import WorkerAdapter
+
+                self._worker = WorkerAdapter(
+                    self._ctx,
+                    vllm_config=vllm_config,
+                    kv_cache_config=kv_cache_config,
+                )
+
+        except BaseException:
+            self.shutdown()
+            raise
 
         logger.debug(
             "[OrbitKVConnector] Initialized role=%s instance_id=%s device=%s "
@@ -291,9 +273,6 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             client.transport,
         )
 
-    # ==============================
-    # Worker-side methods
-    # ==============================
     def start_load_kv(self, forward_context, **kwargs: Any) -> None:
         if not self._worker:
             return
@@ -301,7 +280,7 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
         if metadata is None:
             return
         self._worker.start_load_kv(metadata)
-        # V2 full-graph replay calls the connector without attention metadata.
+        # Graph replay can call the connector without attention metadata.
         # Its captured graph has no Python layer callbacks, so link the whole
         # Restore on the replay stream. Decode steps without Restore do no work.
         if (
@@ -332,10 +311,10 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             return
         self._worker.wait_for_save()
 
-    def get_finished(self, finished_req_ids: set[str]) -> tuple[set[str] | None, set[str] | None]:
+    def get_transfer_results(self, finished_req_ids: set[str]) -> KVConnectorTransferResults:
         if not self._worker:
-            return (None, None)
-        return self._worker.get_finished(finished_req_ids)
+            return KVConnectorTransferResults()
+        return self._worker.get_transfer_results(finished_req_ids)
 
     def build_connector_worker_meta(self):
         if not self._worker:
@@ -356,9 +335,6 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             return
         self._worker.handle_preemptions(metadata.preempted_req_ids)
 
-    # ==============================
-    # Scheduler-side methods
-    # ==============================
     def on_new_request(self, request) -> None:
         if self._scheduler:
             self._scheduler.on_new_request(request)
@@ -389,9 +365,6 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             return self._scheduler.request_finished(request, block_ids)
         return (False, None)
 
-    def take_events(self) -> Iterable:
-        return ()
-
     def has_pending_push_work(self) -> bool:
         if not self._scheduler:
             return False
@@ -420,24 +393,9 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             return OrbitKVConnectorMetadata()
         return self._scheduler.build_connector_meta(scheduler_output)
 
-    # ==============================
-    # Defaults and shutdown
-    # ==============================
-
     def get_kv_connector_stats(self) -> OrbitKVConnectorStats | None:
-        stats: OrbitKVConnectorStats | None = None
-
-        # Collect scheduler-side stats
-        if self._scheduler:
-            stats = self._scheduler.get_stats()
-
-        # Collect worker-side stats
-        if self._worker:
-            worker_stats = self._worker.get_stats()
-            if worker_stats is not None:
-                stats = worker_stats if stats is None else stats.aggregate(worker_stats)
-
-        return stats
+        adapter = self._scheduler if self._scheduler is not None else self._worker
+        return adapter.get_stats() if adapter is not None else None
 
     @classmethod
     def build_kv_connector_stats(cls, data: dict | None = None) -> OrbitKVConnectorStats | None:
@@ -455,9 +413,6 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
     ) -> OrbitKVPromMetrics:
         return OrbitKVPromMetrics(vllm_config, metric_types, labelnames, per_engine_labelvalues)
 
-    def get_handshake_metadata(self):
-        return None
-
     @property
     def prefer_cross_layer_blocks(self) -> bool:
         return self._prefer_cross_layer
@@ -467,12 +422,6 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             return
         self._worker.register_cross_layers_kv_cache(kv_cache, attn_backend)
 
-    def set_host_xfer_buffer_ops(self, copy_operation):
-        return
-
-    def get_finished_count(self) -> int | None:
-        return None
-
     def shutdown(self):
         try:
             if self._scheduler:
@@ -480,8 +429,6 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             if self._worker:
                 self._worker.shutdown()
         finally:
-            if self._state_manager:
-                self._state_manager.shutdown()
             self._connections.close()
 
 

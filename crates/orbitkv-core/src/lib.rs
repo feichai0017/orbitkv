@@ -41,7 +41,8 @@ pub use query::lease::QueryLeaseId;
 pub use query::{QueryAdmission, QueryMode, QueryOwner, QueryReservation};
 pub use storage::MemoryCacheCleanupStats;
 pub use storage::inventory::{
-    DEFAULT_INVENTORY_JOURNAL_BYTES, InventoryReadError, PublishedInventory, ResidencyInventory,
+    DEFAULT_INVENTORY_JOURNAL_BYTES, InventoryDelta, InventoryReadError, InventoryStatus,
+    ResidencyInventory,
 };
 pub use storage::ssd::metadata::SlotMeta;
 pub use storage::ssd::{

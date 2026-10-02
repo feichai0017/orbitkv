@@ -11,29 +11,14 @@ connector modules are only imported when the class is actually
 looked up — so this module adds negligible overhead.
 """
 
-import contextlib
-
 
 def register() -> None:
     from vllm.distributed.kv_transfer.kv_connector.factory import (
         KVConnectorFactory,
     )
 
-    with contextlib.suppress(ValueError):
-        KVConnectorFactory.register_connector(
-            "OrbitKVConnector",
-            "orbitkv.vllm",
-            "OrbitKVConnector",
-        )
-    with contextlib.suppress(ValueError):
-        KVConnectorFactory.register_connector(
-            "PdDecodeConnector",
-            "orbitkv.vllm.pd",
-            "PdDecodeConnector",
-        )
-    with contextlib.suppress(ValueError):
-        KVConnectorFactory.register_connector(
-            "PdPrefillConnector",
-            "orbitkv.vllm.pd",
-            "PdPrefillConnector",
-        )
+    KVConnectorFactory.register_connector(
+        "OrbitKVConnector",
+        "orbitkv.vllm",
+        "OrbitKVConnector",
+    )

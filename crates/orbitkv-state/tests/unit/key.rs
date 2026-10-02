@@ -16,6 +16,9 @@ fn storage_identity_is_stable_and_isolates_incompatible_slots() {
     second.layer = "layer.1".into();
     let namespace = storage_namespace("model-v1", false, vec![first.clone(), second.clone()]);
     assert!(namespace.starts_with("orbitkv:v2:"));
+    assert!(is_storage_namespace(&namespace));
+    assert!(!is_storage_namespace("model-v1"));
+    assert!(!is_storage_namespace(&namespace.to_uppercase()));
     assert_eq!(
         namespace,
         storage_namespace(

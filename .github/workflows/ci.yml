@@ -133,6 +133,7 @@ jobs:
       - name: Run rust clippy check
         run: |
           cargo clippy --workspace --exclude orbitkv-py --all-targets -- -D warnings
+          cargo clippy -p orbitkv-server --all-targets --features test-hooks -- -D warnings
 
   ruff-check:
     name: ruff check
