@@ -36,7 +36,7 @@ record submitted, merged and released as different states.
 | --- | --- |
 | S0 | Agent handoff and Codex skill migration merged in PR #190. |
 | S1 | Evidence separation independently verified at `ec3add9b`; this delivery consolidates plans and release-based integration guidance. Acceptance covers S1 only; native CUDA qualification remains blocked on this host. |
-| S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. The 16-owner visibility and 5% isolation performance gates fail; physical cross-host cache/HA, final serving, RDMA/GDS and S3-dependent cells remain open. |
+| S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. The current queue head is S2.10 same-host performance qualification on merged main: repair the visibility/isolation measurement contract and requalify the failed 16-owner and 5% isolation cells. Physical cross-host cache/HA, final serving, RDMA/GDS and S3-dependent cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
 | S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.30.0 adapter upgrade consumes native transfer results with local A100 cache/P/D evidence. Independent upgrade acceptance and public lifecycle/deployment gates remain open. |
@@ -51,18 +51,13 @@ independent work. Use **implementation open**, **implementation partial**,
 **qualification open**, **deferred research**, and **release gate** precisely.
 
 The [distributed inventory and recovery design](distributed-design.md) specifies
-the authorized evolution beyond the current etcd block index. Its delivery queue
-is S2.7–S2.10 below, followed by the consumed S6/S7 substages; the design is not an
-implementation or acceptance claim. Finish and independently review the current
-S2.6 delivery first. Existing S3 lifetime gates still control any new payload
-concurrency, reuse or reclamation. Cross-host qualification remains open until
-its actual failure-domain evidence exists.
-
-S3 work may proceed against the already accepted S2.5 metadata contracts while
-S2.7–S2.10 progress; it must requalify affected boundaries after S2.8 cutover.
-S3 does not wait for S2.10's S3-dependent crash-reclamation cells. Likewise,
-unavailable hardware blocks only the dependent qualification profile, not the
-independent protocol or native-lifetime implementation.
+the authorized evolution beyond the former etcd block index. S2.7–S2.9 and
+S2.10 same-host correctness are accepted; the current delivery is the remaining
+same-host S2.10 performance qualification repair on the PR #199 merged-main
+artifact. Correct the measurement contract before the formal rerun and retain the
+old failed evidence. Do not enter S3, S6 or S7 from this delivery. Existing S3
+lifetime gates still control any new payload concurrency, reuse or reclamation.
+Cross-host qualification remains open until actual failure-domain evidence exists.
 
 ## Baseline: preserve these implementations
 
@@ -449,6 +444,28 @@ remains partial because the frozen 16-owner visibility and 5% isolation gates
 fail. Depends on:** accepted protocol implementation from S2.8 and S2.9 for
 scoped claims. This carries forward S2's remaining performance, capacity, serving
 and cross-host obligations; it does not replace missing evidence with a new name.
+
+**Current next delivery:** validate and freeze the PR #199 merged-main Manager,
+wheel, extension and TENT libraries, then correct and independently review the
+same-host performance measurement contract before a formal rerun. Keep the old
+51.72 ms 16-owner visibility and all/scoped isolation failures as historical
+failures; the supported capacity remains four owners until replacement evidence
+passes.
+
+- Report historical serial barrier verification separately from bounded
+  concurrent verification, ordinary asynchronous publication-to-install latency,
+  and save-start-to-discovery latency. HTTP completion is not an observer install
+  timestamp, and ordinary asynchronous samples must not force a sync/flush.
+- Bind source publication and observer installation observations to owner,
+  incarnation, epoch, scope digest and sequence in one clock domain. Preserve
+  bounded owner/session state and exact per-owner barrier checks; do not add a
+  directory RPC or second metadata owner.
+- Keep all-domain versus scoped as the filtering/byte comparison. Measure local
+  isolation with a fixed scope and matched quiet versus metadata-pressure runs.
+  Freeze warm-up, at least 1,000 measured rounds per run, five balanced matched
+  repetitions, cadence, resource settings, expansion budget and stop rules before
+  the formal experiment. The 50 ms visibility and 5% isolation targets do not
+  change.
 
 - Execute the [frozen workload/acceptance matrix](distributed-design.md#performance-acceptance-and-ablations)
   on actual live DRAM and io_uring storage. Increase one load dimension at a time,
