@@ -36,7 +36,7 @@ record submitted, merged and released as different states.
 | --- | --- |
 | S0 | Agent handoff and Codex skill migration merged in PR #190. |
 | S1 | Evidence separation independently verified at `ec3add9b`; this delivery consolidates plans and release-based integration guidance. Acceptance covers S1 only; native CUDA qualification remains blocked on this host. |
-| S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. The current queue head is the bounded S2.10 pressure-fixture pacing repair after the first formal matrix stopped invalid. The measurement/oracle and release-source profile are independently accepted; the 16-owner visibility and 5% isolation cells await the five-run/pair results and review. Physical cross-host cache/HA, final serving, RDMA/GDS and S3-dependent cells remain open. |
+| S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. The current queue head is the second frozen S2.10 same-host formal run after independently accepted fixture pacing/cleanup repair; the first matrix remains invalid. The measurement/oracle and release-source profile are independently accepted; the 16-owner visibility and 5% isolation cells await the five-run/pair results and review. Physical cross-host cache/HA, final serving, RDMA/GDS and S3-dependent cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
 | S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.30.0 adapter upgrade consumes native transfer results with local A100 cache/P/D evidence. Independent upgrade acceptance and public lifecycle/deployment gates remain open. |
@@ -445,9 +445,9 @@ fail. Depends on:** accepted protocol implementation from S2.8 and S2.9 for
 scoped claims. This carries forward S2's remaining performance, capacity, serving
 and cross-host obligations; it does not replace missing evidence with a new name.
 
-**Current next delivery:** repair and independently review the pressure-fixture
-pacing/invalid-run cleanup, then freeze a new same-host performance campaign on
-the PR #199 merged-main artifact. Merged-artifact
+**Current next delivery:** finish and independently review the second frozen
+same-host performance campaign on the PR #199 merged-main artifact. The bounded
+fixture pacing/invalid-run cleanup repair has independent acceptance. Merged-artifact
 regression and the corrected measurement/oracle contracts are complete; the
 formal runner and release pressure-source profile have independent Codex launch
 acceptance. Keep the old 51.72 ms serial-barrier and all/scoped isolation failures
@@ -529,13 +529,26 @@ after 21.851274 ms scheduling lateness, violating the frozen 8.5 ms minimum.
 The remaining 23 cells were not started. The invalid run and its CUDA IPC cleanup
 warning remain archived; no old result is reclassified or replaced.
 
-The next bounded repair paces the existing source fixture against both its
-original 17 ms schedule and the prior completed iteration plus 8.5 ms. Every
+The accepted bounded repair at `fbcfd130` paces the existing source fixture against
+both its original 17 ms schedule and the prior completed iteration plus 8.5 ms. Every
 mutation, budget and threshold remains unchanged. Terminal measurement rejection
 must still exit nonzero after explicit drain/unregister and graceful Manager
-exit, with invalid result and cleanup evidence saved. Controlled source-delay
-regressions and independent Codex review precede a new, separately frozen formal
-campaign. No performance qualification or expanded capacity is accepted yet.
+exit, with invalid result and cleanup evidence saved. All four 38 ms injected
+stall controls pass; the 200 ms control remains invalid/exit 1 with explicit
+drain and Manager exit 0, without CUDA IPC producer warnings. Independent Codex
+review accepts this repair and separately accepts the new launch inputs.
+
+The new input manifest is
+`92312221ad5f0177cab3d32fa9508991d112ba97b85196e8991a5a5331808318`, under
+`measurement-v2-20261003/pacing-repair-20261003/formal-inputs/`. The release
+fixture SHA256 is `7f32c49ff33a11f89119f4205da0b70f7705ff29da91bfde36c59b5b6f6c8c33`.
+The complete fresh 25-cell matrix runs at
+`pacing-repair-20261003/candidate-fbcfd130/formal-qualification-2/`; its source
+stall variables are forbidden and result guards verify they remain disabled.
+The old successful capacity cell is not pooled into the new five-run cohort.
+This is one bounded restart: further invalidity or performance failure is handed
+off unqualified, with no third automatic campaign or threshold/resource tuning.
+No performance qualification or expanded capacity is accepted yet.
 
 - Execute the [frozen workload/acceptance matrix](distributed-design.md#performance-acceptance-and-ablations)
   on actual live DRAM and io_uring storage. Increase one load dimension at a time,
