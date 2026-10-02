@@ -28,9 +28,11 @@ Run an independent Cache Manager per host and connect the engines on that host
 to its shared cache. Engines own GPU memory and scheduling; OrbitKV manages
 external replicas and transfers. See [deployment patterns](docs/deployment.md)
 for shared-instance budgets and container qualification limits.
-The pinned engine baselines are **vLLM 0.29.0** and **SGLang 0.5.20**.
+The pinned engine baselines are **vLLM 0.30.0** and **SGLang 0.5.20**;
+see the [upgrade qualification scope](docs/completion-plan.md#s51--release-and-interface-audit).
 The recorded [engine-local raw Restore cutover](docs/engine-local-restore.md) passes
-single-H20 Qwen3-8B DRAM serving correctness and restart reuse in both engines.
+single-H20 Qwen3-8B DRAM serving correctness and restart reuse with vLLM 0.29.0
+and SGLang 0.5.20. Historical model and performance results retain those versions.
 The [recorded vLLM end-to-end comparison](docs/single-node-performance.md#matched-vllm-end-to-end-comparison)
 shows gains over HBM-eviction recomputation, while native CPU offload remains
 faster. LMCache comparisons and their limits are recorded in the same report.
@@ -73,10 +75,11 @@ Multi-node cache sharing is experimental. Interfaces may change before 1.0.
   with cross-GPU numerical and RDMA limits documented separately. Peer SSD reads use
   exact-generation, bounded source-side io_uring staging before the same
   Mooncake transfer path; physical two-host qualification remains open.
-- **Experimental P/D handoff.** vLLM uses OrbitKV's connector protocol;
-  SGLang `0.5.20` keeps its native bootstrap/room protocol and can opt into the
-  same Rust TENT payload owner with `ORBITKV_SGLANG_TENT=1`. SGLang external
-  H20 qualification remains open.
+- **Native P/D composition candidates.** Official vLLM uses NIXL and
+  MultiConnector; official SGLang uses native disaggregation. OrbitKV supplies
+  independent cache adapters and keeps Manager shared-cache traffic on TENT.
+  No maintained engine fork or custom P/D proxy is required. The
+  [P/D guide](docs/pd.md) records ownership and remaining fault qualification.
 
 See [supported deployments](docs/deployment.md) and
 [model qualification](docs/models.md) before selecting a checkpoint and topology.

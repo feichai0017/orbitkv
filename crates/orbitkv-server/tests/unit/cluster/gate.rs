@@ -72,6 +72,7 @@ impl TcpGate {
         }
     }
 
+    #[cfg(feature = "test-hooks")]
     pub(crate) fn set_downstream_delay(&self, delay: Duration) {
         self.state
             .send_modify(|state| state.downstream_delay = delay);

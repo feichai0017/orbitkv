@@ -21,7 +21,7 @@ class ShardedQueryReady:
     boundary: int = 0
     # HMA only: the attention-only prefix hit before recovery validation
     # shrank it. Tells the scheduler where a shared prefix ends without a
-    # usable recurrent checkpoint (see SchedulerConnector's junction hint).
+    # usable recurrent checkpoint (see SchedulerAdapter's junction hint).
     attention_hit_blocks: int = 0
 
 

@@ -1,13 +1,19 @@
 use super::*;
+#[cfg(feature = "test-hooks")]
 use crate::proto::engine::inventory_server::InventoryServer;
+#[cfg(feature = "test-hooks")]
 use orbitkv_state::{
     DiscoveryCoverage, ReplicaMedium, ReplicaMetadata, ReplicaRepresentation, StateKey,
 };
+#[cfg(feature = "test-hooks")]
 use tonic::transport::Server;
 
+#[cfg(feature = "test-hooks")]
 use crate::cluster::tests::etcd::{Etcd, join, view, wait_for};
+#[cfg(feature = "test-hooks")]
 use crate::cluster::tests::gate::TcpGate;
 
+#[cfg(feature = "test-hooks")]
 fn free_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
@@ -16,6 +22,7 @@ fn free_port() -> u16 {
         .port()
 }
 
+#[cfg(feature = "test-hooks")]
 async fn serve(runtime: InventoryRuntime, port: u16) -> tokio::task::JoinHandle<()> {
     let task = tokio::spawn(async move {
         Server::builder()
@@ -81,6 +88,7 @@ async fn scoped_node(
     }
 }
 
+#[cfg(feature = "test-hooks")]
 fn metadata(medium: ReplicaMedium) -> ReplicaMetadata {
     ReplicaMetadata {
         medium,

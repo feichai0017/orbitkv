@@ -53,7 +53,6 @@ def context(client, *, instance_id="instance", namespace="model/layout"):
         tp_rank=0,
         device_id=0,
         client=client,
-        state_manager=MagicMock(),
     )
 
 
@@ -66,8 +65,8 @@ def test_window_and_checkpoint_restore_only_required_destinations(channel_server
 
     from orbitkv import CacheManagerClient
     from orbitkv.vllm.metadata import OrbitKVConnectorMetadata
-    from orbitkv.vllm.scheduler import SchedulerConnector
-    from orbitkv.vllm.worker import WorkerConnector
+    from orbitkv.vllm.scheduler import SchedulerAdapter
+    from orbitkv.vllm.worker import WorkerAdapter
     from tests.support.metrics import fetch_orbitkv_metrics
 
     groups = list(config().kv_cache_groups)
@@ -83,8 +82,8 @@ def test_window_and_checkpoint_restore_only_required_destinations(channel_server
     ctx = context(client, instance_id=identity, namespace=identity)
     cache_config = SimpleNamespace(kv_cache_groups=groups)
     client.start_session_watcher(identity, identity, 1, 1)
-    scheduler = SchedulerConnector(ctx, kv_cache_config=cache_config)
-    worker = WorkerConnector(ctx, kv_cache_config=cache_config)
+    scheduler = SchedulerAdapter(ctx, kv_cache_config=cache_config)
+    worker = WorkerAdapter(ctx, kv_cache_config=cache_config)
     kv = torch.arange(16 * 2 * 16 * 32, device="cuda", dtype=torch.float32).reshape(
         16, 2, 16, 1, 32
     )
@@ -144,7 +143,7 @@ def test_window_and_checkpoint_restore_only_required_destinations(channel_server
             response.raise_for_status()
             assert response.json()["evicted_blocks"] == 6 + with_checkpoint
         req, result = lookup("restore-window")
-        assert result == (64, True)
+        assert result == (64, False)
         destinations = [
             [0, 0, 12, 13],
             [8, 9, 10, 11],
@@ -161,12 +160,10 @@ def test_window_and_checkpoint_restore_only_required_destinations(channel_server
         torch.cuda.synchronize()
         worker.start_load_kv(
             OrbitKVConnectorMetadata(load_intents=scheduler._pending_load_intents),
-            SimpleNamespace(no_compile_layers={}),
         )
-        deadline = time.monotonic() + 15
-        while worker.get_finished(set())[1] != {req.request_id}:
-            assert time.monotonic() < deadline
-            time.sleep(0.01)
+        worker.wait_for_all_layers()
+        worker.wait_for_save()
+        assert not worker.get_transfer_results(set()).finished_recving
         torch.cuda.synchronize()
         assert torch.equal(kv[8:12], expected[0][1:5])
         assert torch.equal(swa[12:14], expected[1][3:5])
@@ -193,12 +190,12 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(channel
     torch = pytest.importorskip("torch")
     from orbitkv import BlockHashes, CacheManagerClient, QueryReady
     from orbitkv.vllm.metadata import OrbitKVConnectorMetadata, SaveIntent
-    from orbitkv.vllm.worker import WorkerConnector
+    from orbitkv.vllm.worker import WorkerAdapter
 
     client = CacheManagerClient(channel_server.bootstrap_socket)
     identity = f"producer-{uuid.uuid4().hex}"
     client.start_session_watcher(identity, identity, 1, 1)
-    worker = WorkerConnector(context(client, instance_id=identity, namespace=identity))
+    worker = WorkerAdapter(context(client, instance_id=identity, namespace=identity))
     kv = torch.zeros((2, 8, 16, 1, 32), device="cuda", dtype=torch.float32)
     producer, unrelated = torch.cuda.Stream(), torch.cuda.Stream()
     unrelated_done = torch.cuda.Event()
@@ -235,7 +232,7 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(channel
         assert submitted.wait(10), "the save worker never submitted Publish"
         worker._save_queue.join()
         assert overlapped == [True], "Publish waited for unrelated GPU work"
-        assert worker.get_finished({"save"})[0] == {"save"}
+        assert worker.get_transfer_results({"save"}).finished_sending == {"save"}
         deadline = time.monotonic() + 10
         while True:
             ready = client.query_prefetch(identity, hashes, "restore")
@@ -283,7 +280,7 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(channel
 def test_native_contract_gates_vllm_hits(attention, positions, tokens, expected):
     cache_config = config()
     from orbitkv import QueryCandidates, QueryReady
-    from orbitkv.vllm.scheduler import SchedulerConnector
+    from orbitkv.vllm.scheduler import SchedulerAdapter
 
     client = MagicMock()
     client.query_candidates.side_effect = [
@@ -295,7 +292,7 @@ def test_native_contract_gates_vllm_hits(attention, positions, tokens, expected)
         if args[-1] == 0
         else QueryReady(1, b"state", [(args[6] - args[5]) // 16 - 1])
     )
-    scheduler = SchedulerConnector(context(client), kv_cache_config=cache_config)
+    scheduler = SchedulerAdapter(context(client), kv_cache_config=cache_config)
     try:
         req = SimpleNamespace(
             request_id="r",
@@ -303,7 +300,7 @@ def test_native_contract_gates_vllm_hits(attention, positions, tokens, expected)
             shared_prefix_boundary=0,
             block_hashes=[bytes([index]) for index in range(tokens // 16)],
         )
-        assert scheduler.get_num_new_matched_tokens(req, 64) == (expected, expected > 0)
+        assert scheduler.get_num_new_matched_tokens(req, 64) == (expected, False)
     finally:
         scheduler.shutdown()
 
@@ -312,14 +309,14 @@ def test_native_contract_gates_vllm_hits(attention, positions, tokens, expected)
 def test_native_contract_rejects_duplicate_or_unordered_evidence(positions):
     cache_config = config()
     from orbitkv import QueryCandidates
-    from orbitkv.vllm.scheduler import SchedulerConnector
+    from orbitkv.vllm.scheduler import SchedulerAdapter
 
     client = MagicMock()
     client.query_candidates.side_effect = [
         QueryCandidates([0, 1, 2, 3]),
         QueryCandidates(positions),
     ]
-    scheduler = SchedulerConnector(context(client), kv_cache_config=cache_config)
+    scheduler = SchedulerAdapter(context(client), kv_cache_config=cache_config)
     req = SimpleNamespace(
         request_id="r",
         num_tokens=129,
@@ -343,16 +340,16 @@ def test_complete_checkpoint_restores_through_vllm_worker(channel_server):
     cache_config = config()
     from orbitkv import CacheManagerClient
     from orbitkv.vllm.metadata import OrbitKVConnectorMetadata
-    from orbitkv.vllm.scheduler import SchedulerConnector
-    from orbitkv.vllm.worker import WorkerConnector
+    from orbitkv.vllm.scheduler import SchedulerAdapter
+    from orbitkv.vllm.worker import WorkerAdapter
     from tests.support.metrics import fetch_orbitkv_metrics
 
     client = CacheManagerClient(channel_server.bootstrap_socket)
     identity = f"recovery-{uuid.uuid4().hex}"
     ctx = context(client, instance_id=identity, namespace=identity)
     client.start_session_watcher(identity, identity, 1, 1)
-    scheduler = SchedulerConnector(ctx, kv_cache_config=cache_config)
-    worker = WorkerConnector(ctx, kv_cache_config=cache_config)
+    scheduler = SchedulerAdapter(ctx, kv_cache_config=cache_config)
+    worker = WorkerAdapter(ctx, kv_cache_config=cache_config)
     kv = torch.arange(16 * 2 * 16 * 32, device="cuda", dtype=torch.float32).reshape(
         16, 2, 16, 1, 32
     )
@@ -425,7 +422,7 @@ def test_complete_checkpoint_restores_through_vllm_worker(channel_server):
         while (result := scheduler.get_num_new_matched_tokens(req, 64))[0] is None:
             assert time.monotonic() < deadline
             time.sleep(0.01)
-        assert result == (32, True)
+        assert result == (32, False)
         probe = scheduler._pending_query_probes["restore"]
         assert probe.selected_boundary == 96
         assert probe.leased_blocks == 2
@@ -444,17 +441,16 @@ def test_complete_checkpoint_restores_through_vllm_worker(channel_server):
         torch.cuda.synchronize()
         worker.start_load_kv(
             OrbitKVConnectorMetadata(load_intents=scheduler._pending_load_intents),
-            SimpleNamespace(no_compile_layers={}),
         )
-        while worker.get_finished(set())[1] != {"restore"}:
-            assert time.monotonic() < deadline
-            time.sleep(0.01)
+        worker.wait_for_all_layers()
+        worker.wait_for_save()
+        assert not worker.get_transfer_results(set()).finished_recving
         torch.cuda.synchronize()
         assert torch.equal(kv[8:10], expected_kv[1:3])
         assert torch.equal(state[9], expected_state[1])  # Both conv and temporal tensors.
         assert (kv[10:12] == -1).all()  # Extra leased pages have no destination.
         assert (state[[8, 10, 11]] == -1).all()
-        assert not worker._pending_loads
+        assert worker._restore is None
         metrics = fetch_orbitkv_metrics(channel_server.http_port)
         assert metrics["orbitkv_cache_candidate_hits_total"] == 6
         assert metrics["orbitkv_cache_candidate_misses_total"] == 10

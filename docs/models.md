@@ -1,13 +1,23 @@
 # Model qualification
 
+The current official vLLM 0.30.0 adapter supports V1 with one attention cache
+group (`VLLM_USE_V2_MODEL_RUNNER=0`). Multi-group/recurrent serving is rejected;
+historical hybrid evidence below does not reopen that profile. Shared recovery
+contracts and SGLang component work remain available with their stated limits.
+See [the released interface audit](engine-release-audit.md).
+
 OrbitKV qualifies a checkpoint, engine release, cache format and execution
 path together. A model family name or an engine's ability to load weights is
 not evidence that OrbitKV can restore every state it needs.
 
-The current engine baselines are **vLLM 0.29.0** and **SGLang 0.5.20**. Engines
+The current engine pins are **vLLM 0.30.0** and **SGLang 0.5.20**. Engines
 own GPU allocation; OrbitKV restores registered attention pages and sealed
 checkpoints through the [compiled recovery contract](hybrid-recovery.md).
 See [deployment patterns](deployment.md) for topology limits.
+
+The historical model tables below use vLLM 0.29.0 and SGLang 0.5.20. Their
+results do not automatically qualify 0.30.0; see the [upgrade gates](completion-plan.md#s51--release-and-interface-audit)
+for the new release's measured scope.
 
 Engine-native FP8 KV is qualified separately from FP8 weights. See
 [KV precision and SSD compression](storage-formats.md) for format boundaries,

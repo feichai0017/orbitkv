@@ -1,6 +1,6 @@
 # vLLM request and cache lifetimes
 
-This describes the vLLM 0.29.0 adapter and the current Cache Manager protocol.
+This describes the vLLM 0.30.0 adapter and the current Cache Manager protocol.
 The engine owns request scheduling and GPU block allocation. OrbitKV owns
 external preparation, ready leases and copy completion; those lifetimes do not
 end just because a request is cancelled or a scheduler lookup is repeated.
@@ -9,7 +9,7 @@ The relevant code is the
 [adapter scheduler](../python/orbitkv/vllm/scheduler.py),
 [worker](../python/orbitkv/vllm/worker.py),
 [Rust manager client](../crates/orbitkv-channel/src/cache_client.rs) and
-[vLLM V1 scheduler](https://github.com/vllm-project/vllm/blob/v0.29.0/vllm/v1/core/sched/scheduler.py).
+[vLLM V1 scheduler](https://github.com/vllm-project/vllm/blob/ced6857afa0ea7b2e3f0846a62e1394e90f15607/vllm/v1/core/sched/scheduler.py).
 
 ## Scheduler admission
 

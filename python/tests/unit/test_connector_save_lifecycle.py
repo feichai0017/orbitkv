@@ -10,9 +10,13 @@ from tests.support.unit_stubs import install_connector_unit_stubs
 
 install_connector_unit_stubs()
 
+from vllm.distributed.kv_transfer.kv_connector.v1.base import (  # noqa: E402
+    KVConnectorTransferResults,
+)
+
 from orbitkv.vllm.config import ConnectorContext  # noqa: E402
 from orbitkv.vllm.metadata import OrbitKVConnectorMetadata, SaveIntent  # noqa: E402
-from orbitkv.vllm.worker import WorkerConnector  # noqa: E402
+from orbitkv.vllm.worker import WorkerAdapter  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -21,7 +25,7 @@ def producer_events():
         yield
 
 
-def make_worker() -> WorkerConnector:
+def make_worker() -> WorkerAdapter:
     context = ConnectorContext(
         instance_id="test",
         namespace="test",
@@ -31,10 +35,9 @@ def make_worker() -> WorkerConnector:
         tp_rank=0,
         device_id=0,
         client=MagicMock(),
-        state_manager=MagicMock(),
     )
     with patch("orbitkv.vllm.worker.threading.Thread.start"):
-        return WorkerConnector(
+        return WorkerAdapter(
             context,
             vllm_config=SimpleNamespace(
                 model_config=SimpleNamespace(get_head_size=lambda: 128), additional_config={}
@@ -43,7 +46,7 @@ def make_worker() -> WorkerConnector:
 
 
 def enqueue_save(
-    worker: WorkerConnector,
+    worker: WorkerAdapter,
     block_id: int = 1,
     block_hash: bytes = b"hash",
 ) -> threading.Event:
@@ -59,12 +62,12 @@ def enqueue_save(
     return worker._save_completion_events["request"]
 
 
-def complete_next_save(worker: WorkerConnector) -> None:
+def complete_next_save(worker: WorkerAdapter) -> None:
     task = worker._save_queue.get_nowait()
     worker._complete_save_requests(task.request_ids)
 
 
-def process_next_save(worker: WorkerConnector) -> None:
+def process_next_save(worker: WorkerAdapter) -> None:
     task = worker._save_queue.get_nowait()
     worker._process_save_batch([task])
 
@@ -115,7 +118,7 @@ def test_blocks_are_not_reused_until_every_save_task_completes():
     enqueue_save(worker, 2, b"second hash")
     process_next_save(worker)
 
-    finished_sending, _ = worker.get_finished({"request"})
+    finished_sending = worker.get_transfer_results({"request"}).finished_sending
     if finished_sending:
         gpu_blocks[2] = b"reused by another request"
 
@@ -134,13 +137,13 @@ def test_later_save_reopens_completed_request():
     second_completion = enqueue_save(worker)
 
     assert not second_completion.is_set()
-    finished_sending, _ = worker.get_finished({"request"})
-    assert finished_sending is None
+    finished_sending = worker.get_transfer_results({"request"}).finished_sending
+    assert not finished_sending
 
     complete_next_save(worker)
 
     assert second_completion.is_set()
-    finished_sending, _ = worker.get_finished({"request"})
+    finished_sending = worker.get_transfer_results({"request"}).finished_sending
     assert finished_sending == {"request"}
 
 
@@ -184,7 +187,7 @@ def test_boundary_state_saves_run_async_and_report_job_completion():
     assert meta.completed_boundary_jobs == {7: 1}
     assert worker.build_connector_worker_meta() is None
     # Boundary jobs are not requests: no finished_sending entry.
-    assert worker.get_finished(set()) == (None, None)
+    assert worker.get_transfer_results(set()) == KVConnectorTransferResults()
 
 
 def test_boundary_state_saves_require_hma():
@@ -216,7 +219,7 @@ def test_hma_request_saves_run_async():
 
     process_next_save(worker)
     worker._ctx.client.save.assert_called_once()
-    finished_sending, _ = worker.get_finished({"request"})
+    finished_sending = worker.get_transfer_results({"request"}).finished_sending
     assert finished_sending == {"request"}
 
 
@@ -291,7 +294,7 @@ def test_malformed_save_intent_is_skipped_and_still_completes():
 
     (_, _, _, _, saves), _ = worker._ctx.client.save.call_args
     assert saves == [("layer", [2], [b"h2"])]
-    finished_sending, _ = worker.get_finished({"torn", "good"})
+    finished_sending = worker.get_transfer_results({"torn", "good"}).finished_sending
     assert finished_sending == {"torn", "good"}
 
 
@@ -309,7 +312,7 @@ def test_save_worker_survives_a_failing_batch():
         save.assert_not_called()
 
     assert completion.is_set()
-    finished_sending, _ = worker.get_finished({"request"})
+    finished_sending = worker.get_transfer_results({"request"}).finished_sending
     assert finished_sending == {"request"}
 
 

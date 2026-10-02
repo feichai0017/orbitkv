@@ -1,8 +1,10 @@
-"""SGLang P/D correctness through OrbitKV's Rust/TENT payload engine."""
+"""Official SGLang native P/D composed with the external OrbitKV cache."""
 
 from __future__ import annotations
 
+import concurrent.futures
 import contextlib
+import json
 import os
 import signal
 import subprocess
@@ -20,16 +22,21 @@ from tests.support.paths import PYTHON_ROOT
 pytestmark = [pytest.mark.e2e, pytest.mark.gpu]
 
 
-def test_sglang_pd_tent_and_external_cache_match_monolithic(request, tmp_path):
+@pytest.mark.parametrize("channel_server", [{"tier": "dram", "pool_size": "512mb"}], indirect=True)
+def test_sglang_native_pd_and_external_cache_match_monolithic(channel_server, request, tmp_path):
     pytest.importorskip("sglang")
     torch = pytest.importorskip("torch")
-    if torch.cuda.device_count() < 2:
-        pytest.skip("SGLang P/D qualification requires two visible GPUs")
+    device_count = torch.cuda.device_count()
+    if device_count < 1:
+        pytest.skip("SGLang P/D requires a visible GPU")
+    decode_device = 1 if device_count > 1 else 0
+    request.node.user_properties.append(
+        ("pd_topology", "two-gpu-tcp" if decode_device else "same-gpu-tcp")
+    )
 
     model = Path(request.config.getoption("--model"))
     if not model.exists():
         pytest.skip("pass --model with a local model path")
-    channel_server = request.getfixturevalue("channel_server")
 
     plugin_dir = tmp_path / "orbitkv_source_plugin-0.0.dist-info"
     plugin_dir.mkdir()
@@ -42,10 +49,12 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(request, tmp_path):
     env["PYTHONPATH"] = os.pathsep.join(
         [str(PYTHON_ROOT), str(tmp_path), env.get("PYTHONPATH", "")]
     )
-    env["ORBITKV_SGLANG_TENT"] = "1"
+    env["SGLANG_PLUGINS"] = "orbitkv"
     env["ORBITKV_SGLANG_ENDPOINT"] = f"unix://{channel_server.bootstrap_socket}"
     env["ORBITKV_TRANSFER_BACKEND"] = request.config.getoption("--orbitkv-transfer-backend")
     env["MC_FORCE_TCP"] = "1"
+    env["SGLANG_DISAGGREGATION_DEFERRED_DECODE_KV_RELEASE"] = "1"
+    env["SGLANG_DISAGGREGATION_DEFERRED_DECODE_KV_RELEASE_TIMEOUT"] = "30"
 
     logs = {
         "prefill": tmp_path / "sglang-pd-prefill.log",
@@ -54,6 +63,7 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(request, tmp_path):
         "monolithic": tmp_path / "sglang-monolithic.log",
     }
     processes: list[subprocess.Popen] = []
+    serving_ports: dict[str, int] = {}
 
     common = [
         sys.executable,
@@ -78,6 +88,9 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(request, tmp_path):
         "--page-size",
         "64",
         "--enable-cache-report",
+        "--disable-cuda-graph",
+        "--mem-fraction-static",
+        "0.8",
     ]
 
     def launch(
@@ -127,6 +140,7 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(request, tmp_path):
     def start_pd() -> int:
         prefill_port = find_available_port()
         decode_port = find_available_port()
+        serving_ports["decode"] = decode_port
         router_port = find_available_port()
         bootstrap_port = find_available_port()
         pd_args = [
@@ -162,7 +176,7 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(request, tmp_path):
                 "--nccl-port",
                 str(find_available_port()),
                 "--base-gpu-id",
-                "1",
+                str(decode_device),
                 "--disaggregation-mode",
                 "decode",
                 "--disaggregation-decode-enable-radix-cache",
@@ -219,7 +233,7 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(request, tmp_path):
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(model, local_files_only=True, trust_remote_code=True)
-    fragment = tokenizer.encode("A TENT P/D cache composition correctness sequence. ")
+    fragment = tokenizer.encode("A native P/D cache composition correctness sequence. ")
     prompt_tokens = (fragment * (513 // len(fragment) + 1))[:513]
     first_payload = {
         "input_ids": prompt_tokens,
@@ -235,13 +249,68 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(request, tmp_path):
             "orbitkv_save_bytes_total", 0
         )
         router_port = start_pd()
-        first = request_generation(router_port, first_payload)
+
+        decode_url = f"http://127.0.0.1:{serving_ports['decode']}"
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as caller:
+            cancelled = caller.submit(
+                request_generation,
+                router_port,
+                {
+                    **first_payload,
+                    "rid": "native-cancel",
+                    "sampling_params": {
+                        **first_payload["sampling_params"],
+                        "max_new_tokens": 512,
+                    },
+                },
+            )
+            deadline = time.monotonic() + 30
+            while True:
+                response = requests.get(decode_url + "/v1/loads?include=core", timeout=5)
+                response.raise_for_status()
+                if any(load["num_running_reqs"] for load in response.json()["loads"]):
+                    break
+                assert not cancelled.done(), "generation finished before cancellation"
+                assert time.monotonic() < deadline, "decode never admitted the cancellation case"
+                time.sleep(0.02)
+            response = requests.post(
+                decode_url + "/abort_request", json={"abort_all": True}, timeout=5
+            )
+            response.raise_for_status()
+            cancellation = cancelled.result(timeout=30)
+            assert cancellation["meta_info"]["finish_reason"]["type"] == "abort", cancellation
+            (tmp_path / "cancelled.json").write_text(json.dumps(cancellation, indent=2))
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as caller:
+            pending = caller.submit(request_generation, router_port, first_payload)
+            deadline = time.monotonic() + 30
+            while True:
+                response = requests.get(decode_url + "/v1/loads?include=core", timeout=5)
+                response.raise_for_status()
+                if any(load["num_running_reqs"] for load in response.json()["loads"]):
+                    break
+                assert not pending.done(), "generation finished before native retraction"
+                assert time.monotonic() < deadline, "decode request never became running"
+                time.sleep(0.02)
+            try:
+                response = requests.post(
+                    decode_url + "/pause_generation", json={"mode": "retract"}, timeout=15
+                )
+                response.raise_for_status()
+                assert not pending.done(), "retracted request completed while paused"
+            finally:
+                response = requests.post(decode_url + "/continue_generation", json={}, timeout=15)
+                response.raise_for_status()
+            first = pending.result(timeout=60)
         output_ids = first["output_ids"]
         assert len(output_ids) == 64
+        assert first["meta_info"]["num_retractions"] > 0, first
         wait_for_saved_bytes(save_before)
+        (tmp_path / "first-output.json").write_text(json.dumps(first, indent=2))
+        (tmp_path / "after-first-metrics.json").write_text(
+            json.dumps(fetch_orbitkv_metrics(channel_server.http_port), indent=2)
+        )
 
-        for name in ("prefill", "decode"):
-            assert "SGLang P/D TENT ready:" in logs[name].read_text()
         stop_all()
 
         before_restart = fetch_orbitkv_metrics(channel_server.http_port)
@@ -260,8 +329,19 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(request, tmp_path):
 
         router_port = start_pd()
         follow = request_generation(router_port, follow_payload)
-        assert follow["meta_info"]["cached_tokens"] >= decode_boundary, follow
         after_restart = fetch_orbitkv_metrics(channel_server.http_port)
+        (tmp_path / "restart-evidence.json").write_text(
+            json.dumps(
+                {
+                    "before": before_restart,
+                    "after": after_restart,
+                    "output": follow,
+                    "required_cache_boundary": decode_boundary,
+                },
+                indent=2,
+            )
+        )
+        assert follow["meta_info"]["cached_tokens"] >= decode_boundary, follow
         assert after_restart.get("orbitkv_load_bytes_total", 0) > before_restart.get(
             "orbitkv_load_bytes_total", 0
         )
@@ -269,7 +349,6 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(request, tmp_path):
 
         monolithic_port = find_available_port()
         monolithic_env = dict(env)
-        monolithic_env.pop("ORBITKV_SGLANG_TENT")
         monolithic = launch(
             "monolithic",
             common

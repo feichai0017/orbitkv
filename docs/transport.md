@@ -342,11 +342,9 @@ bytes before transfer. Fixed shards and owner replay are implemented; directory 
 
 - current demand-driven remote cache reuse uses Mooncake READ into destination
   pinned memory before restoring into framework HBM;
-- the experimental vLLM P/D connector uses Mooncake WRITE into the decode
-  worker's allocated GPU pages and waits for completion notification;
-- the SGLang `0.5.20` P/D adapter retains SGLang's native bootstrap and room
-  state machine but replaces its payload engine with OrbitKV's Rust TENT owner;
-  the upstream `mooncake` CLI key is only a dispatch name in this mode;
+- vLLM live P/D uses the official NIXL connector and its native ownership;
+- SGLang live P/D uses the official disaggregation backend. OrbitKV's external
+  linker is independent and disables historical restores on D;
 - proactive replica placement, retry across replicas, and bundle-aware
   publication are planning targets, not current guarantees.
 

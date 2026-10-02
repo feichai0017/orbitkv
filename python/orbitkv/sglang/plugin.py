@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -12,53 +13,13 @@ def register() -> None:
     from sglang.srt.mem_cache.registry import register_radix_cache_backend
     from sglang.srt.plugins.hook_registry import HookRegistry, HookType
 
-    from .admission import abort_request, admit_request, enqueue_request
-    from .completion import (
-        capture_decode_pages,
-        capture_handoff_admission,
-        mark_decode_abort,
-        observe_decode_failure,
-        observe_decode_ready,
-        observe_deferred_release,
-    )
-    from .linker import initialize_layer_counter
-    from .pd import install_sglang_tent_backend
+    from .admission import admit_request, enqueue_request
+    from .events import initialize_layer_counter
 
-    install_sglang_tent_backend()
     HookRegistry.register(
         "sglang.srt.managers.tp_worker.TpModelWorker.init_cuda_graphs",
         initialize_layer_counter,
         HookType.BEFORE,
-    )
-    HookRegistry.register(
-        "sglang.srt.disaggregation.mooncake.conn.MooncakeKVReceiver.send_metadata",
-        capture_decode_pages,
-        HookType.AFTER,
-    )
-    HookRegistry.register(
-        "sglang.srt.disaggregation.decode.DecodeTransferQueue.add",
-        capture_handoff_admission,
-        HookType.AFTER,
-    )
-    HookRegistry.register(
-        "sglang.srt.disaggregation.decode.DecodeTransferQueue._commit_transfer_to_req",
-        observe_decode_ready,
-        HookType.AROUND,
-    )
-    HookRegistry.register(
-        "sglang.srt.disaggregation.mooncake.conn.MooncakeKVReceiver.abort",
-        mark_decode_abort,
-        HookType.AFTER,
-    )
-    HookRegistry.register(
-        "sglang.srt.disaggregation.mooncake.conn.MooncakeKVReceiver.failure_exception",
-        observe_decode_failure,
-        HookType.AROUND,
-    )
-    HookRegistry.register(
-        "sglang.srt.disaggregation.decode.DecodeTransferQueue._do_release",
-        observe_deferred_release,
-        HookType.AROUND,
     )
     register_radix_cache_backend("orbitkv", create_cache)
     HookRegistry.register(
@@ -66,16 +27,12 @@ def register() -> None:
         admit_request,
         HookType.AROUND,
     )
-    HookRegistry.register(
-        "sglang.srt.managers.scheduler.Scheduler._add_request_to_queue",
-        enqueue_request,
-        HookType.AROUND,
-    )
-    HookRegistry.register(
-        "sglang.srt.managers.scheduler.Scheduler._release_aborted_request",
-        abort_request,
-        HookType.AROUND,
-    )
+    if any(os.getenv(name) == "1" for name in ("ORBITKV_PREPARE_REQUESTS", "ORBITKV_QUEUE_WARMUP")):
+        HookRegistry.register(
+            "sglang.srt.managers.scheduler.Scheduler._add_request_to_queue",
+            enqueue_request,
+            HookType.AROUND,
+        )
 
 
 def create_cache(ctx: Any) -> UnifiedRadixCache:
@@ -83,8 +40,6 @@ def create_cache(ctx: Any) -> UnifiedRadixCache:
     from sglang.srt.mem_cache.unified_cache.components import ComponentType
     from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
     from sglang.srt.runtime_context import get_disagg, get_memory
-
-    from .pd import validate_pd_cache_transport
 
     if ctx.disable_radix_cache:
         raise ValueError("OrbitKV direct GPU linker requires RadixCache")
@@ -102,10 +57,6 @@ def create_cache(ctx: Any) -> UnifiedRadixCache:
             "select a backend with a complete recovery contract for that model"
         )
     disaggregation = get_disagg()
-    validate_pd_cache_transport(
-        disaggregation.disaggregation_mode,
-        disaggregation.disaggregation_transfer_backend,
-    )
     if not get_memory().enable_unified_cache_external_linker:
         raise ValueError(
             "OrbitKV direct GPU linker requires --enable-unified-cache-external-linker "

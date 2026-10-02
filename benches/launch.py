@@ -40,6 +40,8 @@ class Launch:
 def configure(args: Namespace, bytes_per_token: int) -> Launch:
     env = dict(os.environ)
     env.update(PYTHONHASHSEED="0", VLLM_LOG_STATS_INTERVAL="1")
+    if args.engine == "vllm":
+        env.setdefault("VLLM_USE_V2_MODEL_RUNNER", "0")
     env.pop("VLLM_BATCH_INVARIANT", None)
     if args.engine == "vllm" and args.deterministic_inference:
         env["VLLM_BATCH_INVARIANT"] = "1"

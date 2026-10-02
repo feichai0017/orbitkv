@@ -113,7 +113,7 @@ tokens never become a claimed exact cache hit.
 
 ## Engine signals and their present limits
 
-vLLM 0.29.0 has a useful readiness contract:
+vLLM 0.30.0 has a useful readiness contract:
 `get_num_new_matched_tokens` may return `None`, asking the scheduler to retry.
 OrbitKV already uses this for `QueryLoading`. `update_state_after_alloc` then
 supplies valid destination pages. Publication and preemption callbacks supply

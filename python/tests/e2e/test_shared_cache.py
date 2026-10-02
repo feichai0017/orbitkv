@@ -4,14 +4,17 @@ Trigger: peer transfer, global-index recovery, source ownership or adapter chang
 Requires ETCD_BIN, a prebuilt Manager, one GPU and the selected engine environment.
 """
 
+import base64
 import contextlib
 import json
 import os
 import random
+import time
 from argparse import Namespace
 from pathlib import Path
 
 import pytest
+import requests
 
 from tests.support.cluster import etcd_server
 
@@ -46,6 +49,8 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
     with contextlib.ExitStack() as resources:
         endpoint, _ = resources.enter_context(etcd_server(tmp_path))
         launches, managers, engines = {}, {}, {}
+        registrations, membership_history, manager_processes = {}, [], {}
+        cluster = "shared-cache-serving"
         starts = {"source": 0, "consumer": 0}
         engine_starts = {"source": 0, "consumer": 0}
         for node in starts:
@@ -83,6 +88,8 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
                     endpoint,
                     "--node-id",
                     node,
+                    "--cluster-name",
+                    cluster,
                     "--membership-ttl-secs",
                     "12",
                 ]
@@ -99,7 +106,30 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
             launch = launches[node]
             run = starts[node]
             starts[node] += 1
-            managers[node].enter_context(
+            member_key = f"/orbitkv/v2/{cluster}/members/{node}".encode()
+
+            def read_member():
+                response = requests.post(
+                    endpoint + "/v3/kv/range",
+                    json={"key": base64.b64encode(member_key).decode()},
+                    timeout=2,
+                )
+                response.raise_for_status()
+                rows = response.json().get("kvs", [])
+                assert len(rows) <= 1, rows
+                return json.loads(base64.b64decode(rows[0]["value"])) if rows else None
+
+            previous = registrations.get(node)
+            started = time.monotonic()
+            if previous is not None:
+                deadline = started + 45
+                while read_member() is not None:
+                    assert time.monotonic() < deadline, f"old membership did not expire: {node}"
+                    time.sleep(0.1)
+            else:
+                assert read_member() is None, f"unexpected existing member: {node}"
+            expiry_seconds = time.monotonic() - started
+            manager_processes[node] = managers[node].enter_context(
                 server(
                     launch.manager_command,
                     launch.env,
@@ -107,8 +137,36 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
                     tmp_path / f"{node}-manager-{run}.log",
                 )
             )
+            current = read_member()
+            assert current is not None and current["node_id"] == node, current
+            if previous is not None:
+                assert current["epoch"] > previous["epoch"], (previous, current)
+                assert current["owner"]["incarnation"] != previous["owner"]["incarnation"], (
+                    previous,
+                    current,
+                )
+            registrations[node] = current
+            membership_history.append(
+                {
+                    "node": node,
+                    "run": run,
+                    "previous": previous,
+                    "current": current,
+                    "old_membership_absent_before_start": True,
+                    "expiry_wait_seconds": expiry_seconds,
+                }
+            )
+            (tmp_path / "membership-lifecycle.json").write_text(
+                json.dumps(membership_history, indent=2) + "\n"
+            )
             if with_engine:
                 start_engine(node)
+
+        def stop_manager(node):
+            process = manager_processes[node]
+            process.terminate()
+            assert process.wait(timeout=10) == 0, f"Manager did not exit cleanly: {node}"
+            managers[node].close()
 
         def start_engine(node):
             launch = launches[node]
@@ -140,9 +198,9 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
         expected = generate(source.base_url, engine, str(model), prompts[0], 8)["text"]
         drain(source.manager_url, target.manager_url)
 
-        # Restart the consumer and rebuild its complete index from etcd. Source KV survives.
+        # Restart the consumer; rebuild from membership and owner streams. Source KV survives.
         engines["consumer"].close()
-        managers["consumer"].close()
+        stop_manager("consumer")
         start("consumer")
         synchronize(source.manager_url, target.manager_url)
         before = metrics(target.manager_url)
@@ -156,7 +214,7 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
         evict_host_cache(target.manager_url)
         synchronize(target.manager_url, source.manager_url)
         engines["source"].close()
-        managers["source"].close()
+        stop_manager("source")
         start("source", with_engine=False)
         start_engine("consumer")
         before = metrics(target.manager_url)

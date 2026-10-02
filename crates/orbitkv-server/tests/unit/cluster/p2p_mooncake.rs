@@ -286,7 +286,6 @@ async fn restore_cached_image(
     request_id: &str,
     layer: &str,
     block_hashes: &[Vec<u8>],
-    block_ids: &[usize],
     expected: &[u8],
 ) {
     gpu.zero();
@@ -309,7 +308,7 @@ async fn restore_cached_image(
             0,
             DEVICE_ID,
             &[vec![layer]],
-            &[(lease, vec![block_ids.iter().copied().map(Some).collect()])],
+            &[(lease, vec![(0..block_hashes.len()).map(Some).collect()])],
         )
         .expect("restore local cache image");
     restore_and_wait(engine, gpu, layer, block_hashes.len(), receiver).await;
@@ -1081,7 +1080,6 @@ async fn live_dram_journal_overflow_rebuilds_and_local_payload_survives_metadata
         "partition-local-restore",
         LAYER,
         &final_hashes,
-        &block_ids,
         &expected,
     )
     .await;
@@ -1136,7 +1134,6 @@ async fn live_dram_journal_overflow_rebuilds_and_local_payload_survives_metadata
         "expired-membership-local-restore",
         LAYER,
         &final_hashes,
-        &block_ids,
         &expected,
     )
     .await;

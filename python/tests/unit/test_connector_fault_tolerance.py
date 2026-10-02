@@ -16,7 +16,7 @@ from vllm.v1.kv_cache_interface import FullAttentionSpec  # noqa: E402
 from orbitkv import RestoreStatus  # noqa: E402
 from orbitkv.vllm.config import ConnectorContext  # noqa: E402
 from orbitkv.vllm.metadata import LoadIntent, OrbitKVConnectorMetadata  # noqa: E402
-from orbitkv.vllm.worker import WorkerConnector  # noqa: E402
+from orbitkv.vllm.worker import WorkerAdapter  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -30,7 +30,7 @@ def current_cuda_stream(monkeypatch):
 class FakeEngineClient:
     """Minimal Cache Manager client for restore and lifecycle tests.
 
-    Only implements what WorkerConnector touches in the load path. Save path is
+    Only implements what WorkerAdapter touches in the load path. Save path is
     not exercised here since these tests are focused on load fault tolerance.
     """
 
@@ -102,10 +102,8 @@ def _make_worker(
     kv_cache_config=None,
     vllm_config=None,
     **ctx_kwargs,
-) -> tuple[WorkerConnector, FakeEngineClient, MagicMock]:
+) -> tuple[WorkerAdapter, FakeEngineClient]:
     client = FakeEngineClient()
-    state_manager = MagicMock()
-    state_manager.is_available.return_value = True
     defaults = {
         "instance_id": "test_instance",
         "namespace": "ns",
@@ -115,13 +113,12 @@ def _make_worker(
         "tp_rank": 0,
         "device_id": 0,
         "client": client,
-        "state_manager": state_manager,
         "pp_rank": pp_rank,
         "pp_size": pp_size,
     }
     defaults.update(ctx_kwargs)
     ctx = ConnectorContext(**defaults)
-    worker = WorkerConnector(
+    worker = WorkerAdapter(
         ctx,
         vllm_config=vllm_config,
         kv_cache_config=kv_cache_config,
@@ -129,7 +126,7 @@ def _make_worker(
     worker._cross_layer_mode = True
     worker._cross_layer_key = "ALL_LAYERS"
     worker._layer_events = {"ALL_LAYERS": object()}
-    return worker, client, state_manager
+    return worker, client
 
 
 def _single_attention_cache_group(*layer_names: str) -> MagicMock:
@@ -150,7 +147,7 @@ def _load_metadata(req_id: str, block_ids: tuple[int, ...]) -> OrbitKVConnectorM
     )
 
 
-def _configure_hma_worker(worker: WorkerConnector) -> None:
+def _configure_hma_worker(worker: WorkerAdapter) -> None:
     worker._cross_layer_mode = False
     worker._cache_groups = MagicMock(group_count=2, has_recurrent_state=True)
     worker._registered_layers = ["attention", "recurrent"]
@@ -176,7 +173,7 @@ def _hma_load_metadata(req_id: str) -> OrbitKVConnectorMetadata:
     "error", [ConnectionError("lost acknowledgement"), RuntimeError("rejected")]
 )
 def test_restore_submission_failure_does_not_release_destinations(hybrid, error):
-    worker, client, state_mgr = _make_worker()
+    worker, client = _make_worker()
     if hybrid:
         _configure_hma_worker(worker)
         metadata = _hma_load_metadata("submit")
@@ -188,14 +185,13 @@ def test_restore_submission_failure_does_not_release_destinations(hybrid, error)
         with pytest.raises(RuntimeError, match="GPU pages remain held"):
             worker.start_load_kv(metadata)
         assert client.release_calls == []
-        assert worker.get_finished(set())[1] is None
-        assert state_mgr.mark_unavailable.called
+        assert worker.get_transfer_results(set()).finished_recving == set()
     finally:
         worker.shutdown()
 
 
 def test_hma_load_distinguishes_block_zero_from_absent_recurrent_target():
-    worker, client, _state_mgr = _make_worker()
+    worker, client = _make_worker()
     _configure_hma_worker(worker)
     metadata = OrbitKVConnectorMetadata(
         load_intents={
@@ -217,7 +213,7 @@ def test_hma_load_distinguishes_block_zero_from_absent_recurrent_target():
 @pytest.mark.parametrize("stage", ["enqueue", "drain"])
 @pytest.mark.parametrize("error", [TimeoutError("deadline"), ConnectionError("lost completion")])
 def test_restore_failure_after_admission_keeps_destinations(hybrid, stage, error):
-    worker, client, state_mgr = _make_worker()
+    worker, client = _make_worker()
     if hybrid:
         _configure_hma_worker(worker)
         metadata = _hma_load_metadata("pending")
@@ -230,16 +226,15 @@ def test_restore_failure_after_admission_keeps_destinations(hybrid, stage, error
             worker.start_load_kv(metadata)
             worker.wait_for_save()
         assert worker._restore is not None
-        assert worker.get_finished(set())[1] is None
+        assert worker.get_transfer_results(set()).finished_recving == set()
         assert client.release_calls == []
-        assert state_mgr.mark_unavailable.called
     finally:
         worker.shutdown()
 
 
 @pytest.mark.parametrize("hybrid", [False, True])
 def test_confirmed_failure_after_forward_cannot_recompute_consumed_pages(hybrid):
-    worker, client, state_mgr = _make_worker()
+    worker, client = _make_worker()
     if hybrid:
         _configure_hma_worker(worker)
         metadata = _hma_load_metadata("failed")
@@ -253,16 +248,15 @@ def test_confirmed_failure_after_forward_cannot_recompute_consumed_pages(hybrid)
         with pytest.raises(RuntimeError, match="GPU pages remain held"):
             worker.wait_for_save()
         assert worker._restore is not None
-        assert worker.get_finished(set())[1] is None
+        assert worker.get_transfer_results(set()).finished_recving == set()
         assert client.release_calls == []
-        assert state_mgr.mark_unavailable.called
     finally:
         worker.shutdown()
 
 
 def test_load_uses_registered_layer_names():
     """Load must use the same layer names registered with the server."""
-    worker, client, _ = _make_worker()
+    worker, client = _make_worker()
     worker._cross_layer_mode = False
     worker._registered_layers = ["registered.layer.0", "registered.layer.1"]
 
@@ -279,7 +273,7 @@ def test_worker_consumes_restore_completion(monkeypatch):
     restore = SimpleNamespace(key="local:41:9")
     data_client.start_restore.return_value = restore
     data_client.wait_restore.return_value = RestoreStatus(done=True, success=True)
-    worker, _unused_client, _state_manager = _make_worker(client=data_client, device_id=3)
+    worker, _unused_client = _make_worker(client=data_client, device_id=3)
     worker._torch_device = "cuda:0"
     current_stream = MagicMock(return_value=SimpleNamespace(cuda_stream=17, wait_event=MagicMock()))
     monkeypatch.setattr("orbitkv.vllm.worker.torch.cuda.current_stream", current_stream)
@@ -293,7 +287,7 @@ def test_worker_consumes_restore_completion(monkeypatch):
     )
     worker.wait_for_save()
     assert worker._restore is None
-    assert worker.get_finished(set())[1] is None
+    assert worker.get_transfer_results(set()).finished_recving == set()
     data_client.start_restore.assert_called_once_with(
         "test_instance",
         0,
@@ -334,7 +328,7 @@ class FakeCudaIPCWrapper:
 
 
 def test_register_version_mismatch_raises_startup_error(monkeypatch):
-    worker, client, _ = _make_worker()
+    worker, client = _make_worker()
     client.register_response = (
         False,
         "OrbitKV version mismatch: client=0.22.4 server=0.22.5",
@@ -356,7 +350,7 @@ def test_register_version_mismatch_raises_startup_error(monkeypatch):
 
 
 def test_register_non_version_failure_reports_batch_layers(monkeypatch):
-    worker, client, _ = _make_worker()
+    worker, client = _make_worker()
     client.register_response = (False, "invalid tensor metadata")
 
     monkeypatch.setattr("orbitkv.client.gpu.CudaIPCWrapper", FakeCudaIPCWrapper)
@@ -386,7 +380,7 @@ def test_register_kv_caches_ignores_shared_by_without_layer_split_opt_in(monkeyp
     kv_cache_config.kv_cache_tensors = [
         MagicMock(shared_by=("layer.1",)),
     ]
-    worker, client, _ = _make_worker(
+    worker, client = _make_worker(
         kv_cache_config=kv_cache_config,
     )
 
@@ -423,7 +417,7 @@ def test_register_kv_caches_uses_layer_split_shared_by_plan(monkeypatch):
         MagicMock(shared_by=()),
         MagicMock(shared_by=("layer.0",)),
     ]
-    worker, client, _ = _make_worker(
+    worker, client = _make_worker(
         kv_cache_config=kv_cache_config,
         vllm_config=MagicMock(additional_config={"mla_layer_split_kv_cache": True}),
         is_mla=True,
@@ -450,7 +444,7 @@ def test_register_kv_caches_requires_shared_by_layers(monkeypatch):
     kv_cache_config = MagicMock()
     kv_cache_config.kv_cache_groups = [_single_attention_cache_group("layer.0", "layer.1")]
     kv_cache_config.kv_cache_tensors = [MagicMock(shared_by=("layer.1",))]
-    worker, _, _ = _make_worker(
+    worker, _ = _make_worker(
         kv_cache_config=kv_cache_config,
         vllm_config=MagicMock(additional_config={"mla_layer_split_kv_cache": True}),
         is_mla=True,
@@ -465,7 +459,7 @@ def test_register_kv_caches_requires_shared_by_layers(monkeypatch):
 
 
 def test_cross_layer_registration_uses_pp_suffixed_name(monkeypatch):
-    worker, client, _ = _make_worker(pp_rank=1, pp_size=4)
+    worker, client = _make_worker(pp_rank=1, pp_size=4)
 
     monkeypatch.setattr("orbitkv.client.gpu.CudaIPCWrapper", FakeCudaIPCWrapper)
 
@@ -478,7 +472,7 @@ def test_cross_layer_registration_uses_pp_suffixed_name(monkeypatch):
 
 
 def test_register_version_mismatch_rpc_error_stops_startup(monkeypatch):
-    worker, client, _ = _make_worker()
+    worker, client = _make_worker()
     client.register_exception = RuntimeError(
         "register_context_batch RPC failed: status: FailedPrecondition, "
         'message: "OrbitKV version mismatch: client=0.22.4 server=0.22.5"'
@@ -498,7 +492,7 @@ def test_register_version_mismatch_rpc_error_stops_startup(monkeypatch):
 
 
 def test_early_restore_is_not_submitted_twice_by_pre_forward():
-    worker, client, _ = _make_worker()
+    worker, client = _make_worker()
     metadata = _load_metadata("early", (3, 4))
     try:
         worker.start_load_kv(metadata)
@@ -515,7 +509,7 @@ def test_early_restore_is_not_submitted_twice_by_pre_forward():
 
 
 def test_full_graph_waits_on_gpu_and_retains_the_final_drain(monkeypatch):
-    worker, client, _ = _make_worker()
+    worker, client = _make_worker()
     _configure_hma_worker(worker)
     events = []
     stream = SimpleNamespace(cuda_stream=17, wait_event=events.append)

@@ -36,12 +36,13 @@ OrbitKV's compiled recovery requirements do not allocate the engine's pages.
 
 ## P/D
 
-Current vLLM `pd/` owns its handoff state; SGLang `pd.py` supplies payload movement
-under native request states. Trace producer CUDA readiness, authorized decoder
-ranges, TENT completion, rank agreement and the one DecodeReady transition.
-Do not report a WRITE return or a telemetry observation as engine readiness.
-For composition, identify which connector may restore each missing interval;
-verify neither concurrent writes nor double release can occur.
+Official vLLM NIXL/MultiConnector and SGLang native disaggregation own live P/D.
+OrbitKV's cache is independent: P may restore, D saves completed state while
+native P/D owns incoming writes. See `docs/pd.md` for the candidate support gates.
+Trace producer CUDA readiness, authorized decoder ranges, native transfer
+completion, rank agreement and engine readiness. Engine metrics and output
+alone cannot prove remote writes have drained. No fork transport adapter or
+private P/D observation Hook remains in the wheel.
 
 These paths describe the present implementation. Re-audit them against the
 selected release before replacing internal hooks or adopting newer result APIs.

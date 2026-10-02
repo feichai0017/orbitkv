@@ -40,8 +40,7 @@ torch = pytest.importorskip("torch")
 
 from orbitkv.client import CacheManagerClient, QueryReady  # noqa: E402
 from orbitkv.vllm.config import ConnectorContext, detect_mla  # noqa: E402
-from orbitkv.vllm.state_manager import ServiceStateManager  # noqa: E402
-from orbitkv.vllm.worker import WorkerConnector  # noqa: E402
+from orbitkv.vllm.worker import WorkerAdapter  # noqa: E402
 from tests.support.cache_manager import (  # noqa: E402
     CacheManagerProcess,
     find_available_port,
@@ -84,7 +83,7 @@ def _glm51_topology() -> tuple[dict, list[str]]:
 class ReplicaWorker:
     """One simulated TP worker holding GLM-5.1-shaped KV caches on its own GPU.
 
-    Registers through the production ``WorkerConnector.register_kv_caches``
+    Registers through the production ``WorkerAdapter.register_kv_caches``
     path so the RPC carries exactly what vLLM workers send: per-cache CUDA IPC
     handles, the layer names, and the MLA-collapsed
     effective_tp_rank/effective_tp_size.
@@ -125,14 +124,13 @@ class ReplicaWorker:
             tp_rank=tp_rank,
             device_id=tp_rank,
             client=engine_client,
-            state_manager=ServiceStateManager(engine_client),
             is_mla=True,
         )
         # Pin the production contract this repro depends on: MLA collapses the
         # engine-visible TP topology to a single rank.
         assert self.ctx.effective_tp_rank == 0
         assert self.ctx.effective_tp_size == 1
-        self.connector = WorkerConnector(self.ctx)
+        self.connector = WorkerAdapter(self.ctx)
 
     def register(self) -> None:
         self.connector.register_kv_caches(self.kv_caches)

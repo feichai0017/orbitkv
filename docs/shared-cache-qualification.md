@@ -288,6 +288,11 @@ RDMA, NVLink or GPUDirect.
 The repository's model-serving test starts etcd, two Managers and two replicas
 on one GPU. It checks ordinary sharing, a complete index rebuild after restarting
 the consumer, and a clean recomputation after the source restarts without its payload.
+The gate requires each explicitly restarted Manager to exit successfully within
+10 seconds without the cleanup helper's forced-kill fallback. It then observes
+old membership deletion and verifies an increased epoch and changed incarnation
+before testing the new process. This exercises inventory-stream shutdown as well
+as restart fencing. A crash can leave its old registration until lease expiry.
 It runs separately in the pinned vLLM and SGLang environments:
 
 ```bash

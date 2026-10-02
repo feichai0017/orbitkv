@@ -37,12 +37,13 @@ export const docGroups = [
       { slug: "peer-control", title: "Peer control boundary" },
       { slug: "shared-cache-qualification", title: "Shared-cache qualification" },
       { slug: "distributed-cache", title: "Distributed global index" },
+      { slug: "distributed-design", title: "Inventory and recovery design" },
       {
         slug: "distributed-comparison",
         title: "LMCache, FlexKV & Mooncake comparison",
       },
       { slug: "pd", title: "P/D, cache reuse & NIXL" },
-      { slug: "pd-mooncake-push", title: "Experimental Mooncake P/D" },
+      { slug: "pd-mooncake-push", title: "Retired P/D protocol" },
     ],
   },
   {

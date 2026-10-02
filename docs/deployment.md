@@ -22,9 +22,8 @@ does not establish OrbitKV compatibility.
 | Multiple engines on one node | Engines share one Manager and its cache budget | Shared endpoint and independent instance registrations are implemented; concurrent multi-engine serving and container isolation need separate qualification |
 | Independent matching replicas, TP=1 | Two engines, two Managers and etcd | Qwen3-8B sharing and restart gates pass on both engines over same-host TCP and the recorded H20/A100 TCP natural-text suite; [recorded scope](shared-cache-qualification.md#recorded-result) |
 | Shared cache across nodes | One Cache Manager per host with local global index + etcd metadata | Experimental; [two-host TCP correctness](shared-cache-qualification.md#two-host-tcp-2026-09-28) is recorded with numerical limits; RDMA and metadata scale/failure qualification remain open |
-| vLLM P/D through OrbitKV's split connectors | Prefill, decode, P/D proxy; Mooncake TENT transfers KV | Experimental; does not need Cache Manager or Catalog for the handoff |
-| SGLang P/D over OrbitKV TENT | SGLang prefill, decode and native router; optional node-local cache | Same-A100 TCP P/D plus cache/restart output gate passes; H20→A100 reuse passes but strict 64-token equality fails; RDMA remains open |
-| vLLM P/D through upstream NIXL | Prefill, decode, NIXL-aware router | Upstream vLLM connector; separate from OrbitKV cache |
+| vLLM native P/D plus cache | Official NIXL, MultiConnector, upstream router and independent Managers | Candidate: P read/write cache, D save-only; [gates and limits](pd.md) |
+| SGLang native P/D plus cache | Official disaggregation backend/router and independent Managers | Candidate: P restore, D save; [gates and limits](pd.md) |
 
 ```mermaid
 flowchart LR
@@ -211,23 +210,19 @@ Deployment profiles follow LMCache's independent service, P2P sharing and
 The engine, cache tier and request-handoff role are separate choices. An upstream
 mode is a reference topology, not proof that OrbitKV supports its engines,
 parallelism, isolation or failure recovery. Keep those claims tied to the
-qualification table above and the pinned vLLM 0.29.0 / SGLang 0.5.20 contracts.
+qualification table above and the pinned vLLM 0.30.0 / SGLang 0.5.20 contracts.
+Historical 0.29.0 topology evidence requires requalification after the upgrade.
 
 
 P/D moves KV for the same request from prefill to decode. Remote caching finds
 reusable KV from an earlier request. These are independent paths; see
 [P/D and NIXL](pd.md) for the ownership and control-flow distinction.
 
-OrbitKV's vLLM `PdPrefillConnector` and `PdDecodeConnector` push KV through
-Mooncake TENT directly between GPU workers. Try the
-[local P/D example](../scripts/run_pd_local.sh) for that path.
-vLLM `0.29.0` also includes its own NIXL connector; the
-[NIXL comparison example](../scripts/run_nixl_local.sh) uses vLLM's code.
-OrbitKV does not ship a NIXL connector. Its SGLang adapter supports the native
-SGLang P/D control plane over OrbitKV TENT and an opt-in composition with the
-external cache. The same-A100 TCP restart/output gate passes; the H20→A100
-run passes cache reuse but fails full 64-token equality. See the
-[precise P/D qualification](pd.md#sglang-qualification-on-2026-09-28).
+The [native P/D candidate](pd.md) uses official vLLM 0.30.0 NIXL/MultiConnector
+and official SGLang 0.5.20 disaggregation, with independent OrbitKV caches and
+upstream routers. The [local vLLM launcher](../scripts/run_pd_local.sh) uses
+read/write cache on P and save-only cache on D. Ordinary cache serving does not
+require a P/D transport or router. Lifecycle fault qualification remains separate.
 
 ### Experimental vLLM P/D with NIXL plus OrbitKV cache
 
@@ -254,6 +249,7 @@ own instance ID.
 ### Prefill
 
 ```bash
+VLLM_USE_V2_MODEL_RUNNER=0 \
 PYTHONHASHSEED=42 \
 VLLM_NIXL_SIDE_CHANNEL_HOST=<p_node_ip> \
 VLLM_NIXL_SIDE_CHANNEL_PORT=5600 \
@@ -267,6 +263,7 @@ vllm serve /path/to/qwen3-8b \
   --kv-transfer-config '{
     "kv_connector": "MultiConnector",
     "kv_role": "kv_both",
+    "kv_load_failure_policy": "fail",
     "kv_connector_extra_config": {
       "connectors": [
         {
@@ -290,6 +287,7 @@ vllm serve /path/to/qwen3-8b \
 ### Decode
 
 ```bash
+VLLM_USE_V2_MODEL_RUNNER=0 \
 PYTHONHASHSEED=42 \
 VLLM_NIXL_SIDE_CHANNEL_HOST=<d_node_ip> \
 VLLM_NIXL_SIDE_CHANNEL_PORT=5601 \
@@ -303,6 +301,7 @@ vllm serve /path/to/qwen3-8b \
   --kv-transfer-config '{
     "kv_connector": "MultiConnector",
     "kv_role": "kv_both",
+    "kv_load_failure_policy": "fail",
     "kv_connector_extra_config": {
       "connectors": [
         {
