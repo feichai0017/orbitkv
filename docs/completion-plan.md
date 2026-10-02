@@ -36,7 +36,7 @@ record submitted, merged and released as different states.
 | --- | --- |
 | S0 | Agent handoff and Codex skill migration merged in PR #190. |
 | S1 | Evidence separation independently verified at `ec3add9b`; this delivery consolidates plans and release-based integration guidance. Acceptance covers S1 only; native CUDA qualification remains blocked on this host. |
-| S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. The current queue head is S2.10 same-host performance qualification on merged main: repair the visibility/isolation measurement contract and requalify the failed 16-owner and 5% isolation cells. Physical cross-host cache/HA, final serving, RDMA/GDS and S3-dependent cells remain open. |
+| S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. The current queue head is the frozen S2.10 same-host formal performance run on merged main. The measurement/oracle and release-source profile are independently accepted; the 16-owner visibility and 5% isolation cells await the five-run/pair results and review. Physical cross-host cache/HA, final serving, RDMA/GDS and S3-dependent cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
 | S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.30.0 adapter upgrade consumes native transfer results with local A100 cache/P/D evidence. Independent upgrade acceptance and public lifecycle/deployment gates remain open. |
@@ -54,8 +54,8 @@ The [distributed inventory and recovery design](distributed-design.md) specifies
 the authorized evolution beyond the former etcd block index. S2.7–S2.9 and
 S2.10 same-host correctness are accepted; the current delivery is the remaining
 same-host S2.10 performance qualification repair on the PR #199 merged-main
-artifact. Correct the measurement contract before the formal rerun and retain the
-old failed evidence. Do not enter S3, S6 or S7 from this delivery. Existing S3
+artifact. The corrected measurement contract and formal inputs are independently
+accepted; execute the frozen rerun and retain the old failed evidence. Do not enter S3, S6 or S7 from this delivery. Existing S3
 lifetime gates still control any new payload concurrency, reuse or reclamation.
 Cross-host qualification remains open until actual failure-domain evidence exists.
 
@@ -445,12 +445,13 @@ fail. Depends on:** accepted protocol implementation from S2.8 and S2.9 for
 scoped claims. This carries forward S2's remaining performance, capacity, serving
 and cross-host obligations; it does not replace missing evidence with a new name.
 
-**Current next delivery:** validate and freeze the PR #199 merged-main Manager,
-wheel, extension and TENT libraries, then correct and independently review the
-same-host performance measurement contract before a formal rerun. Keep the old
-51.72 ms 16-owner visibility and all/scoped isolation failures as historical
-failures; the supported capacity remains four owners until replacement evidence
-passes.
+**Current next delivery:** finish and independently review the frozen formal
+same-host performance matrix on the PR #199 merged-main artifact. Merged-artifact
+regression and the corrected measurement/oracle contracts are complete; the
+formal runner and release pressure-source profile have independent Codex launch
+acceptance. Keep the old 51.72 ms serial-barrier and all/scoped isolation failures
+as historical failures. Supported capacity remains four owners until replacement
+profile evidence and its independent review pass.
 
 - Report historical serial barrier verification separately from bounded
   concurrent verification, ordinary asynchronous publication-to-install latency,
@@ -499,6 +500,27 @@ including both io_uring conditions. The final formal freeze additionally require
 the agreed generation/block payload header and an untimed final restore for
 every capacity owner; these strengthen the byte oracle without changing the
 50 ms/5% thresholds. The elevated pilot isolation ratios remain unqualified.
+
+The final harness is `d18a4a3b` with production Manager/wheel code at `6b0e4fb9`.
+The metadata-only pressure fixture is now built with the release profile; its
+SHA256 is `f34c73078b5c6f8d39ba65f3d70f6553a3b49dd9ceefb098df4341ee22e7a81f`.
+All four affected release-source isolation pilots pass, preserving the earlier
+dev-profile pilots and failures. Independent Codex review accepts the exact final
+oracles and formal controller, including immediate cadence refusal, bounded
+non-killing helper/cell watchdogs and rejection of optimized Python execution.
+The review and its intermediate blocker reports are archived in the external
+`measurement-v2-20261003/codex-final-review/` directory.
+
+The formal input manifest is
+`49a51f66f1619324ceefe9884907c34e91d5101da3a8f1dfb1a15130e19b1e86`, under
+`measurement-v2-20261003/formal-inputs/`. It fixes five 16-owner ordinary runs and
+five balanced quiet/pressure pairs per DRAM/io_uring medium: 50 warm-up and 1,000
+measured rounds per run, 1 Hz foreground, 17 ms source bursts, 25 ms symmetric
+observer sampling, unchanged budgets and 50 ms/5% thresholds, with no expansion.
+The nominal foreground duration is 26,250 seconds; the campaign budget is nine
+hours. The detached A100 runner writes live state and evidence below
+`candidate-d18a4a3b-release-pressure/formal-qualification-1/`. It is running;
+no formal performance result or expanded capacity is accepted yet.
 
 - Execute the [frozen workload/acceptance matrix](distributed-design.md#performance-acceptance-and-ablations)
   on actual live DRAM and io_uring storage. Increase one load dimension at a time,

@@ -35,8 +35,11 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 ### S2.10 metadata performance qualification
 
 Build and freeze the Manager, wheel, server-test pressure source, extension and
-TENT libraries before starting these gates. The capacity harness selects one
-visibility endpoint per run:
+TENT libraries before starting these gates. Build the metadata-only pressure
+fixture with `cargo test --release --no-run -p orbitkv-server --no-default-features
+--features cuda-13,mooncake,test-hooks` on the CUDA 13 profile. Freeze that test
+executable separately; debug fixture CPU/RSS is not the formal production-profile
+reference. The capacity harness selects one visibility endpoint per run:
 
 ```bash
 python -m benches.live_store_capacity \

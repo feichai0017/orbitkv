@@ -71,7 +71,12 @@ uses the same scope and matched quiet versus metadata-only pressure controls.
 Reject pressure runs whose foreground always lands in a quiet phase. Source
 cadence, actual publication/operation clocks, advancing observer windows and
 sampler overhead must be recorded symmetrically. Short capacity runs and runs
-that skip real restore cannot qualify the 16-owner threshold.
+that skip real restore cannot qualify the 16-owner threshold. Formal metadata-only
+pressure uses a release-built server-test fixture with the same frozen record
+cadence and budgets; preserve dev-profile observations separately. Controllers
+must reject optimized Python, validate cadence after each cell, and bound helper
+and measurement waits against the fresh global deadline. A watchdog leaves an
+active native process isolated; it does not establish drain.
 
 For scoped-stream qualification, pair all-domain and scoped runs with the same
 exact namespace/key/payload mutations and coalescing. Report input/output filter
