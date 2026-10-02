@@ -60,6 +60,15 @@ and effective hits. Etcd network counters now cover membership/configuration,
 not block propagation. A lower mutation count alone does not establish serving
 improvement.
 
+For S2.10 performance qualification, keep `s2.10-performance-v2` endpoint names
+separate. Serial or concurrent `/cache/metadata/await` duration measures barrier
+verification, not ordinary visibility. Ordinary visibility uses the source
+`inventory_last_change_mono_ns` and matching owner `installed_mono_ns` without a
+sync/flush in the measured path; compare them only on one host after matching the
+node epoch, incarnation, scope digest and sequence. Report HTTP observation delay
+separately. All/scoped establishes filtering benefit, while save/query isolation
+uses the same scope and matched quiet versus metadata-only pressure controls.
+
 For scoped-stream qualification, pair all-domain and scoped runs with the same
 exact namespace/key/payload mutations and coalescing. Report input/output filter
 records and CPU, encoded bytes/frames, scope-bound coverage, active/staging/index

@@ -1,0 +1,605 @@
+"""Matched local Manager latency under quiet or metadata-only stream pressure."""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import hashlib
+import json
+import os
+import subprocess
+import time
+import uuid
+from contextlib import ExitStack
+from pathlib import Path
+
+from tests.integration.test_distributed_cache import (
+    _cleanup_dram,
+    _discover_storage_namespaces,
+    _etcd_keys,
+    _metadata,
+    _owner_status,
+    _payload,
+    _query_ready,
+    _until,
+    _wait_for_ssd_write,
+)
+from tests.support.cache_manager import CacheManagerProcess, find_available_port
+from tests.support.cluster import etcd_server
+from tests.support.metrics import fetch_orbitkv_metrics
+
+from .artifacts import external_path
+from .live_store_measurements import MEASUREMENT_CONTRACT, _clock_domain, _process_sample, _summary
+from .scoped_metadata import _etcd_revision
+
+PRESSURE_TEST = "cluster::inventory::tests::pressure::external_metadata_only_pressure_source"
+
+
+def _start_pressure_source(
+    output: Path,
+    endpoint: str,
+    cluster: str,
+    namespace: str,
+    condition: str,
+    rounds: int,
+    cadence_ms: int,
+    keys: int,
+    active_keys: int,
+    window_shift: int,
+):
+    binary = os.environ["ORBITKV_SERVER_TEST_BINARY"]
+    go = output / "pressure.go"
+    stop = output / "pressure.stop"
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "ORBITKV_PRESSURE_ETCD_ENDPOINTS": endpoint,
+            "ORBITKV_PRESSURE_CLUSTER": cluster,
+            "ORBITKV_PRESSURE_NODE": "metadata-pressure",
+            "ORBITKV_PRESSURE_NAMESPACE": namespace,
+            "ORBITKV_PRESSURE_ARTIFACT_DIR": str(output),
+            "ORBITKV_PRESSURE_GO_FILE": str(go),
+            "ORBITKV_PRESSURE_STOP_FILE": str(stop),
+            "ORBITKV_PRESSURE_MODE": condition,
+            "ORBITKV_PRESSURE_ROUNDS": str(rounds),
+            "ORBITKV_PRESSURE_CADENCE_MS": str(cadence_ms),
+            "ORBITKV_PRESSURE_KEYS": str(keys),
+            "ORBITKV_PRESSURE_ACTIVE_KEYS": str(active_keys),
+            "ORBITKV_PRESSURE_WINDOW_SHIFT": str(window_shift),
+        }
+    )
+    log = (output / "pressure-source.log").open("wb")
+    process = subprocess.Popen(
+        [binary, PRESSURE_TEST, "--exact", "--ignored", "--nocapture"],
+        env=environment,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+    )
+    return process, log, go, stop
+
+
+def _stop_pressure_source(process, log, stop):
+    stop.touch(exist_ok=True)
+    if process.poll() is None:
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=30)
+    if process.poll() is None:
+        process.terminate()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=10)
+    if process.poll() is None:
+        process.kill()
+        process.wait(timeout=10)
+    log.close()
+
+
+def run(
+    output: Path,
+    condition: str,
+    medium: str,
+    seed: str,
+    warmup_rounds: int,
+    samples: int,
+    cadence_ms: int,
+    pressure_keys: int,
+    pressure_active_keys: int,
+    pressure_window_shift: int,
+    order_index: int,
+):
+    import torch
+
+    import orbitkv.orbitkv as native
+    from orbitkv import CacheManagerClient
+    from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
+
+    assert torch.cuda.is_available()
+    os.environ["MC_FORCE_TCP"] = "1"
+    pages, block_bytes = 8, 4096
+    payload_bytes = pages * block_bytes
+    identity = f"s2.10:isolation:{medium}:{seed}"
+    (local_namespace,) = _discover_storage_namespaces(output, [identity], pages, block_bytes)
+    pressure_namespace = "orbitkv:s2.10:metadata-only-pressure:v1"
+    assert local_namespace != pressure_namespace
+    cluster = f"s210-isolation-{uuid.uuid4().hex[:12]}"
+    result = {
+        "measurement_contract": MEASUREMENT_CONTRACT,
+        "condition": condition,
+        "medium": medium,
+        "seed": seed,
+        "warmup_rounds": warmup_rounds,
+        "samples": samples,
+        "cadence_ms": cadence_ms,
+        "cluster": cluster,
+        "local_namespace": local_namespace,
+        "pressure_namespace": pressure_namespace,
+        "pressure_keys": pressure_keys,
+        "pressure_active_keys": pressure_active_keys,
+        "pressure_window_shift": pressure_window_shift,
+        "order_index": order_index,
+        "budgets": {
+            "dram_bytes": 67108864,
+            "ssd_bytes": 67108864 if medium == "ssd" else 0,
+            "index_bytes": 16777216,
+            "journal_bytes": 16777216,
+            "coalescing_ms": 2,
+        },
+        "latency_endpoints": {
+            "payload_prepare_ms": "tensor copy through CUDA synchronization",
+            "manager_save_submit_ms": "CacheManagerClient.save call only",
+            "save_to_query_ready_ms": "save call start through local QueryReady",
+            "local_query_ms": "query/prefetch call through QueryReady; excludes restore",
+            "destination_prepare_ms": "destination zero through CUDA synchronization",
+            "restore_complete_ms": "start_restore through native wait_restore completion",
+            "gpu_consumable_ms": "start_restore through final CUDA synchronization",
+        },
+        "scope": (
+            "same-host A100, one full foreground Manager plus one test-owned "
+            "production inventory-stream source, forced TCP"
+        ),
+    }
+    artifacts = {
+        "manager": os.environ["ORBITKV_CACHE_MANAGER_BINARY"],
+        "server_tests": os.environ["ORBITKV_SERVER_TEST_BINARY"],
+        "etcd": os.environ["ETCD_BIN"],
+        "extension": native.__file__,
+        "tent": str(Path(os.environ["ORBITKV_MOONCAKE_LIB_DIR"]) / "libtent_shared.so"),
+    }
+    result["artifacts"] = {
+        name: {"path": path, "sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest()}
+        for name, path in artifacts.items()
+    }
+
+    raw = (output / "samples.jsonl").open("w", buffering=1)
+    with ExitStack() as stack:
+        stack.callback(raw.close)
+        endpoint, _ = stack.enter_context(etcd_server(output))
+        port = find_available_port()
+        ssd_enabled = medium == "ssd"
+        manager = CacheManagerProcess(
+            port,
+            pool_size="64mb",
+            http_port=find_available_port(),
+            bootstrap_socket=f"/tmp/orbitkv-s210-isolation-{port}.sock",
+            ssd_cache_path=output / "foreground-ssd" if ssd_enabled else None,
+            ssd_cache_capacity="64mb",
+            ssd_backend="uring",
+            ssd_read_path="uring" if ssd_enabled else None,
+            log_path=output / "foreground-manager.log",
+            extra_args=(
+                "--etcd-endpoints",
+                endpoint,
+                "--node-id",
+                "foreground",
+                "--cluster-name",
+                cluster,
+                "--index-budget",
+                "16mb",
+                "--inventory-journal-bytes",
+                "16777216",
+                "--membership-ttl-secs",
+                "120",
+                "--metadata-namespace",
+                pressure_namespace,
+                "--inventory-stream-coalesce-ms",
+                "2",
+                "--enable-prometheus",
+            ),
+        )
+        stack.callback(manager.stop)
+        assert manager.start(), manager.read_logs()
+        client = CacheManagerClient(manager.bootstrap_socket)
+        stack.callback(client.close)
+        tensor = torch.empty(payload_bytes, dtype=torch.uint8, device="cuda")
+        client.start_session_watcher("foreground", identity, 1, 1)
+        ok, message = client.register_context_batch(
+            "foreground",
+            identity,
+            0,
+            0,
+            1,
+            1,
+            resolve_device_id(),
+            ["kv:0"],
+            [serialize_gpu_buffer(tensor)],
+            [pages],
+            [block_bytes],
+            [0],
+            [1],
+            "direct",
+            False,
+            tensors=[tensor],
+        )
+        assert ok, message
+
+        pressure, pressure_log, go, stop = _start_pressure_source(
+            output,
+            endpoint,
+            cluster,
+            pressure_namespace,
+            condition,
+            warmup_rounds + samples,
+            cadence_ms,
+            pressure_keys,
+            pressure_active_keys,
+            pressure_window_shift,
+        )
+        stack.callback(_stop_pressure_source, pressure, pressure_log, stop)
+        ready_path = output / "pressure-source-ready.json"
+        _until(
+            lambda: ready_path.exists() or pressure.poll() is not None,
+            [manager],
+            timeout=30,
+        )
+        assert pressure.poll() is None, (output / "pressure-source.log").read_text()
+        ready = json.loads(ready_path.read_text())
+        result["clock_domain"] = _clock_domain([manager.process.pid, pressure.pid])
+        owner = ready["owner"]["incarnation"]
+        _until(
+            lambda: (
+                (status := _owner_status(manager, owner))
+                and status["fresh"]
+                and status["applied_sequence"] >= ready["initial_sequence"]
+            ),
+            [manager],
+            timeout=30,
+        )
+        metadata = _metadata(manager)
+        assert metadata["stream"]["scope_digest"] == ready["scope_digest"]
+        result["foreground_binding"] = {
+            "node": metadata["stream"]["source_node"],
+            "epoch": metadata["stream"]["source_node_epoch"],
+            "incarnation": metadata["stream"]["source_incarnation"],
+            "scope_digest": metadata["stream"]["scope_digest"],
+        }
+        result["pressure_binding"] = ready
+
+        latencies = {
+            name: []
+            for name in (
+                "payload_prepare_ms",
+                "cleanup_ms",
+                "manager_save_submit_ms",
+                "save_to_query_ready_ms",
+                "local_query_ms",
+                "destination_prepare_ms",
+                "restore_complete_ms",
+                "gpu_consumable_ms",
+            )
+        }
+        ssd_written = 0
+        payload_oracle = hashlib.sha256()
+        key_oracle = hashlib.sha256()
+        resource_samples = (output / "resources.jsonl").open("w", buffering=1)
+        stack.callback(resource_samples.close)
+        device = resolve_device_id()
+
+        def foreground_round(round_id, measured, scheduled_seconds, actual_seconds):
+            nonlocal ssd_written
+            if round_id > 0:
+                cleanup_started = time.monotonic_ns()
+                cleaned = _cleanup_dram(manager)
+                cleanup_ms = (time.monotonic_ns() - cleanup_started) / 1_000_000
+                assert cleaned["evicted_blocks"] == pages
+            else:
+                cleanup_ms = 0.0
+            expected = _payload(torch, pages, block_bytes, round_id + 1)
+            hashes = [
+                hashlib.sha256(
+                    f"s2.10:isolation:{medium}:{seed}:{round_id}:{block}".encode()
+                ).digest()
+                for block in range(pages)
+            ]
+            prepare_started = time.monotonic_ns()
+            tensor.copy_(expected)
+            torch.cuda.synchronize()
+            payload_prepare_ms = (time.monotonic_ns() - prepare_started) / 1_000_000
+            save_started = time.monotonic_ns()
+            ok, message = client.save(
+                "foreground",
+                0,
+                0,
+                device,
+                [("kv:0", list(range(pages)), hashes)],
+            )
+            manager_save_submit_ms = (time.monotonic_ns() - save_started) / 1_000_000
+            assert ok, message
+            if ssd_enabled:
+                ssd_written += payload_bytes
+                _wait_for_ssd_write(manager, ssd_written, [manager])
+                cleaned = _cleanup_dram(manager)
+                assert cleaned["evicted_blocks"] == pages
+            metrics_before = fetch_orbitkv_metrics(manager.http_port)
+            query_started = time.monotonic_ns()
+            query = _query_ready(
+                client,
+                "foreground",
+                hashes,
+                f"isolation-{condition}-{round_id}",
+                pages,
+                [manager],
+            )
+            query_completed = time.monotonic_ns()
+            destination_started = query_completed
+            tensor.zero_()
+            torch.cuda.synchronize()
+            destination_completed = time.monotonic_ns()
+            restore_started = destination_completed
+            operation = client.start_restore(
+                "foreground",
+                0,
+                tensor.device.index or 0,
+                [["kv:0"]],
+                [(query.lease, [list(range(pages))])],
+                ready_stream=torch.cuda.current_stream(tensor.device).cuda_stream,
+            )
+            status = client.wait_restore(operation, timeout=20)
+            restore_completed = time.monotonic_ns()
+            assert status.success, status
+            torch.cuda.synchronize()
+            gpu_completed = time.monotonic_ns()
+            assert torch.equal(tensor, expected)
+            metrics_after = fetch_orbitkv_metrics(manager.http_port)
+            read_delta = metrics_after.get("orbitkv_ssd_read_bytes_total", 0) - metrics_before.get(
+                "orbitkv_ssd_read_bytes_total", 0
+            )
+            if ssd_enabled:
+                assert read_delta >= payload_bytes, metrics_after
+            else:
+                assert read_delta == 0, metrics_after
+            assert metrics_after.get("orbitkv_remote_fetch_bytes_total", 0) == 0
+            sample = {
+                "round": round_id,
+                "measured": measured,
+                "scheduled_seconds": scheduled_seconds,
+                "actual_seconds": actual_seconds,
+                "ssd_read_bytes": read_delta,
+                "keys_sha256": hashlib.sha256(b"".join(hashes)).hexdigest(),
+                "payload_prepare_ms": payload_prepare_ms,
+                "cleanup_ms": cleanup_ms,
+                "manager_save_submit_ms": manager_save_submit_ms,
+                "save_to_query_ready_ms": (query_completed - save_started) / 1_000_000,
+                "local_query_ms": (query_completed - query_started) / 1_000_000,
+                "destination_prepare_ms": (destination_completed - destination_started) / 1_000_000,
+                "restore_complete_ms": (restore_completed - restore_started) / 1_000_000,
+                "gpu_consumable_ms": (gpu_completed - restore_started) / 1_000_000,
+                "payload_sha256": hashlib.sha256(expected.cpu().numpy().tobytes()).hexdigest(),
+            }
+            if measured:
+                for name in latencies:
+                    latencies[name].append(sample[name])
+                payload_oracle.update(bytes.fromhex(sample["payload_sha256"]))
+                key_oracle.update(bytes.fromhex(sample["keys_sha256"]))
+            raw.write(json.dumps(sample) + "\n")
+
+        go.touch()
+        started_path = output / "pressure-started.json"
+        _until(lambda: started_path.exists(), [manager])
+        result["pressure_start"] = json.loads(started_path.read_text())
+        started = time.monotonic()
+        result["foreground_started_unix_ns"] = time.time_ns()
+        before_revision = _etcd_revision(endpoint, f"/orbitkv/v2/{cluster}/")
+        measured_started = None
+        for round_id in range(warmup_rounds + samples):
+            scheduled = round_id * cadence_ms / 1000
+            remaining = started + scheduled - time.monotonic()
+            if remaining > 0:
+                time.sleep(remaining)
+            if round_id == warmup_rounds:
+                process_before = _process_sample([manager.process.pid, pressure.pid])
+                metadata_before = _metadata(manager)
+                measured_started = time.monotonic()
+            assert pressure.poll() is None, (output / "pressure-source.log").read_text()
+            foreground_round(
+                round_id, round_id >= warmup_rounds, scheduled, time.monotonic() - started
+            )
+            resource_metadata = _metadata(manager)
+            assert resource_metadata["index"]["accounted_bytes"] <= result["budgets"]["index_bytes"]
+            assert (
+                resource_metadata["inventory_journal_bytes"] <= result["budgets"]["journal_bytes"]
+            )
+            resource_samples.write(
+                json.dumps(
+                    {
+                        "round": round_id,
+                        "process": _process_sample([manager.process.pid, pressure.pid]),
+                        "metadata": resource_metadata,
+                    }
+                )
+                + "\n"
+            )
+        remaining = started + (warmup_rounds + samples) * cadence_ms / 1000 - time.monotonic()
+        if remaining > 0:
+            time.sleep(remaining)
+        wall_seconds = time.monotonic() - measured_started
+        process_after = _process_sample([manager.process.pid, pressure.pid])
+        result_path = output / "pressure-source-result.json"
+        _until(lambda: result_path.exists(), [manager])
+        pressure_result = json.loads(result_path.read_text())
+        total_rounds = warmup_rounds + samples
+        expected_changes = (
+            total_rounds * pressure_window_shift * 2 if condition == "pressure" else 0
+        )
+        assert pressure_result["changes"] == expected_changes
+        assert pressure_result["owner"] == ready["owner"]
+        assert pressure_result["final_sequence"] == ready["initial_sequence"] + expected_changes
+        _until(
+            lambda: (
+                (row := _owner_status(manager, owner))
+                and row["fresh"]
+                and row["applied_sequence"] == pressure_result["final_sequence"]
+            ),
+            [manager],
+        )
+        final_owner = _owner_status(manager, owner)
+        assert final_owner["records"] == pressure_active_keys
+        final_records = pressure_result["final_records"]
+        inserted = total_rounds * pressure_window_shift if condition == "pressure" else 0
+        expected_records = []
+        for offset in range(pressure_active_keys):
+            key = (inserted + offset) % pressure_keys
+            last_insert = (
+                inserted - 1 - ((inserted - 1 - (key - pressure_active_keys)) % pressure_keys)
+            )
+            sequence = (
+                key + 1
+                if last_insert < 0
+                else (
+                    pressure_active_keys
+                    + (last_insert // pressure_window_shift) * 2 * pressure_window_shift
+                    + pressure_window_shift
+                    + last_insert % pressure_window_shift
+                    + 1
+                )
+            )
+            expected_records.append((key, sequence))
+        actual_records = []
+        for record in final_records:
+            assert record["key"]["namespace"] == pressure_namespace
+            assert record["present"]
+            assert record["metadata"] == {
+                "medium": "Dram",
+                "representation": "Raw",
+                "stored_bytes": 4096,
+            }
+            actual_records.append(
+                (int.from_bytes(bytes(record["key"]["hash"]), "little"), record["sequence"])
+            )
+        assert sorted(actual_records) == sorted(expected_records)
+        metadata_after = _metadata(manager)
+        assert metadata_after["index"]["coverage"] == "complete_at_watermarks"
+        assert (
+            metadata_after["stream"]["source_incarnation"]
+            == result["foreground_binding"]["incarnation"]
+        )
+        after_revision = _etcd_revision(endpoint, f"/orbitkv/v2/{cluster}/")
+        assert before_revision == after_revision
+        result["etcd_revision_delta"] = after_revision - before_revision
+        result["payload_oracle_sha256"] = payload_oracle.hexdigest()
+        result["key_oracle_sha256"] = key_oracle.hexdigest()
+        stop.touch()
+        pressure_exit = pressure.wait(timeout=30)
+        pressure_log.close()
+        assert pressure_exit == 0, (output / "pressure-source.log").read_text()
+        keys = _etcd_keys(endpoint, f"/orbitkv/v2/{cluster}/")
+        assert not any("/blocks/" in key or "/publishers/" in key for key in keys)
+
+        def local_drained():
+            metrics = fetch_orbitkv_metrics(manager.http_port)
+            if any(
+                metrics.get(name, 0)
+                for name in (
+                    "orbitkv_query_reserved_bytes",
+                    "orbitkv_ssd_read_pinned_bytes",
+                    "orbitkv_transfer_completion_outstanding",
+                )
+            ):
+                return None
+            return metrics
+
+        final_metrics = _until(local_drained, [manager])
+        result["final_drain_metrics"] = final_metrics
+        ok, message = client.unregister_context("foreground")
+        assert ok, message
+        client.close()
+        tensor = None
+        torch.cuda.synchronize()
+        torch.cuda.ipc_collect()
+        exit_code, shutdown_seconds = manager.terminate_gracefully(timeout=10)
+        assert exit_code == 0 and shutdown_seconds <= 10
+        result.update(
+            {
+                "status": "passed",
+                "wall_seconds": wall_seconds,
+                "achieved_samples_per_second": samples / wall_seconds,
+                "latencies": {name: _summary(values) for name, values in latencies.items()},
+                "process_before": process_before,
+                "process_after": process_after,
+                "metadata_before": metadata_before,
+                "metadata_after": metadata_after,
+                "pressure_result": pressure_result,
+                "final_owner": final_owner,
+                "etcd_keys": keys,
+                "pressure_exit": pressure_exit,
+                "manager_exit": exit_code,
+                "manager_shutdown_seconds": shutdown_seconds,
+            }
+        )
+        (output / "isolation-result.json").write_text(
+            json.dumps(result, indent=2, allow_nan=False) + "\n"
+        )
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--condition", choices=("quiet", "pressure"), required=True)
+    parser.add_argument("--medium", choices=("dram", "ssd"), required=True)
+    parser.add_argument("--seed", required=True)
+    parser.add_argument("--warmup-rounds", type=int, default=50)
+    parser.add_argument("--samples", type=int, default=1000)
+    parser.add_argument("--cadence-ms", type=int, default=1000)
+    parser.add_argument("--pressure-keys", type=int, default=2048)
+    parser.add_argument("--pressure-active-keys", type=int, default=1536)
+    parser.add_argument("--pressure-window-shift", type=int, default=128)
+    parser.add_argument("--order-index", type=int, required=True)
+    parser.add_argument("--output", type=external_path, required=True)
+    args = parser.parse_args()
+    if args.warmup_rounds < 0:
+        parser.error("--warmup-rounds cannot be negative")
+    if args.samples <= 0 or args.cadence_ms <= 0:
+        parser.error("--samples and --cadence-ms must be positive")
+    if args.order_index < 0:
+        parser.error("--order-index cannot be negative")
+    if args.pressure_active_keys <= args.pressure_window_shift:
+        parser.error("pressure active keys must exceed the window shift")
+    if args.pressure_keys < args.pressure_active_keys + args.pressure_window_shift:
+        parser.error("pressure keys must cover the active window plus one shift")
+    for variable in (
+        "ETCD_BIN",
+        "ORBITKV_CACHE_MANAGER_BINARY",
+        "ORBITKV_MOONCAKE_LIB_DIR",
+        "ORBITKV_SERVER_TEST_BINARY",
+    ):
+        if not os.environ.get(variable):
+            parser.error(f"set {variable} to a frozen artifact")
+    args.output.mkdir(parents=True, exist_ok=False)
+    try:
+        run(
+            args.output,
+            args.condition,
+            args.medium,
+            args.seed,
+            args.warmup_rounds,
+            args.samples,
+            args.cadence_ms,
+            args.pressure_keys,
+            args.pressure_active_keys,
+            args.pressure_window_shift,
+            args.order_index,
+        )
+    except BaseException as error:
+        (args.output / "failure.txt").write_text(repr(error) + "\n")
+        raise
+
+
+if __name__ == "__main__":
+    main()

@@ -13,6 +13,9 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | `cpu_codec.rs` | Production scalar/AVX2/AVX-512/auto CPU FP8 conversion with an independent oracle before timing |
 | `cost_observations.py` | Same-binary off/on observation overhead, three reversed-order pairs on both engines |
 | `metadata.py` | Explicit full-Manager 0/2/5 ms metadata coalescing comparison using frozen binaries |
+| `live_store_capacity.py` | S2.10 1/4/16-owner ordinary install visibility plus separately named serial/concurrent barrier diagnostics |
+| `live_store_isolation.py` | Matched full-Manager local save/query/restore under quiet or metadata-only inventory pressure |
+| `summarize_live_store_isolation.py` | Independent-run-pair ratios, absolute deltas and paired-run confidence intervals |
 | `single_node.py` | Fixed-capacity cold, HBM-hit, and post-pressure experiment |
 | `shared_cache.py` | Independent-replica serving requests with remote-byte, GPU-copy, output and reservation-drain evidence |
 | `launch.py` | Engine/backend commands and matched memory budgets |
@@ -28,6 +31,51 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | `tests/` | CPU-only checks for measurement and report correctness |
 | `artifacts.py` | Validate external output locations, including symlink resolution |
 | `reproduce_preparation.sh` | Repeated preparation controls with an explicit external output root |
+
+### S2.10 metadata performance qualification
+
+Build and freeze the Manager, wheel, server-test pressure source, extension and
+TENT libraries before starting these gates. The capacity harness selects one
+visibility endpoint per run:
+
+```bash
+python -m benches.live_store_capacity \
+  --owners 16 --seed capacity-01 --duration-seconds 60 \
+  --visibility-mode ordinary --enforce-thresholds \
+  --output /external/s2-10/capacity-16-ordinary
+
+python -m benches.live_store_capacity \
+  --owners 16 --seed capacity-01 --duration-seconds 60 \
+  --visibility-mode concurrent-barrier --barrier-concurrency 4 \
+  --output /external/s2-10/capacity-16-concurrent
+```
+
+`ordinary` never calls the synchronization endpoints in its measured path.
+Serial and concurrent barrier runs are diagnostics and cannot pass the ordinary
+50 ms gate on its behalf.
+
+Isolation uses one full foreground Manager and a test-owned Rust inventory source
+from the frozen `orbitkv-server` test binary. Quiet and pressure runs have the
+same topology, scope, foreground bytes, medium, cadence and GPU synchronization.
+The pressure source changes metadata through the production inventory stream
+without foreground GPU copies or SSD I/O:
+
+```bash
+python -m benches.live_store_isolation \
+  --condition quiet --medium dram --seed pair-01 --warmup-rounds 50 \
+  --samples 1000 --cadence-ms 1000 --order-index 0 \
+  --output /external/s2-10/isolation/dram-pair-01-quiet
+
+python -m benches.live_store_isolation \
+  --condition pressure --medium dram --seed pair-01 --warmup-rounds 50 \
+  --samples 1000 --cadence-ms 1000 --order-index 1 \
+  --output /external/s2-10/isolation/dram-pair-01-pressure
+```
+
+Set `ETCD_BIN`, `ORBITKV_CACHE_MANAGER_BINARY`, `ORBITKV_MOONCAKE_LIB_DIR`
+and `ORBITKV_SERVER_TEST_BINARY` to one frozen candidate. Reverse condition order
+for alternating pairs. Use `benches.summarize_live_store_isolation` only after all
+five pairs finish; request samples within a run are not independent repetitions.
 
 ## CPU codec benchmark
 

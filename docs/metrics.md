@@ -555,6 +555,9 @@ coverage `unavailable`. A complete empty owner view differs from a missing view.
 
 The same response includes the local inventory sequence, resident and retained-
 journal record counts, current/peak journal bytes, capacity and history gaps.
+`inventory_last_change_mono_ns` is the source process's `CLOCK_MONOTONIC`
+timestamp for the latest committed residency sequence. It is a same-host
+qualification diagnostic, not a cross-host clock or a publication barrier.
 Completed stream intervals report input/coalesced records, encoded bytes, delta
 frames and elapsed coalescing wait. `inventory_flush_through_sequence` is the
 latest requested source-fence target; it is not a received-frame or installed-
@@ -580,8 +583,13 @@ session-lifecycle fault, not harmless telemetry drift.
 
 `GET /cache/metadata/owners?after=<uuid>&limit=<1..128>` reports bounded,
 UUID-ordered installed owner views with their committed sequence, freshness,
-receipt age and record count. It is an operational/qualification surface, not a
-request-path directory lookup.
+receipt age, record count and `installed_mono_ns`. The latter is the observer's
+`CLOCK_MONOTONIC` timestamp at atomic snapshot commit, delta apply or exact
+progress confirmation. It can be compared with a source timestamp only when both
+processes run in the same host clock domain and the sample also matches owner,
+epoch, incarnation, scope digest and sequence. HTTP response time remains a
+separate harness-observation delay. This endpoint is an operational/qualification
+surface, not a request-path directory lookup.
 
 Standalone Managers return JSON `null`. `POST /cache/sync` returns an
 `inventory_fence`; `POST /cache/metadata/await` succeeds only after the matching
@@ -794,3 +802,9 @@ orbitkv_hll_estimated_hit_rate{window="1h"}
 - [Prometheus Query Language](https://prometheus.io/docs/prometheus/latest/querying/basics/)
 - [Grafana Dashboard Guide](https://grafana.com/docs/grafana/latest/dashboards/)
 - [OpenTelemetry Documentation](https://opentelemetry.io/docs/)
+
+The inventory publication/install clocks are same-host diagnostics for the latest
+exact sequence. A progress confirmation at unchanged sequence preserves the
+original install time; snapshot/delta commit updates it after the index becomes
+complete under its write lock. A benchmark must reject superseded targets and
+verify the host clock domain; these timestamps do not give a cross-host latency.

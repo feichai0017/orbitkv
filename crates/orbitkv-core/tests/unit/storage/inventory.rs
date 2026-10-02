@@ -65,6 +65,18 @@ fn bounded_journal_reports_snapshot_gaps_and_batch_overflow() {
     assert!(status.journal_bytes <= status.journal_capacity_bytes);
     assert!(status.journal_bytes_peak <= status.journal_capacity_bytes);
     assert_eq!(status.history_gaps, 1);
+    assert!(status.last_change_mono_ns > 0);
+    inventory.change(
+        &key(29),
+        ReplicaMedium::Dram,
+        Some(metadata(ReplicaMedium::Dram)),
+    );
+    inventory.capture_fence();
+    assert_eq!(
+        inventory.status().last_change_mono_ns,
+        status.last_change_mono_ns
+    );
+    assert_eq!(inventory.status().sequence, 30);
     assert_eq!(inventory.changes(29, 30).unwrap().len(), 1);
     assert_eq!(inventory.page(None).unwrap().len(), 30);
     inventory.change(

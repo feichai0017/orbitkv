@@ -693,6 +693,59 @@ a two-hour contention/fault soak for the advertised deployment profile.
 | Scoped fanout | Delivered residency events equal the matching-scope oracle; lower bytes demonstrated without losing in-scope candidates |
 | Executed routing | At least 10% p95 or p99 ready-time improvement on two predeclared contention cases, with no more than 5% cold/noncontended serving regression |
 
+The S2.10 same-host performance rerun uses measurement contract
+`s2.10-performance-v2`. Source inventory changes and observer owner-view commits
+record `CLOCK_MONOTONIC` nanoseconds in their existing bounded status fields.
+Same-host samples bind node, epoch, incarnation, scope digest and sequence before
+subtracting those timestamps. The harness verifies the same boot ID, Linux time
+namespace and time offsets. They are not comparable across hosts. Publication is
+timestamped after residency/journal mutation under the inventory lock; installation
+is timestamped after reverse rows, coverage and accounting are committed under the
+index lock. Duplicate frames and progress confirmation do not rewrite that time.
+The bounded diagnostics retain the latest sequence only. The workload therefore
+stops each owner's mutations at a predetermined terminal sequence, requires exact
+sequence and view identity (not `>=`), and observes it before the next mutation.
+Superseded or replacement-view samples fail collection. This measures the terminal
+watermark of a controlled burst, not every record's first installation in unbounded
+concurrent churn.
+
+Visibility reports four distinct endpoints:
+
+- historical serial barrier verification, after every source fence is captured;
+- bounded concurrent barrier verification with an unchanged exact per-owner
+  check and a fixed concurrency limit;
+- ordinary source publication to observer owner-view installation, without
+  `/cache/sync`, flush or `/cache/metadata/await` in the measured path;
+- save start to observer installation, when an application-facing end-to-end
+  diagnostic is required.
+
+HTTP observation completion is reported after the install timestamp and cannot
+replace it. Barrier-forced results do not qualify ordinary production visibility.
+Cold/bootstrap and repair remain separate phases.
+
+Filtering benefit and local isolation use different controls. All-domain versus
+scoped runs keep the same mutation/payload oracle and establish byte/resource
+effects. Isolation fixes the scope and compares a full Manager's identical local
+save/query/restore workload under an idle inventory peer versus a test-owned
+metadata-only inventory peer. Live-store mixed pressure is labeled separately.
+The formal isolation matrix has a fixed warm-up, at least 1,000 measured rounds
+per run, five order-balanced independent pairs per medium and the declared
+cadence. Per-run p99 ratios must all be at most 1.05, and the paired-run geometric
+mean ratio's predeclared 95% bootstrap upper bound must also be at most 1.05.
+Requests within one run are never bootstrap units; increasing bootstrap resamples
+cannot compensate for fewer independent pairs. Warm-up runs at the same cadence
+and with the selected pressure condition; both warm-up and measured raw samples
+are retained. The foreground save endpoint is the native `save` call's submission,
+not SSD durability; query ends at `QueryReady` and includes any prefetch waiting,
+but excludes restore. Native restore completion and GPU-consumable completion
+are separate endpoints. SSD samples wait for writes, clear DRAM and require
+actual SSD read counters plus exact GPU bytes. Pressure records have no GPU or
+SSD payload. The final source window is checked key-by-key, including generation
+and medium, then the observer must have that exact source watermark before the
+fixture is allowed to revoke membership. Context-switch snapshots cover live
+threads; deltas identify surviving/new/exited threads and do not count missing
+threads as zero. Pre-experiment summaries cannot qualify isolation.
+
 These are design targets, not measurements. If a target is infeasible or noisy,
 report the failed run and have the reviewer assess a revised contract before a
 new run; do not change a threshold after observing a result and call the old run

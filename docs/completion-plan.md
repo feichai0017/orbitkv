@@ -467,6 +467,20 @@ passes.
   the formal experiment. The 50 ms visibility and 5% isolation targets do not
   change.
 
+The merged-main integration candidate at `ceb6125a` has completed the A100
+installed-wheel/TENT byte, real-etcd, strict restart, four DRAM/SSD all/scoped and
+both official-engine shared-cache smoke gates. This is the same-host smoke
+profile only; a no-GPU build-host TCP byte-test failure remains recorded. The
+measurement-v2 implementation adds bounded publication/install timestamps,
+exact-sequence observation, separate serial/concurrent barriers, fixed-scope
+quiet/metadata-pressure controls and independent-pair statistics. It is
+**implemented, pending short pre-experiment and independent review**; no new
+visibility/isolation qualification is claimed. Evidence is under
+`/root/orbitkv-artifacts/s2-s51-20260930/s2-10-performance-qualification-20261002/`.
+The next dependent action is to review that implementation and its short-run
+contract before freezing the formal workload. Historical failure evidence and
+the four-owner supported envelope remain unchanged.
+
 - Execute the [frozen workload/acceptance matrix](distributed-design.md#performance-acceptance-and-ablations)
   on actual live DRAM and io_uring storage. Increase one load dimension at a time,
   establish the supported envelope, and exercise expected bounded degradation

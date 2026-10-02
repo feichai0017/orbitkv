@@ -9,6 +9,7 @@ import json
 import os
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -16,6 +17,7 @@ import requests
 
 from tests.integration.test_distributed_cache import (
     _await_fence,
+    _await_fence_for_scope,
     _cleanup_dram,
     _discover_storage_namespaces,
     _etcd_keys,
@@ -31,7 +33,84 @@ from tests.support.cluster import etcd_server
 from tests.support.metrics import fetch_orbitkv_metrics
 
 from .artifacts import external_path
-from .scoped_metadata import _etcd_revision, _process_sample, _summary
+from .live_store_measurements import (
+    MEASUREMENT_CONTRACT,
+    _clock_domain,
+    _installation_sample,
+    _process_sample,
+    _summary,
+)
+from .scoped_metadata import _etcd_revision
+
+
+def _binding(manager):
+    status = _metadata(manager)
+    stream = status["stream"]
+    return {
+        "node": stream["source_node"],
+        "epoch": stream["source_node_epoch"],
+        "incarnation": stream["source_incarnation"],
+        "scope_digest": stream["scope_digest"],
+    }
+
+
+def _assert_binding(manager, expected):
+    actual = _binding(manager)
+    assert actual == expected, (expected, actual)
+    return actual
+
+
+def _owner_statuses(manager):
+    response = requests.get(
+        f"http://127.0.0.1:{manager.http_port}/cache/metadata/owners",
+        params={"limit": 128},
+        timeout=5,
+    )
+    response.raise_for_status()
+    return {row["owner"]: row for row in response.json()}
+
+
+def _wait_for_installs(manager, targets, managers, timeout=30):
+    deadline = time.monotonic() + timeout
+    while True:
+        rows = _owner_statuses(manager)
+        installed = {}
+        for node, target in targets.items():
+            row = rows.get(target["incarnation"])
+            if row and row["applied_sequence"] > target["sequence"]:
+                raise AssertionError(f"sample target was superseded: {target}, {row}")
+            if (
+                row
+                and row["fresh"]
+                and row["applied_sequence"] == target["sequence"]
+                and row["installed_mono_ns"] >= target["published_mono_ns"]
+            ):
+                installed[node] = row
+        if len(installed) == len(targets):
+            return installed
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"owner installs did not reach targets: targets={targets}, rows={rows}, "
+                f"logs={[manager.read_logs() for manager in managers]}"
+            )
+        time.sleep(0.001)
+
+
+def _await_concurrently(observer, fences, scope_digest, managers, concurrency):
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        futures = [
+            pool.submit(
+                _await_fence_for_scope,
+                observer,
+                fence,
+                scope_digest,
+                managers,
+                timeout=30,
+            )
+            for fence in fences.values()
+        ]
+        for future in futures:
+            future.result()
 
 
 def run(
@@ -43,6 +122,9 @@ def run(
     seed: str,
     pages: int,
     skip_restore: bool,
+    visibility_mode: str,
+    barrier_concurrency: int,
+    enforce_thresholds: bool,
 ):
     import torch
 
@@ -58,6 +140,7 @@ def run(
     (storage_namespace,) = _discover_storage_namespaces(output, [identity], pages, block_bytes)
     cluster = f"s210-capacity-{owners}-{uuid.uuid4().hex[:8]}"
     result = {
+        "measurement_contract": MEASUREMENT_CONTRACT,
         "owners": owners,
         "seed": seed,
         "duration_seconds": duration_seconds,
@@ -65,8 +148,16 @@ def run(
         "expect_degraded": expect_degraded,
         "pages": pages,
         "skip_restore": skip_restore,
+        "visibility_mode": visibility_mode,
+        "barrier_concurrency": barrier_concurrency,
+        "thresholds_enforced": enforce_thresholds,
         "storage_namespace": storage_namespace,
         "cluster": cluster,
+        "latency_endpoints": {
+            "mutation_submit_loop_ms": "all owners: metadata GET, DRAM cleanup, payload copy/CUDA sync and save submission",
+            "save_start_to_install_ms": "individual owner CacheManagerClient.save call start through exact terminal-sequence installation",
+            "publication_to_install_ms": "terminal burst publication commit to same-sequence owner-view commit; next mutation starts only after observation",
+        },
         "artifacts": {
             name: {"path": path, "sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest()}
             for name, path in {
@@ -150,6 +241,7 @@ def run(
             start_manager(f"source-{owner}")
         manager_list = list(managers.values())
         source_nodes = [f"source-{owner}" for owner in range(owners)]
+        result["clock_domain"] = _clock_domain(manager.process.pid for manager in manager_list)
         device = resolve_device_id()
         hashes = {
             node: [
@@ -188,7 +280,19 @@ def run(
 
         before_revision = _etcd_revision(endpoint, f"/orbitkv/v2/{cluster}/")
         process_before = _process_sample(manager.process.pid for manager in manager_list)
-        visibility = []
+        observer_binding = _binding(managers["observer"])
+        source_bindings = {node: _binding(managers[node]) for node in source_nodes}
+        assert all(
+            binding["scope_digest"] == observer_binding["scope_digest"]
+            for binding in source_bindings.values()
+        )
+        installed_views = _owner_statuses(managers["observer"])
+        publication_to_install = []
+        save_start_to_install = []
+        install_to_harness = []
+        ordinary_harness_wait = []
+        serial_barrier_verification = []
+        concurrent_barrier_verification = []
         save_latency = []
         started = time.monotonic()
         cycle = 0
@@ -196,13 +300,16 @@ def run(
         if not expect_degraded:
             while time.monotonic() - started < duration_seconds:
                 cycle_started = time.monotonic()
-                save_started = time.monotonic()
+                save_started_ns = time.monotonic_ns()
+                pending_targets = {}
                 for owner, node in enumerate(source_nodes):
+                    before_sequence = _metadata(managers[node])["inventory_sequence"]
                     cleaned = _cleanup_dram(managers[node])
                     assert cleaned["evicted_blocks"] == pages
                     payload = _payload(torch, pages, block_bytes, cycle * owners + owner + 1)
                     tensors[node].copy_(payload)
                     torch.cuda.synchronize()
+                    owner_save_started_ns = time.monotonic_ns()
                     ok, message = clients[node].save(
                         node,
                         0,
@@ -211,12 +318,78 @@ def run(
                         [("kv:0", list(range(pages)), hashes[node])],
                     )
                     assert ok, message
-                save_latency.append((time.monotonic() - save_started) * 1000)
-                fences = {node: _sync(managers[node]) for node in source_nodes}
-                visibility_started = time.monotonic()
-                for node in source_nodes:
-                    _await_fence(managers["observer"], fences[node], manager_list, timeout=30)
-                visibility.append((time.monotonic() - visibility_started) * 1000)
+                    pending_targets[node] = {
+                        "minimum_sequence": before_sequence + pages * 2,
+                        "save_start_mono_ns": owner_save_started_ns,
+                    }
+                save_latency.append((time.monotonic_ns() - save_started_ns) / 1_000_000)
+                targets = {}
+                for node, pending in pending_targets.items():
+                    _until(
+                        lambda node=node, minimum=pending["minimum_sequence"]: _metadata(
+                            managers[node]
+                        )["inventory_sequence"]
+                        >= minimum,
+                        manager_list,
+                    )
+                    source = _metadata(managers[node])
+                    binding = _assert_binding(managers[node], source_bindings[node])
+                    assert source["inventory_sequence"] == pending["minimum_sequence"], source
+                    published_ns = source["inventory_last_change_mono_ns"]
+                    assert published_ns >= pending["save_start_mono_ns"]
+                    targets[node] = {
+                        "node": node,
+                        "epoch": binding["epoch"],
+                        "incarnation": binding["incarnation"],
+                        "scope_digest": binding["scope_digest"],
+                        "sequence": source["inventory_sequence"],
+                        "view_id": installed_views[binding["incarnation"]]["view_id"],
+                        "published_mono_ns": published_ns,
+                        "save_start_mono_ns": pending["save_start_mono_ns"],
+                    }
+
+                _assert_binding(managers["observer"], observer_binding)
+                verification_ms = None
+                wait_started_ns = time.monotonic_ns()
+                if visibility_mode != "ordinary":
+                    fences = {node: _sync(managers[node]) for node in source_nodes}
+                    for node, fence in fences.items():
+                        target = targets[node]
+                        assert fence["source_incarnation"] == target["incarnation"]
+                        assert fence["source_node_epoch"] == target["epoch"]
+                        assert fence["inventory_sequence"] == target["sequence"]
+                    verification_started_ns = time.monotonic_ns()
+                    if visibility_mode == "serial-barrier":
+                        for node in source_nodes:
+                            _await_fence(
+                                managers["observer"], fences[node], manager_list, timeout=30
+                            )
+                    else:
+                        _await_concurrently(
+                            managers["observer"],
+                            fences,
+                            observer_binding["scope_digest"],
+                            manager_list,
+                            barrier_concurrency,
+                        )
+                    verification_ms = (time.monotonic_ns() - verification_started_ns) / 1_000_000
+                installed = _wait_for_installs(
+                    managers["observer"], targets, manager_list, timeout=30
+                )
+                harness_completed_ns = time.monotonic_ns()
+                _assert_binding(managers["observer"], observer_binding)
+                installation = _installation_sample(targets, installed, harness_completed_ns)
+                publication_to_install.append(installation["publication_to_install_ms"])
+                save_start_to_install.append(installation["save_start_to_install_ms"])
+                install_to_harness.append(installation["install_to_harness_ms"])
+                if visibility_mode == "ordinary":
+                    ordinary_harness_wait.append(
+                        (harness_completed_ns - wait_started_ns) / 1_000_000
+                    )
+                elif visibility_mode == "serial-barrier":
+                    serial_barrier_verification.append(verification_ms)
+                else:
+                    concurrent_barrier_verification.append(verification_ms)
                 if not skip_restore:
                     selected = source_nodes[cycle % owners]
                     expected = _payload(
@@ -247,7 +420,10 @@ def run(
                         {
                             "cycle": cycle,
                             "elapsed": time.monotonic() - started,
-                            "visibility_ms": visibility[-1],
+                            "measurement_contract": MEASUREMENT_CONTRACT,
+                            "visibility_mode": visibility_mode,
+                            "installation": installation,
+                            "barrier_verification_ms": verification_ms,
                             "save_ms": save_latency[-1],
                             "index": observer["index"],
                             "stream": observer["stream"],
@@ -270,6 +446,7 @@ def run(
                     payload = _payload(torch, pages, block_bytes, cycle * owners + owner + 1)
                     tensors[node].copy_(payload)
                     torch.cuda.synchronize()
+                    owner_save_started_ns = time.monotonic_ns()
                     ok, message = clients[node].save(
                         node,
                         0,
@@ -286,6 +463,8 @@ def run(
                         {
                             "cycle": cycle,
                             "elapsed": time.monotonic() - started,
+                            "measurement_contract": MEASUREMENT_CONTRACT,
+                            "visibility_mode": "degraded-no-complete-view",
                             "save_ms": save_latency[-1],
                             "index": observer["index"],
                             "stream": observer["stream"],
@@ -326,8 +505,20 @@ def run(
                 "cycles": cycle,
                 "wall_seconds": time.monotonic() - started,
                 "bootstrap_ms": bootstrap_ms,
-                "visibility_ms": _summary(visibility),
-                "save_latency_ms": _summary(save_latency),
+                "ordinary_publication_to_install_ms": _summary(
+                    publication_to_install if visibility_mode == "ordinary" else []
+                ),
+                "forced_publication_to_install_ms": _summary(
+                    publication_to_install if visibility_mode != "ordinary" else []
+                ),
+                "save_start_to_install_ms": _summary(save_start_to_install),
+                "install_to_harness_ms": _summary(install_to_harness),
+                "ordinary_harness_wait_ms": _summary(ordinary_harness_wait),
+                "historical_serial_barrier_verification_ms": _summary(serial_barrier_verification),
+                "bounded_concurrent_barrier_verification_ms": _summary(
+                    concurrent_barrier_verification
+                ),
+                "mutation_submit_loop_ms": _summary(save_latency),
                 "remote_fetch_bytes": remote_bytes,
                 "observer": observer_status,
                 "owner_rows": owner_rows,
@@ -337,9 +528,14 @@ def run(
                 "etcd_keys": keys,
             }
         )
-        (output / "capacity-result.json").write_text(json.dumps(result, indent=2) + "\n")
-        if owners == 16 and not expect_degraded:
-            assert result["visibility_ms"]["p99"] <= 50
+        result["collection_status"] = result["status"]
+        result["qualification_status"] = "not_evaluated"
+        if enforce_thresholds:
+            result["qualification_status"] = (
+                "passed" if result["ordinary_publication_to_install_ms"]["p99"] <= 50 else "failed"
+            )
+            if result["qualification_status"] == "failed":
+                result["status"] = "failed"
 
         for node, client in clients.items():
             with contextlib.suppress(Exception):
@@ -348,9 +544,15 @@ def run(
         tensors.clear()
         torch.cuda.synchronize()
         torch.cuda.ipc_collect()
-        for manager in managers.values():
+        result["cleanup"] = {}
+        for node, manager in managers.items():
             exit_code, seconds = manager.terminate_gracefully(timeout=10)
+            result["cleanup"][node] = {"exit_code": exit_code, "seconds": seconds}
             assert exit_code == 0 and seconds <= 10
+        (output / "capacity-result.json").write_text(json.dumps(result, indent=2) + "\n")
+        assert result["qualification_status"] != "failed", result[
+            "ordinary_publication_to_install_ms"
+        ]
 
 
 def main():
@@ -362,12 +564,25 @@ def main():
     parser.add_argument("--duration-seconds", type=int, default=60)
     parser.add_argument("--index-budget", default="16mb")
     parser.add_argument("--expect-degraded", action="store_true")
+    parser.add_argument(
+        "--visibility-mode",
+        choices=("ordinary", "serial-barrier", "concurrent-barrier"),
+        default="ordinary",
+    )
+    parser.add_argument("--barrier-concurrency", type=int, default=4)
+    parser.add_argument("--enforce-thresholds", action="store_true")
     parser.add_argument("--output", type=external_path, required=True)
     args = parser.parse_args()
     if args.duration_seconds <= 0:
         parser.error("duration must be positive")
     if args.pages <= 0 or args.pages > 1024:
         parser.error("--pages must be in 1..=1024")
+    if args.barrier_concurrency <= 0 or args.barrier_concurrency > 16:
+        parser.error("--barrier-concurrency must be in 1..=16")
+    if args.enforce_thresholds and (args.owners != 16 or args.visibility_mode != "ordinary"):
+        parser.error("visibility qualification is the ordinary 16-owner cell")
+    if args.expect_degraded and args.enforce_thresholds:
+        parser.error("degraded-budget runs do not enforce supported visibility thresholds")
     for variable in ("ETCD_BIN", "ORBITKV_CACHE_MANAGER_BINARY", "ORBITKV_MOONCAKE_LIB_DIR"):
         if not os.environ.get(variable):
             parser.error(f"set {variable} to a frozen artifact")
@@ -382,6 +597,9 @@ def main():
             args.seed,
             args.pages,
             args.skip_restore,
+            args.visibility_mode,
+            args.barrier_concurrency,
+            args.enforce_thresholds,
         )
     except BaseException as error:
         (args.output / "failure.txt").write_text(repr(error) + "\n")

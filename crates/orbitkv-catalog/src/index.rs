@@ -31,6 +31,7 @@ pub struct OwnerIndexStatus {
     pub owner: Uuid,
     pub view_id: Uuid,
     pub applied_sequence: u64,
+    pub installed_mono_ns: u64,
     pub fresh: bool,
     pub receipt_age_ms: u64,
     pub records: usize,
@@ -67,6 +68,7 @@ struct Entry {
 struct OwnerView {
     view_id: Uuid,
     applied_sequence: u64,
+    installed_mono_ns: u64,
     records: BTreeMap<Residence, InventoryRecord>,
     fresh: bool,
     received_at: Instant,
@@ -495,6 +497,7 @@ impl GlobalIndex {
             OwnerView {
                 view_id: staging.view_id,
                 applied_sequence: through_sequence,
+                installed_mono_ns: 0,
                 records: staging.records,
                 fresh: true,
                 received_at: Instant::now(),
@@ -506,6 +509,10 @@ impl GlobalIndex {
             view.fresh_expected_owner_views += 1;
         }
         view.generation = view.generation.saturating_add(1);
+        view.owners
+            .get_mut(&owner)
+            .expect("committed owner view")
+            .installed_mono_ns = monotonic_ns();
         Ok(view_id)
     }
 
@@ -592,6 +599,10 @@ impl GlobalIndex {
             .checked_add_signed(delta)
             .ok_or("index accounting underflow")?;
         view.generation = view.generation.saturating_add(1);
+        view.owners
+            .get_mut(&owner)
+            .expect("applied owner view")
+            .installed_mono_ns = monotonic_ns();
         Ok(DeltaApply::Applied)
     }
 
@@ -610,6 +621,7 @@ impl GlobalIndex {
                 owner,
                 view_id: view.view_id,
                 applied_sequence: view.applied_sequence,
+                installed_mono_ns: view.installed_mono_ns,
                 fresh: view.fresh && !view.retired,
                 receipt_age_ms: u64::try_from(view.received_at.elapsed().as_millis())
                     .unwrap_or(u64::MAX),
@@ -627,6 +639,7 @@ impl GlobalIndex {
                 owner: *owner,
                 view_id: owner_view.view_id,
                 applied_sequence: owner_view.applied_sequence,
+                installed_mono_ns: owner_view.installed_mono_ns,
                 fresh: owner_view.fresh && !owner_view.retired,
                 receipt_age_ms: u64::try_from(owner_view.received_at.elapsed().as_millis())
                     .unwrap_or(u64::MAX),
@@ -781,6 +794,22 @@ impl GlobalIndex {
             })
             .collect()
     }
+}
+
+fn monotonic_ns() -> u64 {
+    let mut now = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `now` is a valid writable timespec and CLOCK_MONOTONIC has no
+    // additional pointer lifetime requirements.
+    if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &raw mut now) } != 0 {
+        return 0;
+    }
+    u64::try_from(now.tv_sec)
+        .unwrap_or(0)
+        .saturating_mul(1_000_000_000)
+        .saturating_add(u64::try_from(now.tv_nsec).unwrap_or(0))
 }
 
 fn coverage(view: &View, registration_valid: bool) -> DiscoveryCoverage {

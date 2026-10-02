@@ -46,6 +46,7 @@ async fn serve(runtime: InventoryRuntime, port: u16) -> tokio::task::JoinHandle<
     task
 }
 
+#[cfg(feature = "test-hooks")]
 struct ScopedNode {
     cluster: crate::cluster::Cluster,
     runtime: InventoryRuntime,
@@ -53,6 +54,7 @@ struct ScopedNode {
     server: tokio::task::JoinHandle<()>,
 }
 
+#[cfg(feature = "test-hooks")]
 async fn scoped_node(
     etcd: &Etcd,
     cluster: &str,
@@ -661,6 +663,10 @@ async fn scope_change_restart_never_reuses_the_old_view_or_cursor() {
 #[cfg(feature = "test-hooks")]
 #[path = "inventory_capacity.rs"]
 mod capacity;
+
+#[cfg(feature = "test-hooks")]
+#[path = "inventory_pressure.rs"]
+mod pressure;
 
 #[tokio::test]
 async fn fenced_source_stops_before_queueing_an_inventory_frame() {
