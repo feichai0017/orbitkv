@@ -36,7 +36,7 @@ record submitted, merged and released as different states.
 | --- | --- |
 | S0 | Agent handoff and Codex skill migration merged in PR #190. |
 | S1 | Evidence separation independently verified at `ec3add9b`; this delivery consolidates plans and release-based integration guidance. Acceptance covers S1 only; native CUDA qualification remains blocked on this host. |
-| S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. The current queue head is the second frozen S2.10 same-host formal run after independently accepted fixture pacing/cleanup repair; the first matrix remains invalid. The measurement/oracle and release-source profile are independently accepted; the 16-owner visibility and 5% isolation cells await the five-run/pair results and review. Physical cross-host cache/HA, final serving, RDMA/GDS and S3-dependent cells remain open. |
+| S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. Independent final review accepts the second frozen S2.10 same-host formal handoff: all 25 cells are valid and five 16-owner ordinary visibility runs pass 50 ms, while both DRAM and SSD isolation fail the frozen per-pair/CI contract. The supported envelope stays four owners and the first matrix remains invalid. Physical cross-host cache/HA, final serving, RDMA/GDS and S3-dependent cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
 | S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.30.0 adapter upgrade consumes native transfer results with local A100 cache/P/D evidence. Independent upgrade acceptance and public lifecycle/deployment gates remain open. |
@@ -52,10 +52,11 @@ independent work. Use **implementation open**, **implementation partial**,
 
 The [distributed inventory and recovery design](distributed-design.md) specifies
 the authorized evolution beyond the former etcd block index. S2.7–S2.9 and
-S2.10 same-host correctness are accepted; the current delivery is the remaining
-same-host S2.10 performance qualification repair on the PR #199 merged-main
-artifact. The corrected measurement contract and formal inputs are independently
-accepted; execute the frozen rerun and retain the old failed evidence. Do not enter S3, S6 or S7 from this delivery. Existing S3
+S2.10 same-host correctness are accepted; the current delivery is the final
+review and handoff of the completed same-host S2.10 performance qualification on
+the PR #199 merged-main artifact. The corrected measurement contract and formal
+inputs are independently accepted; retain both formal campaigns and the new
+isolation failures without another automatic run. Do not enter S3, S6 or S7 from this delivery. Existing S3
 lifetime gates still control any new payload concurrency, reuse or reclamation.
 Cross-host qualification remains open until actual failure-domain evidence exists.
 
@@ -440,13 +441,15 @@ with the frozen S2.9 handoff; no serving or tenant-isolation claim is inferred.
 ### S2.10 — Sustained live-store and independent-domain qualification
 
 **Same-host correctness independently accepted at `65c51aaa`; qualification
-remains partial because the frozen 16-owner visibility and 5% isolation gates
-fail. Depends on:** accepted protocol implementation from S2.8 and S2.9 for
+remains partial because the 16-owner ordinary visibility gate now passes but the
+frozen 5% DRAM/SSD isolation gates fail. Depends on:** accepted protocol implementation from S2.8 and S2.9 for
 scoped claims. This carries forward S2's remaining performance, capacity, serving
 and cross-host obligations; it does not replace missing evidence with a new name.
 
-**Current next delivery:** finish and independently review the second frozen
-same-host performance campaign on the PR #199 merged-main artifact. The bounded
+**Current next delivery:** physical cross-host cache/HA and independent etcd
+failure-domain qualification when the required hosts are available. A separate
+isolation diagnosis needs its own preregistered scope and cannot replace this failed
+cohort. This delivery stops after the accepted same-host handoff. The bounded
 fixture pacing/invalid-run cleanup repair has independent acceptance. Merged-artifact
 regression and the corrected measurement/oracle contracts are complete; the
 formal runner and release pressure-source profile have independent Codex launch
@@ -542,13 +545,23 @@ The new input manifest is
 `92312221ad5f0177cab3d32fa9508991d112ba97b85196e8991a5a5331808318`, under
 `measurement-v2-20261003/pacing-repair-20261003/formal-inputs/`. The release
 fixture SHA256 is `7f32c49ff33a11f89119f4205da0b70f7705ff29da91bfde36c59b5b6f6c8c33`.
-The complete fresh 25-cell matrix runs at
+The complete fresh 25-cell matrix ran at
 `pacing-repair-20261003/candidate-fbcfd130/formal-qualification-2/`; its source
 stall variables are forbidden and result guards verify they remain disabled.
 The old successful capacity cell is not pooled into the new five-run cohort.
-This is one bounded restart: further invalidity or performance failure is handed
-off unqualified, with no third automatic campaign or threshold/resource tuning.
-No performance qualification or expanded capacity is accepted yet.
+This is one bounded restart: no third automatic campaign or threshold/resource
+tuning follows its performance failures. All 25 cells are valid, exit zero and
+complete normal cleanup. The five 16-owner ordinary publication-to-install runs
+have p99 4.281–4.309 ms and each passes 50 ms; install-to-harness p99 remains a
+separate 55.910–56.605 ms observation and is not production visibility. Both
+DRAM and SSD isolation fail because at least one pair exceeds 1.05; DRAM query
+and both SSD primary-metric CI upper bounds also exceed 1.05. The complete raw
+archive, independent recomputation and offline association audit are under
+`pacing-repair-20261003/`. Independent final review accepts correctness,
+collection validity, cleanup and the ordinary visibility result, while confirming
+both isolation failures and the unqualified 16-owner envelope. Its report is under
+`pacing-repair-20261003/codex-final-qualification-review/`; isolation and expanded
+capacity remain unqualified.
 
 - Execute the [frozen workload/acceptance matrix](distributed-design.md#performance-acceptance-and-ablations)
   on actual live DRAM and io_uring storage. Increase one load dimension at a time,
@@ -601,9 +614,12 @@ regressions of 2.13%/-2.93%. Quiet and fault-inclusive visibility are reported
 separately; the intentional slow-subscriber window is not presented as ordinary
 freshness.
 
-The real-Manager supported owner envelope stops at four. A 16-owner run is exact
-and complete but fails the frozen 50 ms target at 51.72 ms visibility p99, so it
-is retained as an unsupported boundary. Five matched 16 MiB/1 MiB index-pressure
+The real-Manager supported owner envelope still stops at four. The historical
+16-owner 51.72 ms result is retained as a serial-barrier endpoint failure, not an
+ordinary visibility measurement. The replacement five-run ordinary endpoint is
+exact and complete and passes 50 ms, but the same replacement profile fails the
+frozen DRAM/SSD isolation contract, so it does not expand the supported envelope.
+Five matched 16 MiB/1 MiB index-pressure
 runs degrade explicitly to `partial_hints`, keep two of four owner views, remain
 under the configured budget and clear staging. The earlier 256 MiB soak, shutdown
 timeout, harness failures and the session-counter failure remain archived.

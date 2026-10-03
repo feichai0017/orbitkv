@@ -584,8 +584,9 @@ session-lifecycle fault, not harmless telemetry drift.
 `GET /cache/metadata/owners?after=<uuid>&limit=<1..128>` reports bounded,
 UUID-ordered installed owner views with their committed sequence, freshness,
 receipt age, record count and `installed_mono_ns`. The latter is the observer's
-`CLOCK_MONOTONIC` timestamp at atomic snapshot commit, delta apply or exact
-progress confirmation. It can be compared with a source timestamp only when both
+`CLOCK_MONOTONIC` timestamp at atomic snapshot commit or delta apply; an exact
+progress confirmation at unchanged sequence preserves it. Compare it with a
+source timestamp only when both
 processes run in the same host clock domain and the sample also matches owner,
 epoch, incarnation, scope digest and sequence. HTTP response time remains a
 separate harness-observation delay. This endpoint is an operational/qualification
