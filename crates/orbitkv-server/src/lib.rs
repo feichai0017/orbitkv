@@ -770,7 +770,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         )
     };
     let runtime_handle = runtime.handle().clone();
-    runtime.block_on(async move {
+    let result = runtime.block_on(async move {
         let membership = match membership_view.clone() {
             Some(view) => Some(
                 cluster::Cluster::join(
@@ -942,7 +942,9 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         trace::flush();
 
         Ok(())
-    })
+    });
+    orbitkv_common::timeline::flush_diagnostic();
+    result
 }
 
 fn random_nonzero_session_epoch() -> u64 {

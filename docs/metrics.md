@@ -99,6 +99,14 @@ SSD-writer boundaries. A `diagnostic_timeline_limit` event invalidates the run.
 Client return, insert completion and SSD completion are different endpoints; the
 diagnostic never redefines save submission as SSD durability.
 
+With a positive diagnostic limit, existing transfer records and the additional
+stage records share a bounded asynchronous writer instead of synchronously
+formatting output on request/storage threads. The total accepted records, not
+only the additional stage records, consume the process limit. Normal Manager
+shutdown drains request and storage owners before flushing the writer. A missing
+required stage, a limit event or an abnormal process exit remains invalid; the
+buffer does not manufacture completion evidence.
+
 `cache_restore` supplies the GPU-completed boundary for
 Manager-executed restores, from preparation after framework page allocation
 through terminal GPU completion. Its plan retains `RestoreTargetShape`

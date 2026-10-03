@@ -591,6 +591,19 @@ residency, hit path, budgets and pressure volume fixed. A diagnostic affinity or
 sampling condition is not a deployment qualification. Stop at the frozen budget;
 retain invalid runs and do not expand samples or tune after viewing results.
 
+The first three-cell instrumentation pilot at `183fb67` is retained as a failed
+overhead control. All cells complete exact SSD restores, required stage linkage,
+normal Manager/source exits and zero final resource drain metrics; both enabled
+cells record 1,560 correlated events without reaching the 16,384-event limit.
+However, enabled/off quiet p50 ratios are 1.347 for save and 1.427 for query,
+above the frozen 1.05 limit. The p99 absolute and CPU-tick guards pass, but do not
+override either p50 failure. Synchronous JSON timeline logging is therefore being
+removed from the measured request threads while retaining the same bounded event
+contract. No formal diagnostic matrix may start until the repaired observation
+path repeats the entire pilot and receives independent acceptance. Evidence is
+external under `s2-10-isolation-diagnosis-20261003/pilot/`; it is not pooled with
+the accepted isolation cohort.
+
 Implement a production change only for a demonstrated owner/waiting path. Do not
 reduce pressure, input, correctness work or drain. If evidence is insufficient,
 hand off the bounded diagnosis and next discriminating experiment without adding
