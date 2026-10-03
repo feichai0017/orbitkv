@@ -108,6 +108,7 @@ insert and SSD completion are later diagnostic stages. Use per-thread schedstat
 when perf is unavailable, and report that precision limit instead of inferring
 scheduler causality. Diagnostic results never replace the frozen isolation cohort.
 With a positive limit, all transfer/stage records share the bounded asynchronous
-writer; require normal Manager shutdown to flush it before accepting linkage.
+writer; required stage/query-path entries are fixed-size until that writer
+formats them. Require normal Manager shutdown to flush it before accepting linkage.
 An instrumentation pilot that fails its frozen overhead guard blocks a diagnostic
 matrix even when correlation, correctness and cleanup otherwise pass.

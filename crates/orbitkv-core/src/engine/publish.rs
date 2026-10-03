@@ -27,14 +27,15 @@ pub struct PublishDiagnostic {
 }
 
 impl PublishDiagnostic {
-    pub(crate) fn record(&self, stage: &str, fields: impl FnOnce() -> serde_json::Value) {
-        orbitkv_common::timeline::record_diagnostic(stage, || {
-            let mut fields = fields();
-            fields["request_id"] = self.request_id.into();
-            fields["session_epoch"] = self.session_epoch.into();
-            fields["session_token"] = self.session_token.into();
-            fields
-        });
+    pub(crate) fn record(
+        &self,
+        stage: &'static str,
+        fields: orbitkv_common::timeline::DiagnosticFields,
+    ) {
+        orbitkv_common::timeline::record_diagnostic(
+            stage,
+            fields.with_operation(self.request_id, self.session_epoch, self.session_token),
+        );
     }
 }
 
@@ -802,7 +803,9 @@ impl OrbitKVEngine {
             if let Some(diagnostic) = diagnostic {
                 diagnostic.record(
                     "publish_storage_enqueue",
-                    || serde_json::json!({"group": 0, "blocks": blocks.len()}),
+                    orbitkv_common::timeline::DiagnosticFields::default()
+                        .group(0)
+                        .blocks(blocks.len()),
                 );
             }
             self.storage.writes.insert(RawSaveBatch {
@@ -847,7 +850,9 @@ impl OrbitKVEngine {
                         .unwrap_or(0);
                     diagnostic.record(
                         "publish_storage_enqueue",
-                        || serde_json::json!({"group": group, "blocks": blocks}),
+                        orbitkv_common::timeline::DiagnosticFields::default()
+                            .group(group)
+                            .blocks(blocks),
                     );
                 }
                 self.storage.writes.insert(RawSaveBatch {

@@ -106,6 +106,10 @@ only the additional stage records, consume the process limit. Normal Manager
 shutdown drains request and storage owners before flushing the writer. A missing
 required stage, a limit event or an abnormal process exit remains invalid; the
 buffer does not manufacture completion evidence.
+Required stage and foreground query-path events enter the writer as fixed-size
+records; their JSON representation is built only by the writer. Less common
+legacy transfer records retain their existing structured fields but consume the
+same total bound.
 
 `cache_restore` supplies the GPU-completed boundary for
 Manager-executed restores, from preparation after framework page allocation

@@ -652,7 +652,10 @@ impl SsdStore {
                     .extend(admitted.iter().map(|(key, _)| key.clone()));
                 metrics.ssd_write_queue_pending.add(len as i64, &[]);
                 if let Some(diagnostic) = diagnostic {
-                    diagnostic.record("publish_ssd_enqueue", || serde_json::json!({"blocks": len}));
+                    diagnostic.record(
+                        "publish_ssd_enqueue",
+                        orbitkv_common::timeline::DiagnosticFields::default().blocks(len),
+                    );
                 }
                 permit.send(SsdWriteCommand::Write(SsdWriteBatch {
                     blocks: admitted,
@@ -666,7 +669,9 @@ impl SsdStore {
                 if let Some(diagnostic) = diagnostic {
                     diagnostic.record(
                         "publish_ssd_rejected",
-                        || serde_json::json!({"blocks": len, "reason": "queue_full"}),
+                        orbitkv_common::timeline::DiagnosticFields::default()
+                            .blocks(len)
+                            .outcome("queue_full"),
                     );
                 }
                 observation.finish(Outcome::Cancelled, None);

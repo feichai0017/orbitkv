@@ -219,20 +219,22 @@ impl PublishWorker {
         if let Some(diagnostic) = diagnostic {
             diagnostic.record(
                 "publish_storage_dequeue",
-                || serde_json::json!({"blocks": total_blocks, "bytes": total_bytes}),
+                orbitkv_common::timeline::DiagnosticFields::default()
+                    .blocks(total_blocks)
+                    .bytes(total_bytes),
             );
         }
 
         self.insert(entries, total_slots, numa_node, &namespace, diagnostic);
 
         if let Some(diagnostic) = diagnostic {
-            diagnostic.record("publish_storage_complete", || {
-                serde_json::json!({
-                    "blocks": total_blocks,
-                    "bytes": total_bytes,
-                    "elapsed_us": start.elapsed().as_micros() as u64,
-                })
-            });
+            diagnostic.record(
+                "publish_storage_complete",
+                orbitkv_common::timeline::DiagnosticFields::default()
+                    .blocks(total_blocks)
+                    .bytes(total_bytes)
+                    .elapsed_us(start.elapsed().as_micros() as u64),
+            );
         }
 
         debug!(

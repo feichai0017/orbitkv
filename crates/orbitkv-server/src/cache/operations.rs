@@ -9,15 +9,17 @@ use orbitkv_core::{
 };
 use thiserror::Error;
 
-fn trace_query(stage: &str, input: &QueryInput, elapsed_us: u64, hit_blocks: usize) {
-    orbitkv_common::timeline::record(stage, || {
-        serde_json::json!({
-            "request_id": input.request_id, "instance_id": input.instance_id,
-            "group_id": input.group_id, "warmup": input.warmup,
-            "prepare": input.prepare,
-            "elapsed_us": elapsed_us, "hit_blocks": hit_blocks,
-        })
-    });
+fn trace_query(stage: &'static str, input: &QueryInput, elapsed_us: u64, hit_blocks: usize) {
+    orbitkv_common::timeline::record_query_path(
+        stage,
+        &input.request_id,
+        &input.instance_id,
+        input.group_id,
+        input.warmup,
+        input.prepare,
+        elapsed_us,
+        hit_blocks,
+    );
 }
 
 #[derive(Clone, Debug)]

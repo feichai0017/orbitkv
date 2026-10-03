@@ -604,6 +604,15 @@ path repeats the entire pilot and receives independent acceptance. Evidence is
 external under `s2-10-isolation-diagnosis-20261003/pilot/`; it is not pooled with
 the accepted isolation cohort.
 
+The first output-only repair at `f88a3954` also retains a complete matched pilot
+under `repair-f88a3954/`. Moving log output to a bounded writer reduces the save
+p50 ratio to 1.124 but leaves query at 1.340, so that repair also fails the same
+frozen guard. Required stage payloads and query-path transfer records are now
+captured as fixed-size queue entries; JSON construction moves to the writer as
+well. This observation-only change must repeat the three cells under another
+fresh artifact freeze. Neither failed pilot authorizes an isolation fix or a
+formal diagnostic launch.
+
 Implement a production change only for a demonstrated owner/waiting path. Do not
 reduce pressure, input, correctness work or drain. If evidence is insufficient,
 hand off the bounded diagnosis and next discriminating experiment without adding

@@ -505,13 +505,14 @@ fn dispatch_publish(
     runtime: &Handle,
     reply: DeferredResponse,
 ) -> Result<(), TransportError> {
-    orbitkv_common::timeline::record_diagnostic("publish_manager_receive", || {
-        serde_json::json!({
-            "request_id": command.request_id,
-            "session_epoch": command.session_epoch,
-            "session_token": command.arg0,
-        })
-    });
+    orbitkv_common::timeline::record_diagnostic(
+        "publish_manager_receive",
+        orbitkv_common::timeline::DiagnosticFields::operation(
+            command.request_id,
+            command.session_epoch,
+            command.arg0,
+        ),
+    );
     let reply_notification = sessions
         .get(&command.arg0)
         .map(|session| Arc::clone(session.reply_notification_fd()));
@@ -555,14 +556,14 @@ fn dispatch_publish(
             session_token,
         });
     runtime.spawn(async move {
-        orbitkv_common::timeline::record_diagnostic("publish_manager_process_start", || {
-            serde_json::json!({
-                "request_id": request_id,
-                "session_epoch": session_epoch,
-                "session_token": session_token,
-            })
-        });
-        let started = diagnostic.map(|_| Instant::now());
+        orbitkv_common::timeline::record_diagnostic(
+            "publish_manager_process_start",
+            orbitkv_common::timeline::DiagnosticFields::operation(
+                request_id,
+                session_epoch,
+                session_token,
+            ),
+        );
         #[cfg(feature = "test-hooks")]
         orbitkv_core::test_faults::pause("publish").await;
         let result = execute_publish(
@@ -577,17 +578,15 @@ fn dispatch_publish(
             },
         )
         .await;
-        orbitkv_common::timeline::record_diagnostic("publish_manager_process_complete", || {
-            serde_json::json!({
-                "request_id": request_id,
-                "session_epoch": session_epoch,
-                "session_token": session_token,
-                "success": result.is_ok(),
-                "elapsed_us": started
-                    .map(|started| started.elapsed().as_micros() as u64)
-                    .unwrap_or(0),
-            })
-        });
+        orbitkv_common::timeline::record_diagnostic(
+            "publish_manager_process_complete",
+            orbitkv_common::timeline::DiagnosticFields::operation(
+                request_id,
+                session_epoch,
+                session_token,
+            )
+            .success(result.is_ok()),
+        );
         if let Err(error) = result {
             response = error_response(response, engine_error_status(&error), &error);
         }
@@ -596,14 +595,15 @@ fn dispatch_publish(
             response.value1 = 0;
         }
         let sent = send_reply(response);
-        orbitkv_common::timeline::record_diagnostic("publish_manager_response_sent", || {
-            serde_json::json!({
-                "request_id": request_id,
-                "session_epoch": session_epoch,
-                "session_token": session_token,
-                "success": sent.is_ok(),
-            })
-        });
+        orbitkv_common::timeline::record_diagnostic(
+            "publish_manager_response_sent",
+            orbitkv_common::timeline::DiagnosticFields::operation(
+                request_id,
+                session_epoch,
+                session_token,
+            )
+            .success(sent.is_ok()),
+        );
         if let Err(error) = sent {
             error!("Failed to reply to completed publish: {error}");
         }
@@ -650,13 +650,14 @@ fn dispatch_query(
     hll_tracker: &Arc<std::sync::Mutex<MultiWindowHllTracker>>,
     queries: &mut pending::PendingQueries,
 ) -> Response {
-    orbitkv_common::timeline::record_diagnostic("query_manager_receive", || {
-        serde_json::json!({
-            "request_id": command.request_id,
-            "session_epoch": command.session_epoch,
-            "session_token": command.arg0,
-        })
-    });
+    orbitkv_common::timeline::record_diagnostic(
+        "query_manager_receive",
+        orbitkv_common::timeline::DiagnosticFields::operation(
+            command.request_id,
+            command.session_epoch,
+            command.arg0,
+        ),
+    );
     let mut response = Response::ok(command);
     response.value1 = 0;
     let payload = match consume_descriptor(command, bootstrap, sessions, &mut response) {
@@ -681,15 +682,6 @@ fn dispatch_query(
         Ok(request) => request,
         Err(error) => return error_response(response, StatusCode::Invalid, &error),
     };
-    let diagnostic_enabled = orbitkv_common::timeline::diagnostic_enabled();
-    let application_request = diagnostic_enabled
-        .then(|| match &request {
-            orbitkv_channel::QueryCommand::Submit(request) => Some(request.request_id.clone()),
-            orbitkv_channel::QueryCommand::Claim { .. }
-            | orbitkv_channel::QueryCommand::Poll(_) => None,
-        })
-        .flatten();
-    let started = diagnostic_enabled.then(Instant::now);
     let mut reply = match queries.execute(command.arg0, request, engine, runtime, hll_tracker) {
         Ok(reply) => reply,
         Err(error) => return error_response(response, engine_error_status(&error), &error),
@@ -699,18 +691,21 @@ fn dispatch_query(
         Some(Err(error)) => return error_response(response, engine_error_status(error), error),
         None => QueryOutcome::Loading,
     };
-    orbitkv_common::timeline::record_diagnostic("query_manager_process_complete", || {
-        serde_json::json!({
-            "request_id": command.request_id,
-            "session_epoch": command.session_epoch,
-            "session_token": command.arg0,
-            "application_request_id": application_request,
-            "outcome": format!("{outcome:?}"),
-            "elapsed_us": started
-                .map(|started| started.elapsed().as_micros() as u64)
-                .unwrap_or(0),
-        })
-    });
+    let diagnostic_outcome = match &outcome {
+        QueryOutcome::Busy => "Busy",
+        QueryOutcome::Loading => "Loading",
+        QueryOutcome::Candidates { .. } => "Candidates",
+        QueryOutcome::Ready { .. } => "Ready",
+    };
+    orbitkv_common::timeline::record_diagnostic(
+        "query_manager_process_complete",
+        orbitkv_common::timeline::DiagnosticFields::operation(
+            command.request_id,
+            command.session_epoch,
+            command.arg0,
+        )
+        .outcome(diagnostic_outcome),
+    );
     let payload = match outcome {
         QueryOutcome::Busy => QueryBundleResponse {
             outcome: QueryOutcomeCode::Busy,
