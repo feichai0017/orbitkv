@@ -115,7 +115,8 @@ same total bound.
 is made visible; `response_publish_to_client_ms` therefore includes response
 publication and notification/wakeup. It is not an after-send timestamp. Normal
 Manager shutdown stops the channel, drains GPU owners, then flushes deferred
-insert and SSD work before flushing the diagnostic writer. Writer-start failure
+Publish continuations, insert and SSD work before flushing the diagnostic writer.
+Writer-start failure
 emits a limit event and invalidates the run instead of falling back to unbounded
 logging. SSD completion accounting retains every intervening write batch even
 when only one batch carries diagnostic correlation.

@@ -632,6 +632,13 @@ failed overhead decision nor the isolation qualification boundary; they require
 CPU/unit review gates and a fresh artifact freeze, but do not authorize another
 pilot or formal campaign in this substage.
 
+The focused rereview additionally required the endpoint owner to fence detached
+Publish continuations between channel stop and storage flush; GPU drain alone can
+wake a save future before that future assembles and enqueues its deferred batch.
+The endpoint now counts admitted Publish tasks and awaits the last continuation
+before lifecycle/storage/timeline drain. This correction is unit-qualified and
+refrozen only; the stopped pilot cohort is not restarted.
+
 Implement a production change only for a demonstrated owner/waiting path. Do not
 reduce pressure, input, correctness work or drain. If evidence is insufficient,
 hand off the bounded diagnosis and next discriminating experiment without adding

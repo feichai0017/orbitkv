@@ -921,7 +921,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         }
 
         info!("Cache Manager stopped");
-        channel_endpoint.stop();
+        channel_endpoint.stop_and_drain().await;
 
         // Stop HTTP server
         shutdown.notify_waiters();

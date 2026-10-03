@@ -115,3 +115,5 @@ matrix even when correlation, correctness and cleanup otherwise pass.
 Treat `publish_manager_response_publish` as the before-publication boundary; its
 client interval includes publication plus notification. Writer-start failure or
 missing post-drain flush invalidates linkage rather than permitting fallback logs.
+Shutdown must stop channel admission, await all admitted Publish continuations,
+then flush insert/SSD owners before flushing diagnostic output.

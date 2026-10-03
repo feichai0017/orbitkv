@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -50,6 +50,43 @@ pub(crate) enum ProcessEndpointError {
 pub(crate) struct ProcessEndpoint {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
+    active_publishes: Arc<ActivePublishes>,
+}
+
+#[derive(Default)]
+struct ActivePublishes {
+    count: AtomicUsize,
+    drained: Notify,
+}
+
+impl ActivePublishes {
+    fn admit(self: &Arc<Self>) -> ActivePublish {
+        self.count.fetch_add(1, Ordering::AcqRel);
+        ActivePublish(Arc::clone(self))
+    }
+
+    async fn drain(&self) {
+        loop {
+            if self.count.load(Ordering::Acquire) == 0 {
+                return;
+            }
+            let drained = self.drained.notified();
+            if self.count.load(Ordering::Acquire) == 0 {
+                return;
+            }
+            drained.await;
+        }
+    }
+}
+
+struct ActivePublish(Arc<ActivePublishes>);
+
+impl Drop for ActivePublish {
+    fn drop(&mut self) {
+        if self.0.count.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.0.drained.notify_one();
+        }
+    }
 }
 
 impl ProcessEndpoint {
@@ -87,6 +124,8 @@ impl ProcessEndpoint {
 
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
+        let active_publishes = Arc::new(ActivePublishes::default());
+        let thread_active_publishes = Arc::clone(&active_publishes);
         let thread_service = service_name.clone();
         let thread = thread::Builder::new()
             .name("orbitkv-channel-control".to_string())
@@ -141,6 +180,7 @@ impl ProcessEndpoint {
                                 &mut sessions,
                                 &engine,
                                 &runtime,
+                                &thread_active_publishes,
                                 reply,
                             )
                         } else {
@@ -181,6 +221,7 @@ impl ProcessEndpoint {
         Ok(Self {
             stop,
             thread: Some(thread),
+            active_publishes,
         })
     }
 
@@ -191,6 +232,11 @@ impl ProcessEndpoint {
         {
             error!("Process channel thread panicked during shutdown");
         }
+    }
+
+    pub(crate) async fn stop_and_drain(&mut self) {
+        self.stop();
+        self.active_publishes.drain().await;
     }
 }
 
@@ -503,6 +549,7 @@ fn dispatch_publish(
     sessions: &mut HashMap<u64, BootstrapSession>,
     engine: &Arc<OrbitKVEngine>,
     runtime: &Handle,
+    active_publishes: &Arc<ActivePublishes>,
     reply: DeferredResponse,
 ) -> Result<(), TransportError> {
     orbitkv_common::timeline::record_diagnostic(
@@ -555,7 +602,9 @@ fn dispatch_publish(
             session_epoch,
             session_token,
         });
+    let active_publish = active_publishes.admit();
     runtime.spawn(async move {
+        let _active_publish = active_publish;
         orbitkv_common::timeline::record_diagnostic(
             "publish_manager_process_start",
             orbitkv_common::timeline::DiagnosticFields::operation(
@@ -798,3 +847,7 @@ fn engine_error_status(error: &EngineError) -> StatusCode {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/endpoint/mod.rs"]
+mod tests;
