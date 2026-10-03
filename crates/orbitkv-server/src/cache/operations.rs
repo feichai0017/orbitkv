@@ -4,7 +4,8 @@ use super::read::ReadControl;
 use crate::metric::hll::MultiWindowHllTracker;
 use orbitkv_core::QueryLeaseId;
 use orbitkv_core::{
-    EngineError, LayerSave, OrbitKVEngine, QueryMode, QueryOwner, QueryReservation,
+    EngineError, LayerSave, OrbitKVEngine, PublishDiagnostic, QueryMode, QueryOwner,
+    QueryReservation,
 };
 use thiserror::Error;
 
@@ -62,6 +63,7 @@ pub(crate) struct PublishInput {
     pub pp_rank: u32,
     pub device_id: i32,
     pub layers: Vec<PublishLayerInput>,
+    pub diagnostic: Option<PublishDiagnostic>,
 }
 
 #[derive(Clone, Debug)]
@@ -157,9 +159,31 @@ pub(crate) async fn execute_publish(
             block_hashes: layer.block_hashes,
         });
     }
-    engine
-        .batch_save_kv_blocks_from_ipc(&input.instance_id, tp_rank, pp_rank, input.device_id, saves)
-        .await
+    match input.diagnostic {
+        Some(diagnostic) => {
+            engine
+                .batch_save_kv_blocks_from_ipc_diagnostic(
+                    &input.instance_id,
+                    tp_rank,
+                    pp_rank,
+                    input.device_id,
+                    saves,
+                    diagnostic,
+                )
+                .await
+        }
+        None => {
+            engine
+                .batch_save_kv_blocks_from_ipc(
+                    &input.instance_id,
+                    tp_rank,
+                    pp_rank,
+                    input.device_id,
+                    saves,
+                )
+                .await
+        }
+    }
 }
 
 #[derive(Debug, Error)]

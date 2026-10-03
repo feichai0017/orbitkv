@@ -6,6 +6,7 @@ pub(crate) mod instance;
 mod publish;
 mod query;
 mod restore;
+pub use publish::PublishDiagnostic;
 pub use restore::{RawRestoreGrant, RestoreExecution};
 
 use std::{

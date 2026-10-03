@@ -19,6 +19,25 @@ use crate::transfer::layout::{BlockCopies, KVCacheLayout};
 use crate::transfer::worker::ssd::GpuWrite;
 use crate::transfer::worker::{LayerTransferData, SaveGroup, TransferBlock, TransferPayload};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PublishDiagnostic {
+    pub request_id: u64,
+    pub session_epoch: u64,
+    pub session_token: u64,
+}
+
+impl PublishDiagnostic {
+    pub(crate) fn record(&self, stage: &str, fields: impl FnOnce() -> serde_json::Value) {
+        orbitkv_common::timeline::record_diagnostic(stage, || {
+            let mut fields = fields();
+            fields["request_id"] = self.request_id.into();
+            fields["session_epoch"] = self.session_epoch.into();
+            fields["session_token"] = self.session_token.into();
+            fields
+        });
+    }
+}
+
 /// Unified per-layer context for the save pipeline.
 /// Combines metadata, filtered blocks, and allocation results.
 struct LayerContext {
@@ -337,6 +356,46 @@ impl OrbitKVEngine {
         pp_rank: usize,
         device_id: i32,
         saves: Vec<LayerSave>,
+    ) -> Result<(), EngineError> {
+        self.batch_save_kv_blocks_from_ipc_inner(
+            instance_id,
+            tp_rank,
+            pp_rank,
+            device_id,
+            saves,
+            None,
+        )
+        .await
+    }
+
+    pub async fn batch_save_kv_blocks_from_ipc_diagnostic(
+        &self,
+        instance_id: &str,
+        tp_rank: usize,
+        pp_rank: usize,
+        device_id: i32,
+        saves: Vec<LayerSave>,
+        diagnostic: PublishDiagnostic,
+    ) -> Result<(), EngineError> {
+        self.batch_save_kv_blocks_from_ipc_inner(
+            instance_id,
+            tp_rank,
+            pp_rank,
+            device_id,
+            saves,
+            Some(diagnostic),
+        )
+        .await
+    }
+
+    async fn batch_save_kv_blocks_from_ipc_inner(
+        &self,
+        instance_id: &str,
+        tp_rank: usize,
+        pp_rank: usize,
+        device_id: i32,
+        saves: Vec<LayerSave>,
+        diagnostic: Option<PublishDiagnostic>,
     ) -> Result<(), EngineError> {
         self.query_leases.sweep_expired();
 
@@ -740,10 +799,17 @@ impl OrbitKVEngine {
                     block
                 })
                 .collect();
+            if let Some(diagnostic) = diagnostic {
+                diagnostic.record(
+                    "publish_storage_enqueue",
+                    || serde_json::json!({"group": 0, "blocks": blocks.len()}),
+                );
+            }
             self.storage.writes.insert(RawSaveBatch {
                 namespace,
                 total_slots: topology.total_slots(),
                 numa_node: save_numa_node,
+                diagnostic,
                 layers: vec![RawSaveLayer {
                     slot_id,
                     padded_block_size: page_size,
@@ -774,10 +840,21 @@ impl OrbitKVEngine {
                         }
                     })
                     .collect();
+                if let Some(diagnostic) = diagnostic {
+                    let blocks = raw_layers
+                        .first()
+                        .map(|layer| layer.block_hashes.len())
+                        .unwrap_or(0);
+                    diagnostic.record(
+                        "publish_storage_enqueue",
+                        || serde_json::json!({"group": group, "blocks": blocks}),
+                    );
+                }
                 self.storage.writes.insert(RawSaveBatch {
                     namespace: namespace.clone(),
                     total_slots: topology.group_total_slots(group)?,
                     numa_node: save_numa_node,
+                    diagnostic,
                     layers: raw_layers,
                 });
             }

@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import os
+import shutil
 import subprocess
 import threading
 import time
@@ -41,6 +42,111 @@ from .live_store_measurements import (
 from .scoped_metadata import _etcd_revision
 
 PRESSURE_TEST = "cluster::inventory::tests::pressure::external_metadata_only_pressure_source"
+DIAGNOSTIC_CONTRACT = "s2.10-isolation-diagnosis-v1"
+
+
+def _channel_observation(observation):
+    return {
+        "request_id": observation.request_id,
+        "session_epoch": observation.session_epoch,
+        "session_token": observation.session_token,
+        "submitted_mono_ns": observation.submitted_mono_ns,
+        "returned_mono_ns": observation.returned_mono_ns,
+    }
+
+
+def _query_ready_diagnostic(client, instance, hashes, request, expected, managers):
+    from orbitkv import BlockHashes, QueryReady
+
+    batch = BlockHashes(hashes)
+    observations = []
+
+    def poll():
+        result, observation = client.query_prefetch_diagnostic(instance, batch, request)
+        observations.append(_channel_observation(observation))
+        if not isinstance(result, QueryReady):
+            return None
+        if result.num_hit_blocks == expected:
+            return result
+        if result.lease:
+            client.release(result.lease)
+        if expected == 0:
+            raise AssertionError(
+                f"expected no hits for {request}, observed {result.num_hit_blocks}"
+            )
+        return None
+
+    return _until(poll, managers), observations
+
+
+def _collect_diagnostic_events(output, samples, medium):
+    events = []
+    for line in (output / "foreground-manager.log").read_text().splitlines():
+        _, marker, payload = line.partition("cache_timeline ")
+        if not marker:
+            continue
+        event, _ = json.JSONDecoder().raw_decode(payload)
+        if "diagnostic_event" in event or event["stage"] == "diagnostic_timeline_limit":
+            events.append(event)
+    assert not any(event["stage"] == "diagnostic_timeline_limit" for event in events), events[-1:]
+
+    by_operation = {}
+    for event in events:
+        key = (event["session_epoch"], event["session_token"], event["request_id"])
+        by_operation.setdefault(key, []).append(event["stage"])
+
+    save_required = {
+        "publish_manager_receive",
+        "publish_manager_process_start",
+        "publish_manager_process_complete",
+        "publish_manager_response_sent",
+        "publish_storage_enqueue",
+        "publish_storage_dequeue",
+        "publish_storage_complete",
+    }
+    if medium == "ssd":
+        save_required.update(
+            {"publish_ssd_enqueue", "publish_ssd_dequeue", "publish_ssd_complete"}
+        )
+    save_operations = []
+    query_operations = []
+    for sample in samples:
+        observation = sample["save_channel"]
+        key = (
+            observation["session_epoch"],
+            observation["session_token"],
+            observation["request_id"],
+        )
+        stages = set(by_operation.get(key, []))
+        assert save_required <= stages, (key, save_required - stages)
+        save_operations.append(key)
+        for observation in sample["query_channels"]:
+            key = (
+                observation["session_epoch"],
+                observation["session_token"],
+                observation["request_id"],
+            )
+            stages = set(by_operation.get(key, []))
+            assert {"query_manager_receive", "query_manager_process_complete"} <= stages, (
+                key,
+                stages,
+            )
+            query_operations.append(key)
+
+    with (output / "diagnostic-events.jsonl").open("w") as event_file:
+        for event in events:
+            event_file.write(json.dumps(event) + "\n")
+    return {
+        "events": len(events),
+        "save_operations": len(save_operations),
+        "query_operations": len(query_operations),
+        "unique_save_operations": len(set(save_operations)),
+        "unique_query_operations": len(set(query_operations)),
+        "stage_counts": {
+            stage: sum(event["stage"] == stage for event in events)
+            for stage in sorted({event["stage"] for event in events})
+        },
+    }
 
 
 def _start_pressure_source(
@@ -115,7 +221,13 @@ def run(
     order_index: int,
     pressure_cadence_ms: int,
     observer_sample_ms: int,
+    diagnostic_timeline_limit: int,
 ):
+    if diagnostic_timeline_limit:
+        os.environ["ORBITKV_TRACE_TRANSFERS"] = "1"
+        os.environ["ORBITKV_DIAGNOSTIC_TIMELINE_LIMIT"] = str(diagnostic_timeline_limit)
+    elif os.environ.get("ORBITKV_DIAGNOSTIC_TIMELINE_LIMIT", "0") != "0":
+        raise ValueError("diagnostic timeline requires --diagnostic-timeline-limit")
     import torch
 
     import orbitkv.orbitkv as native
@@ -134,7 +246,9 @@ def run(
     pressure_rounds = math.ceil((warmup_rounds + samples + 1) * cadence_ms / pressure_cadence_ms)
     cluster = f"s210-isolation-{uuid.uuid4().hex[:12]}"
     result = {
-        "measurement_contract": MEASUREMENT_CONTRACT,
+        "measurement_contract": (
+            DIAGNOSTIC_CONTRACT if diagnostic_timeline_limit else MEASUREMENT_CONTRACT
+        ),
         "payload_schema": "u64-generation-u64-block-le-v1",
         "condition": condition,
         "pressure_profile": f"sustained-{pressure_cadence_ms}ms-v1",
@@ -174,6 +288,13 @@ def run(
             "same-host A100, one full foreground Manager plus one test-owned "
             "production inventory-stream source, forced TCP"
         ),
+        "diagnostic": {
+            "enabled": bool(diagnostic_timeline_limit),
+            "timeline_limit": diagnostic_timeline_limit,
+            "clock": "CLOCK_MONOTONIC",
+            "perf_sched_available": shutil.which("perf") is not None,
+            "thread_schedstat": "optional per-thread /proc schedstat snapshot deltas",
+        },
     }
     artifacts = {
         "manager": os.environ["ORBITKV_CACHE_MANAGER_BINARY"],
@@ -375,13 +496,24 @@ def run(
             torch.cuda.synchronize()
             payload_prepare_ms = (time.monotonic_ns() - prepare_started) / 1_000_000
             save_started = time.monotonic_ns()
-            ok, message = client.save(
-                "foreground",
-                0,
-                0,
-                device,
-                [("kv:0", list(range(pages)), hashes)],
-            )
+            save_channel = None
+            if diagnostic_timeline_limit:
+                ok, message, observation = client.save_diagnostic(
+                    "foreground",
+                    0,
+                    0,
+                    device,
+                    [("kv:0", list(range(pages)), hashes)],
+                )
+                save_channel = _channel_observation(observation)
+            else:
+                ok, message = client.save(
+                    "foreground",
+                    0,
+                    0,
+                    device,
+                    [("kv:0", list(range(pages)), hashes)],
+                )
             save_completed = time.monotonic_ns()
             manager_save_submit_ms = (save_completed - save_started) / 1_000_000
             assert ok, message
@@ -392,14 +524,25 @@ def run(
                 assert cleaned["evicted_blocks"] == pages
             metrics_before = fetch_orbitkv_metrics(manager.http_port)
             query_started = time.monotonic_ns()
-            query = _query_ready(
-                client,
-                "foreground",
-                hashes,
-                f"isolation-{condition}-{round_id}",
-                pages,
-                [manager],
-            )
+            if diagnostic_timeline_limit:
+                query, query_channels = _query_ready_diagnostic(
+                    client,
+                    "foreground",
+                    hashes,
+                    f"isolation-{condition}-{round_id}",
+                    pages,
+                    [manager],
+                )
+            else:
+                query = _query_ready(
+                    client,
+                    "foreground",
+                    hashes,
+                    f"isolation-{condition}-{round_id}",
+                    pages,
+                    [manager],
+                )
+                query_channels = []
             query_completed = time.monotonic_ns()
             destination_started = query_completed
             tensor.zero_()
@@ -452,6 +595,11 @@ def run(
                 "gpu_consumable_ms": (gpu_completed - restore_started) / 1_000_000,
                 "payload_sha256": hashlib.sha256(expected.cpu().numpy().tobytes()).hexdigest(),
             }
+            if diagnostic_timeline_limit:
+                assert save_started <= save_channel["submitted_mono_ns"]
+                assert save_channel["returned_mono_ns"] <= save_completed
+                sample["save_channel"] = save_channel
+                sample["query_channels"] = query_channels
             if measured:
                 for name in latencies:
                     latencies[name].append(sample[name])
@@ -630,6 +778,14 @@ def run(
                 "manager_shutdown_seconds": shutdown_seconds,
             }
         )
+        if diagnostic_timeline_limit:
+            raw.flush()
+            diagnostic_samples = [
+                json.loads(line) for line in (output / "samples.jsonl").read_text().splitlines()
+            ]
+            result["diagnostic"].update(
+                _collect_diagnostic_events(output, diagnostic_samples, medium)
+            )
         (output / "isolation-result.json").write_text(
             json.dumps(result, indent=2, allow_nan=False) + "\n"
         )
@@ -647,6 +803,7 @@ def main():
     parser.add_argument("--cadence-ms", type=int, default=1000)
     parser.add_argument("--pressure-cadence-ms", type=int, default=17)
     parser.add_argument("--observer-sample-ms", type=int, default=25)
+    parser.add_argument("--diagnostic-timeline-limit", type=int, default=0)
     parser.add_argument("--pressure-keys", type=int, default=2048)
     parser.add_argument("--pressure-active-keys", type=int, default=1536)
     parser.add_argument("--pressure-window-shift", type=int, default=128)
@@ -661,6 +818,8 @@ def main():
         parser.error("--order-index cannot be negative")
     if args.pressure_cadence_ms <= 0 or args.observer_sample_ms <= 0:
         parser.error("pressure and observer cadences must be positive")
+    if not 0 <= args.diagnostic_timeline_limit <= 65_536:
+        parser.error("diagnostic timeline limit must be between 0 and 65536")
     if args.pressure_active_keys <= args.pressure_window_shift:
         parser.error("pressure active keys must exceed the window shift")
     if args.pressure_keys < args.pressure_active_keys + args.pressure_window_shift:
@@ -689,6 +848,7 @@ def main():
             args.order_index,
             args.pressure_cadence_ms,
             args.observer_sample_ms,
+            args.diagnostic_timeline_limit,
         )
     except BaseException as error:
         (args.output / "failure.txt").write_text(repr(error) + "\n")

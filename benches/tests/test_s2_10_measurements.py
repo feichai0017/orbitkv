@@ -126,6 +126,9 @@ def test_process_sample_reports_context_switch_and_affinity_fields():
     assert sample["memory_affinity"]
     assert sample["voluntary_context_switches"] >= 0
     assert sample["nonvoluntary_context_switches"] >= 0
+    assert sample["thread_cpu_ticks"]
+    assert sample["sample_cpu_ns"] > 0
+    assert sample["sample_elapsed_ns"] >= sample["sample_cpu_ns"]
 
 
 @pytest.mark.parametrize(

@@ -16,6 +16,7 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | `live_store_capacity.py` | S2.10 1/4/16-owner ordinary install visibility plus separately named serial/concurrent barrier diagnostics |
 | `live_store_isolation.py` | Matched full-Manager local save/query/restore under quiet or metadata-only inventory pressure |
 | `summarize_live_store_isolation.py` | Independent-run-pair ratios, absolute deltas and paired-run confidence intervals |
+| `summarize_live_store_diagnostics.py` | Same-host channel/Manager/insert/SSD stage decomposition for bounded S2.10a runs |
 | `single_node.py` | Fixed-capacity cold, HBM-hit, and post-pressure experiment |
 | `shared_cache.py` | Independent-replica serving requests with remote-byte, GPU-copy, output and reservation-drain evidence |
 | `launch.py` | Engine/backend commands and matched memory budgets |
@@ -79,6 +80,31 @@ Set `ETCD_BIN`, `ORBITKV_CACHE_MANAGER_BINARY`, `ORBITKV_MOONCAKE_LIB_DIR`
 and `ORBITKV_SERVER_TEST_BINARY` to one frozen candidate. Reverse condition order
 for alternating pairs. Use `benches.summarize_live_store_isolation` only after all
 five pairs finish; request samples within a run are not independent repetitions.
+
+S2.10a diagnostics reuse the same harness without changing the foreground path.
+Pass a positive bounded event limit to use the explicit diagnostic client calls
+and Manager/storage timeline. The pilot contract is non-qualifying:
+
+```bash
+python -m benches.live_store_isolation \
+  --condition quiet --medium ssd --seed diagnostic-pilot-on \
+  --warmup-rounds 10 --samples 120 --cadence-ms 250 --order-index 1 \
+  --diagnostic-timeline-limit 16384 \
+  --output /external/s2-10a/pilot/ssd-quiet-diagnostic-on
+
+python -m benches.summarize_live_store_diagnostics \
+  --run /external/s2-10a/pilot/ssd-quiet-diagnostic-on \
+  --output /external/s2-10a/pilot/ssd-quiet-diagnostic-on/stage-summary.json
+```
+
+The limit requires transfer tracing and is set by the harness before importing
+the native extension or starting the Manager. Zero leaves the new stages off.
+`samples.jsonl` owns client submit/return observations; `diagnostic-events.jsonl`
+owns bounded Manager/insert/SSD events keyed by session epoch/token and channel
+request ID. Thread resource snapshots include schedstat when Linux exposes it.
+Reaching `diagnostic_timeline_limit`, missing a required stage or comparing clocks
+outside the recorded host domain invalidates the run. SSD queue/durability stages
+remain after save return and are never folded into `manager_save_submit_ms`.
 
 ## CPU codec benchmark
 

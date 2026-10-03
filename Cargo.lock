@@ -2048,6 +2048,7 @@ dependencies = [
  "iceoryx2",
  "log",
  "memmap2",
+ "orbitkv-common",
  "orbitkv-state",
  "rustix",
  "tempfile",
@@ -2061,6 +2062,7 @@ dependencies = [
  "colored",
  "log",
  "logforth",
+ "rustix",
  "serde_json",
 ]
 

@@ -91,6 +91,14 @@ and Manager to collect it. `ORBITKV_TRACE_TRANSFERS=1` additionally exposes the
 stage decomposition and native result-consumption delay; tracing alone does not
 enable cost selection.
 
+S2.10a publish/query stage diagnosis additionally requires a positive
+`ORBITKV_DIAGNOSTIC_TIMELINE_LIMIT`. It is disabled at zero and capped at 65,536
+events per process. Events bind the authenticated session epoch/token and channel
+request ID, use same-host `CLOCK_MONOTONIC`, and cover client, Manager, insert and
+SSD-writer boundaries. A `diagnostic_timeline_limit` event invalidates the run.
+Client return, insert completion and SSD completion are different endpoints; the
+diagnostic never redefines save submission as SSD durability.
+
 `cache_restore` supplies the GPU-completed boundary for
 Manager-executed restores, from preparation after framework page allocation
 through terminal GPU completion. Its plan retains `RestoreTargetShape`
@@ -608,6 +616,9 @@ connectivity and etcd membership health. See [metadata recovery](distributed-cac
 ### Environment Variables
 
 - `RUST_LOG`: Control logging verbosity (e.g., `info,orbitkv_core=debug`)
+- `ORBITKV_TRACE_TRANSFERS=1`: Enable opt-in timeline records.
+- `ORBITKV_DIAGNOSTIC_TIMELINE_LIMIT=<1..65536>`: Bound S2.10a channel/storage
+  stage records; zero or omission disables those additional events.
 
 ## Quick Start: Direct Prometheus (Recommended)
 

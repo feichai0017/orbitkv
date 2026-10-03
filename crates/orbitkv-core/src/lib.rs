@@ -29,7 +29,10 @@ pub use completion::{
 };
 pub use engine::config::EngineConfig;
 pub use engine::instance::{GpuContext, InstanceContext};
-pub use engine::{EngineError, MetadataStatus, OrbitKVEngine, RawRestoreGrant, RestoreExecution};
+pub use engine::{
+    EngineError, MetadataStatus, OrbitKVEngine, PublishDiagnostic, RawRestoreGrant,
+    RestoreExecution,
+};
 pub use memory::numa::NumaNode;
 pub use memory::pool::{PayloadArena, PinnedAllocation};
 pub use orbitkv_state::{

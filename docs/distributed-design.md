@@ -767,6 +767,65 @@ fixture is allowed to revoke membership. Context-switch snapshots cover live
 threads; deltas identify surviving/new/exited threads and do not count missing
 threads as zero. Pre-experiment summaries cannot qualify isolation.
 
+### S2.10a same-host isolation diagnostic contract
+
+The accepted `formal-qualification-2` cohort remains immutable. It proves valid
+pressure and failed DRAM/SSD isolation, but does not prove that a Catalog lock,
+specific owner install or SSD operation directly caused a slow request. The SSD
+save pressure p99 stays near 0.94–1.03 ms, while quiet p99 varies with balanced
+run order; pressure also increases CPU ticks and context switches. Direct
+publication/install overlap and cumulative lock counters do not explain all tail
+samples. Those are facts; the following are hypotheses to distinguish:
+
+1. host phase or quiet/pressure order changes the quiet baseline;
+2. channel endpoint or Manager runtime scheduling delays foreground operations;
+3. native publish execution or completion notification creates the submit tail;
+4. deferred insert/SSD writer work competes indirectly after the save response.
+
+Diagnostic contract `s2.10-isolation-diagnosis-v1` records one bounded channel
+operation identity `(session_epoch, session_token, request_id)` across client
+submit/return, Manager receive/runtime start/execute complete/response, insert
+enqueue/dequeue/complete and SSD enqueue/dequeue/complete. Same-host
+`CLOCK_MONOTONIC` timestamps permit those differences; no cross-host subtraction
+is valid. The save response still means GPU copy/encode completed and insertion
+was queued. Storage and SSD completion remain later diagnostic stages, not a
+redefinition of `manager_save_submit_ms` or durability.
+
+New stage events require both `ORBITKV_TRACE_TRANSFERS=1` and a positive
+`ORBITKV_DIAGNOSTIC_TIMELINE_LIMIT`, capped at 65,536 per process. Reaching the
+limit invalidates the run. The diagnostic Python methods return their client
+observation directly instead of maintaining an unbounded native ring. Thread
+snapshots add per-thread CPU ticks and Linux schedstat runtime/runqueue-wait/
+timeslice counters when available. The current A100 has schedstat but no usable
+`perf`; missing perf therefore limits scheduling attribution rather than being
+replaced with synthetic evidence. Observation is enabled symmetrically in quiet
+and pressure runs.
+
+The preregistered instrumentation pilot is SSD-only and non-qualifying: 10 warm-up
+plus 120 measured rounds at 250 ms foreground cadence, unchanged 17 ms metadata
+source cadence, 25 ms owner sampler, original payload/namespace/budgets/hit path,
+and a 16,384-event diagnostic limit. Run diagnostic-off quiet, diagnostic-on
+quiet and diagnostic-on pressure serially. It passes only if all operation stages
+link without truncation, payload/SSD bytes and cleanup remain exact, and diagnostic
+quiet save/query p50 regresses by at most 5%, p99 increases by at most 0.25 ms,
+and total process CPU ticks regress by at most 15%. These short-run overhead guards
+do not qualify isolation. Failure preserves the run and blocks a formal diagnostic freeze.
+
+After that pilot, an independent reviewer freezes the diagnostic matrix and total
+runtime. The starting design is SSD ABBA/BAAB with at least 1,000 measured rounds
+per independent run plus a smaller DRAM control. One single-factor phase-offset
+ablation may move only the metadata source's initial phase while preserving its
+event count, cadence and entire foreground exposure. Observation-off/on overhead
+is a separate pilot factor, not pooled with cause estimation. CPU affinity is not
+a default or planned acceptance factor; adding it requires another reviewed
+diagnostic condition. The matrix stops at its declared repeat/time budget and
+never becomes replacement isolation qualification.
+
+Implement a fix only when stage and scheduling evidence identifies its owner.
+Reduce neither source pressure nor required correctness/drain work. If the data
+remain associative, hand off the next discriminating experiment without adding a
+thread pool, priority, scheduler or configuration layer speculatively.
+
 These are design targets, not measurements. If a target is infeasible or noisy,
 report the failed run and have the reviewer assess a revised contract before a
 new run; do not change a threshold after observing a result and call the old run

@@ -97,3 +97,13 @@ bursts. Keep the frozen minimum interval and mutation count; never fix this by
 lowering a threshold or dropping events. A terminal exposure failure remains an
 invalid run, but should still execute explicit local drain, unregister and
 normal Manager shutdown before raising and preserve that cleanup evidence.
+
+For S2.10a stage diagnosis, enable `ORBITKV_TRACE_TRANSFERS=1` and a positive
+`ORBITKV_DIAGNOSTIC_TIMELINE_LIMIT` symmetrically in quiet and pressure runs.
+The latter is capped at 65,536 events and zero means off. Correlate client,
+Manager, insert and SSD stages only by session epoch/token plus channel request
+ID on one host monotonic clock. A limit event or missing required stage invalidates
+the run. Save return means GPU copy/encode completed and insertion was queued;
+insert and SSD completion are later diagnostic stages. Use per-thread schedstat
+when perf is unavailable, and report that precision limit instead of inferring
+scheduler causality. Diagnostic results never replace the frozen isolation cohort.

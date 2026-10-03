@@ -36,7 +36,7 @@ record submitted, merged and released as different states.
 | --- | --- |
 | S0 | Agent handoff and Codex skill migration merged in PR #190. |
 | S1 | Evidence separation independently verified at `ec3add9b`; this delivery consolidates plans and release-based integration guidance. Acceptance covers S1 only; native CUDA qualification remains blocked on this host. |
-| S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. Independent final review accepts the second frozen S2.10 same-host formal handoff: all 25 cells are valid and five 16-owner ordinary visibility runs pass 50 ms, while both DRAM and SSD isolation fail the frozen per-pair/CI contract. The supported envelope stays four owners and the first matrix remains invalid. Physical cross-host cache/HA, final serving, RDMA/GDS and S3-dependent cells remain open. |
+| S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. Independent final review accepts the second frozen S2.10 same-host formal handoff: all 25 cells are valid and five 16-owner ordinary visibility runs pass 50 ms, while both DRAM and SSD isolation fail the frozen per-pair/CI contract. The current queue head is S2.10a's same-host isolation diagnosis; the supported envelope stays four owners and both formal campaigns remain immutable. Physical cross-host cache/HA, independent etcd failure domains and native GDS are qualification blocked on missing hardware; final serving, RDMA and S3-dependent cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
 | S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.30.0 adapter upgrade consumes native transfer results with local A100 cache/P/D evidence. Independent upgrade acceptance and public lifecycle/deployment gates remain open. |
@@ -52,11 +52,11 @@ independent work. Use **implementation open**, **implementation partial**,
 
 The [distributed inventory and recovery design](distributed-design.md) specifies
 the authorized evolution beyond the former etcd block index. S2.7–S2.9 and
-S2.10 same-host correctness are accepted; the current delivery is the final
-review and handoff of the completed same-host S2.10 performance qualification on
-the PR #199 merged-main artifact. The corrected measurement contract and formal
-inputs are independently accepted; retain both formal campaigns and the new
-isolation failures without another automatic run. Do not enter S3, S6 or S7 from this delivery. Existing S3
+S2.10 same-host correctness and ordinary visibility are accepted; the current
+delivery is S2.10a's bounded same-host isolation diagnosis from accepted handoff
+`c5cf2782`. Retain both formal campaigns and their isolation failures unchanged.
+Add evidence before a minimal fix, and keep any replacement formal qualification
+as a separately reviewed future cohort. Do not enter S3, S6 or S7 from this delivery. Existing S3
 lifetime gates still control any new payload concurrency, reuse or reclamation.
 Cross-host qualification remains open until actual failure-domain evidence exists.
 
@@ -446,10 +446,11 @@ frozen 5% DRAM/SSD isolation gates fail. Depends on:** accepted protocol impleme
 scoped claims. This carries forward S2's remaining performance, capacity, serving
 and cross-host obligations; it does not replace missing evidence with a new name.
 
-**Current next delivery:** physical cross-host cache/HA and independent etcd
-failure-domain qualification when the required hosts are available. A separate
-isolation diagnosis needs its own preregistered scope and cannot replace this failed
-cohort. This delivery stops after the accepted same-host handoff. The bounded
+**Current next delivery:** S2.10a's same-host isolation root-cause diagnosis and,
+only when supported by its evidence, a minimal owner-local fix. It cannot replace
+the accepted failed cohort or start another formal qualification automatically.
+Physical cross-host cache/HA, independent etcd failure domains and native GDS stay
+qualification blocked on the hardware listed below. The bounded
 fixture pacing/invalid-run cleanup repair has independent acceptance. Merged-artifact
 regression and the corrected measurement/oracle contracts are complete; the
 formal runner and release pressure-source profile have independent Codex launch
@@ -562,6 +563,59 @@ collection validity, cleanup and the ordinary visibility result, while confirmin
 both isolation failures and the unqualified 16-owner envelope. Its report is under
 `pacing-repair-20261003/codex-final-qualification-review/`; isolation and expanded
 capacity remain unqualified.
+
+### S2.10a — Same-host isolation root-cause diagnosis
+
+**Authorized from accepted handoff `c5cf2782`; diagnosis and any evidence-backed
+minimal fix are open.** Preserve the accepted 25-cell conclusions: collection and
+same-host correctness pass, 16-owner ordinary visibility passes, both DRAM and SSD
+isolation fail, and the supported envelope remains four owners. The old invalid
+campaign and the accepted failed cohort are immutable inputs, not replaceable
+cells in this substage.
+
+First audit the existing synchronous Publish path and diagnostics. Decompose one
+bounded operation identifier across client submit, process-channel queueing,
+Manager receipt, runtime start, engine completion, response notification, client
+return and deferred storage publication/SSD completion. Use one host monotonic
+clock, bounded opt-in sampling and symmetric quiet/pressure observation. Report
+queueing, execution and completion wait separately; `CacheManagerClient.save`
+currently includes channel and Manager/GPU-copy work but not deferred insert/SSD
+durability. Reuse existing timeline, storage metrics and owner state rather than
+adding a coordinator, directory RPC or second Catalog.
+
+Predeclare a short overhead/correlation pilot, then freeze an independently
+reviewed diagnostic matrix with at least 1,000 measured requests per p99 run,
+balanced ABBA/BAAB order and at most two single-factor ablations. Prefer SSD while
+retaining a DRAM regression control. Keep foreground payload, namespace, medium,
+residency, hit path, budgets and pressure volume fixed. A diagnostic affinity or
+sampling condition is not a deployment qualification. Stop at the frozen budget;
+retain invalid runs and do not expand samples or tune after viewing results.
+
+Implement a production change only for a demonstrated owner/waiting path. Do not
+reduce pressure, input, correctness work or drain. If evidence is insufficient,
+hand off the bounded diagnosis and next discriminating experiment without adding
+threads, schedulers or configuration layers speculatively. Any production change
+requires refrozen Manager/native/wheel artifacts, matched before/after evidence,
+affected Rust/Python and real Manager gates, and independent review. Even a valid
+fix does not close isolation: a new formal qualification is a later substage.
+
+Hardware-blocked cells remain explicit:
+
+- **Physical cross-host cache/HA:** needs at least two CUDA-capable hosts with
+  mutually reachable data-plane addresses and TENT ports plus independently
+  controlled source/receiver failure; the available A100 qualification path is
+  same-host and the CPU/current-H20 environments cannot provide that CUDA/data
+  plane.
+- **Independent etcd failure domains:** needs three simultaneous machines in
+  independent host/power/network domains with mutually reachable client and peer
+  networks. Three processes on one machine prove only process failure.
+- **Native GDS:** needs an NVIDIA GPU host with supported NVMe/filesystem,
+  `nvidia-fs`/cuFile runtime and container access to the real block device/mount.
+  The available SSD qualification path is io_uring, not native GDS.
+
+These cells are `qualification blocked`, never passed by same-host diagnostics.
+RDMA, final integrated serving and S3 lifetime evidence retain their own open
+status and are outside S2.10a.
 
 - Execute the [frozen workload/acceptance matrix](distributed-design.md#performance-acceptance-and-ablations)
   on actual live DRAM and io_uring storage. Increase one load dimension at a time,

@@ -42,6 +42,32 @@ pub enum QueryIntent {
     Recovery(RecoveryDemand),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChannelCallObservation {
+    pub request_id: u64,
+    pub session_epoch: u64,
+    pub session_token: u64,
+    pub submitted_mono_ns: u64,
+    pub returned_mono_ns: u64,
+}
+
+impl ChannelCallObservation {
+    fn start(channel: &ChannelClient, request_id: u64) -> Self {
+        Self {
+            request_id,
+            session_epoch: channel.session_epoch(),
+            session_token: channel.session_token(),
+            submitted_mono_ns: orbitkv_common::timeline::monotonic_ns(),
+            returned_mono_ns: 0,
+        }
+    }
+
+    fn finish(mut self) -> Self {
+        self.returned_mono_ns = orbitkv_common::timeline::monotonic_ns();
+        self
+    }
+}
+
 /// Immutable query hashes with shared, allocation-free prefix views.
 /// Reusing a batch lets pending queries compare identity in constant time.
 #[derive(Clone, Debug)]
@@ -247,6 +273,35 @@ impl CacheClient {
         group: u32,
         intent: QueryIntent,
     ) -> Result<QueryBundleResponse, ChannelError> {
+        self.query_inner(instance, hashes, request, group, intent, false)
+            .map(|(response, _)| response)
+    }
+
+    pub fn query_observed(
+        &self,
+        instance: &str,
+        hashes: &BlockHashes,
+        request: &str,
+        group: u32,
+        intent: QueryIntent,
+    ) -> Result<(QueryBundleResponse, ChannelCallObservation), ChannelError> {
+        self.query_inner(instance, hashes, request, group, intent, true)
+            .and_then(|(response, observation)| {
+                observation
+                    .map(|observation| (response, observation))
+                    .ok_or(ChannelError::SessionRequiresReconnect)
+            })
+    }
+
+    fn query_inner(
+        &self,
+        instance: &str,
+        hashes: &BlockHashes,
+        request: &str,
+        group: u32,
+        intent: QueryIntent,
+        observe: bool,
+    ) -> Result<(QueryBundleResponse, Option<ChannelCallObservation>), ChannelError> {
         let key = QueryKey {
             instance: instance.into(),
             request: request.into(),
@@ -270,9 +325,9 @@ impl CacheClient {
         let previous = queries.pending.get(&key).map(|query| query.ticket);
         let discover = intent == QueryIntent::Candidates;
         let command = queries.prepare(&key, hashes, intent)?;
-        let response = self
-            .channel
-            .query_bundle(next_id(&self.requests)?, &command);
+        let request_id = next_id(&self.requests)?;
+        let observation = observe.then(|| ChannelCallObservation::start(&self.channel, request_id));
+        let response = self.channel.query_bundle(request_id, &command);
         match response {
             Ok(response) => {
                 if (discover && response.outcome == QueryOutcomeCode::Ready)
@@ -287,7 +342,7 @@ impl CacheClient {
                     return Err(ChannelError::SessionRequiresReconnect);
                 }
                 queries.complete(&key, response.outcome);
-                Ok(response)
+                Ok((response, observation.map(ChannelCallObservation::finish)))
             }
             Err(error) => {
                 // Failure before submission can leave the prior revision alive;
@@ -605,6 +660,22 @@ impl CacheClient {
     }
 
     pub fn publish(&self, request: &PublishRequest) -> Result<(), ChannelError> {
+        self.publish_inner(request, false).map(|_| ())
+    }
+
+    pub fn publish_observed(
+        &self,
+        request: &PublishRequest,
+    ) -> Result<ChannelCallObservation, ChannelError> {
+        self.publish_inner(request, true)?
+            .ok_or(ChannelError::SessionRequiresReconnect)
+    }
+
+    fn publish_inner(
+        &self,
+        request: &PublishRequest,
+        observe: bool,
+    ) -> Result<Option<ChannelCallObservation>, ChannelError> {
         // A long D2H publish must not hold the query/restore descriptor slot.
         let publisher = {
             let mut publisher = self
@@ -626,7 +697,10 @@ impl CacheClient {
                     .ok_or(ChannelError::SessionRequiresReconnect)?,
             )
         };
-        publisher.publish(next_id(&self.requests)?, request)
+        let request_id = next_id(&self.requests)?;
+        let observation = observe.then(|| ChannelCallObservation::start(&publisher, request_id));
+        publisher.publish(request_id, request)?;
+        Ok(observation.map(ChannelCallObservation::finish))
     }
 
     pub fn start_restore(&self, request: &RestoreRequest) -> Result<RestoreHandle, ChannelError> {

@@ -6,6 +6,7 @@ import bisect
 import json
 import os
 import statistics
+import time
 from pathlib import Path
 
 MEASUREMENT_CONTRACT = "s2.10-performance-v2"
@@ -29,9 +30,13 @@ def _summary(values):
 
 
 def _process_sample(pids):
+    sample_started = time.monotonic_ns()
+    cpu_started = time.thread_time_ns()
     result = {
         "thread_context_switches": {},
         "thread_affinity": {},
+        "thread_cpu_ticks": {},
+        "thread_schedstat": {},
         "context_switch_scope": "snapshot sum of live threads; exited threads excluded",
         "cpu_ticks": 0,
         "rss_kib": 0,
@@ -75,12 +80,26 @@ def _process_sample(pids):
                 thread_stat = (thread / "stat").read_text().rsplit(") ", 1)[1].split()
             except (FileNotFoundError, ProcessLookupError):
                 continue
+            try:
+                schedstat = [int(value) for value in (thread / "schedstat").read_text().split()]
+            except (FileNotFoundError, ProcessLookupError, ValueError):
+                schedstat = []
             identity = f"{pid}:{thread.name}:{thread_stat[19]}"
             counters = [
                 int(fields[name])
                 for name in ("voluntary_ctxt_switches", "nonvoluntary_ctxt_switches")
             ]
             result["thread_context_switches"][identity] = counters
+            result["thread_cpu_ticks"][identity] = [
+                int(thread_stat[11]),
+                int(thread_stat[12]),
+            ]
+            if len(schedstat) >= 3:
+                result["thread_schedstat"][identity] = {
+                    "runtime_ns": schedstat[0],
+                    "runqueue_wait_ns": schedstat[1],
+                    "timeslices": schedstat[2],
+                }
             result["thread_affinity"][identity] = {
                 "cpus_allowed": fields["Cpus_allowed_list"].strip(),
                 "mems_allowed": fields["Mems_allowed_list"].strip(),
@@ -90,6 +109,8 @@ def _process_sample(pids):
         result["processes"] += 1
     result["cpu_affinity"] = sorted(cpu_affinity)
     result["memory_affinity"] = sorted(memory_affinity)
+    result["sample_cpu_ns"] = time.thread_time_ns() - cpu_started
+    result["sample_elapsed_ns"] = time.monotonic_ns() - sample_started
     return result
 
 
