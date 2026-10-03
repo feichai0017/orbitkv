@@ -202,7 +202,7 @@ pub(super) async fn ssd_writer_loop(
                                 );
                             }
                             b.observation.finish(Outcome::Cancelled, None);
-                        } else if crate::cost::enabled() || b.diagnostic.is_some() {
+                        } else {
                             batches.push_back(WriteBatchObservation {
                                 remaining: pending.len(),
                                 outcome,

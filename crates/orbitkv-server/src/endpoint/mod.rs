@@ -594,16 +594,15 @@ fn dispatch_publish(
         if orbitkv_core::test_faults::active("publish_ack") {
             response.value1 = 0;
         }
-        let sent = send_reply(response);
         orbitkv_common::timeline::record_diagnostic(
-            "publish_manager_response_sent",
+            "publish_manager_response_publish",
             orbitkv_common::timeline::DiagnosticFields::operation(
                 request_id,
                 session_epoch,
                 session_token,
-            )
-            .success(sent.is_ok()),
+            ),
         );
+        let sent = send_reply(response);
         if let Err(error) = sent {
             error!("Failed to reply to completed publish: {error}");
         }

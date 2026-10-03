@@ -60,7 +60,7 @@ def test_diagnostic_summary_partitions_channel_manager_storage_and_ssd(tmp_path)
             inflight_writes=1,
         ),
         event("publish_manager_process_complete", save, 6_000_000),
-        event("publish_manager_response_sent", save, 6_500_000),
+        event("publish_manager_response_publish", save, 6_500_000),
         event("publish_storage_complete", save, 7_500_000),
         event("publish_ssd_complete", save, 9_000_000, inflight_writes=0),
         event("query_manager_receive", query, 11_000_000),
@@ -73,6 +73,8 @@ def test_diagnostic_summary_partitions_channel_manager_storage_and_ssd(tmp_path)
     assert result["save_intervals"]["client_total_ms"]["p99"] == 6
     assert result["save_intervals"]["manager_runtime_queue_ms"]["p99"] == 1
     assert result["save_intervals"]["manager_execute_ms"]["p99"] == 3
+    assert result["save_intervals"]["manager_complete_to_response_publish_ms"]["p99"] == 0.5
+    assert result["save_intervals"]["response_publish_to_client_ms"]["p99"] == 0.5
     assert result["save_intervals"]["storage_queue_ms"]["p99"] == 0.5
     assert result["save_intervals"]["client_return_to_storage_complete_ms"]["p99"] == 0.5
     assert result["save_intervals"]["client_return_to_ssd_complete_ms"]["p99"] == 2

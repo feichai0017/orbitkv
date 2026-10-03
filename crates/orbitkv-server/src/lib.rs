@@ -926,6 +926,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         // Stop HTTP server
         shutdown.notify_waiters();
         lifecycle.shutdown().await?;
+        engine.flush_all().await;
         let _ = http_server_handle.await;
 
         if let Some(membership) = membership {

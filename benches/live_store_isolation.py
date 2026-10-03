@@ -99,7 +99,7 @@ def _collect_diagnostic_events(output, samples, medium):
         "publish_manager_receive",
         "publish_manager_process_start",
         "publish_manager_process_complete",
-        "publish_manager_response_sent",
+        "publish_manager_response_publish",
         "publish_storage_enqueue",
         "publish_storage_dequeue",
         "publish_storage_complete",

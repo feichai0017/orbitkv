@@ -208,22 +208,19 @@ impl PublishWorker {
     }
 
     fn save(&mut self, batch: RawSaveBatch) {
-        let start = std::time::Instant::now();
         let diagnostic = batch.diagnostic;
+        if let Some(diagnostic) = diagnostic {
+            diagnostic.record(
+                "publish_storage_dequeue",
+                orbitkv_common::timeline::DiagnosticFields::default(),
+            );
+        }
+        let start = std::time::Instant::now();
         let namespace = batch.namespace.clone();
         let numa_node = batch.numa_node;
         let total_slots = batch.total_slots;
 
         let (entries, total_bytes, total_blocks) = build_insert_entries(batch);
-
-        if let Some(diagnostic) = diagnostic {
-            diagnostic.record(
-                "publish_storage_dequeue",
-                orbitkv_common::timeline::DiagnosticFields::default()
-                    .blocks(total_blocks)
-                    .bytes(total_bytes),
-            );
-        }
 
         self.insert(entries, total_slots, numa_node, &namespace, diagnostic);
 

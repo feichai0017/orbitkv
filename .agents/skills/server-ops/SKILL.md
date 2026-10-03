@@ -112,3 +112,6 @@ writer; required stage/query-path entries are fixed-size until that writer
 formats them. Require normal Manager shutdown to flush it before accepting linkage.
 An instrumentation pilot that fails its frozen overhead guard blocks a diagnostic
 matrix even when correlation, correctness and cleanup otherwise pass.
+Treat `publish_manager_response_publish` as the before-publication boundary; its
+client interval includes publication plus notification. Writer-start failure or
+missing post-drain flush invalidates linkage rather than permitting fallback logs.

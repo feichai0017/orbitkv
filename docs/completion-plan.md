@@ -623,6 +623,15 @@ failures remain unchanged, and no isolation production-path fix is made without
 causal evidence. A later substage must predeclare and independently review a new
 lower-overhead observation contract before collecting another formal cohort.
 
+Independent review of the stopped stage required five observation-correctness
+repairs before handoff: explicit insert/SSD drain before writer flush, bounded
+failure behavior when the writer thread cannot start, a before-publication
+response boundary, dequeue timing before insert assembly, and completion tracking
+for intervening non-diagnostic SSD batches. These repairs change neither the
+failed overhead decision nor the isolation qualification boundary; they require
+CPU/unit review gates and a fresh artifact freeze, but do not authorize another
+pilot or formal campaign in this substage.
+
 Implement a production change only for a demonstrated owner/waiting path. Do not
 reduce pressure, input, correctness work or drain. If evidence is insufficient,
 hand off the bounded diagnosis and next discriminating experiment without adding

@@ -19,6 +19,8 @@ static DIAGNOSTIC_LIMIT: LazyLock<u64> = LazyLock::new(|| {
 });
 static BUFFERED_EVENTS: AtomicU64 = AtomicU64::new(0);
 static BUFFER_OVERFLOW: AtomicBool = AtomicBool::new(false);
+static BUFFER_START_FAILED: AtomicBool = AtomicBool::new(false);
+static BUFFER_START_FAILURE_REPORTED: AtomicBool = AtomicBool::new(false);
 
 const HAS_BLOCKS: u16 = 1 << 0;
 const HAS_BYTES: u16 = 1 << 1;
@@ -264,6 +266,7 @@ impl BufferedTimeline {
         if BUFFER_OVERFLOW.swap(false, Ordering::Relaxed) {
             let event = diagnostic_limit_event();
             if self.sender.send(BufferedEvent::Json(event)).is_err() {
+                log::info!("cache_timeline {}", diagnostic_limit_event());
                 return;
             }
         }
@@ -275,10 +278,25 @@ impl BufferedTimeline {
 }
 
 static BUFFERED_TIMELINE: LazyLock<Option<BufferedTimeline>> = LazyLock::new(|| {
-    (*DIAGNOSTIC_LIMIT > 0)
-        .then(|| BufferedTimeline::start(*DIAGNOSTIC_LIMIT))
-        .flatten()
+    if *DIAGNOSTIC_LIMIT == 0 {
+        return None;
+    }
+    let timeline = BufferedTimeline::start(*DIAGNOSTIC_LIMIT);
+    if timeline.is_none() {
+        BUFFER_START_FAILED.store(true, Ordering::Relaxed);
+    }
+    timeline
 });
+
+fn report_buffer_start_failure() {
+    if BUFFER_START_FAILED.load(Ordering::Relaxed)
+        && !BUFFER_START_FAILURE_REPORTED.swap(true, Ordering::Relaxed)
+    {
+        let mut event = diagnostic_limit_event();
+        event["reason"] = "writer_start_failed".into();
+        log::info!("cache_timeline {event}");
+    }
+}
 
 fn write_buffered_events(receiver: Receiver<BufferedEvent>) {
     while let Ok(event) = receiver.recv() {
@@ -398,6 +416,8 @@ pub fn record(stage: &str, fields: impl FnOnce() -> serde_json::Value) {
     fields["monotonic_ns"] = monotonic_ns().into();
     if let Some(timeline) = BUFFERED_TIMELINE.as_ref() {
         timeline.record_json(fields);
+    } else if *DIAGNOSTIC_LIMIT > 0 {
+        report_buffer_start_failure();
     } else {
         log::info!("cache_timeline {fields}");
     }
@@ -407,6 +427,8 @@ pub fn record(stage: &str, fields: impl FnOnce() -> serde_json::Value) {
 pub fn flush_diagnostic() {
     if let Some(timeline) = BUFFERED_TIMELINE.as_ref() {
         timeline.flush();
+    } else if *DIAGNOSTIC_LIMIT > 0 {
+        report_buffer_start_failure();
     }
 }
 
@@ -417,15 +439,7 @@ pub fn record_diagnostic(stage: &'static str, fields: DiagnosticFields) {
     if let Some(timeline) = BUFFERED_TIMELINE.as_ref() {
         timeline.record_diagnostic(stage, fields);
     } else {
-        let event = DiagnosticEvent {
-            index: BUFFERED_EVENTS.fetch_add(1, Ordering::Relaxed),
-            stage,
-            pid: std::process::id(),
-            monotonic_ns: monotonic_ns(),
-            fields,
-        };
-        let fields = diagnostic_event_json(event);
-        log::info!("cache_timeline {fields}");
+        report_buffer_start_failure();
     }
 }
 
@@ -454,6 +468,8 @@ pub fn record_query_path(
             elapsed_us,
             hit_blocks,
         );
+    } else if *DIAGNOSTIC_LIMIT > 0 {
+        report_buffer_start_failure();
     } else {
         record(stage, || {
             serde_json::json!({

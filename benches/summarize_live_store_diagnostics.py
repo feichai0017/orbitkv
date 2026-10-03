@@ -38,7 +38,7 @@ def summarize(run: Path):
         receive = stages["publish_manager_receive"][0]["monotonic_ns"]
         process_start = stages["publish_manager_process_start"][0]["monotonic_ns"]
         process_complete = stages["publish_manager_process_complete"][0]["monotonic_ns"]
-        response_sent = stages["publish_manager_response_sent"][0]["monotonic_ns"]
+        response_publish = stages["publish_manager_response_publish"][0]["monotonic_ns"]
         storage_enqueue = stages["publish_storage_enqueue"][0]["monotonic_ns"]
         storage_dequeue = stages["publish_storage_dequeue"][0]["monotonic_ns"]
         storage_complete = stages["publish_storage_complete"][0]["monotonic_ns"]
@@ -51,8 +51,12 @@ def summarize(run: Path):
             "client_to_manager_receive_ms": _elapsed(receive, save["submitted_mono_ns"]),
             "manager_runtime_queue_ms": _elapsed(process_start, receive),
             "manager_execute_ms": _elapsed(process_complete, process_start),
-            "manager_complete_to_response_ms": _elapsed(response_sent, process_complete),
-            "response_to_client_ms": _elapsed(save["returned_mono_ns"], response_sent),
+            "manager_complete_to_response_publish_ms": _elapsed(
+                response_publish, process_complete
+            ),
+            "response_publish_to_client_ms": _elapsed(
+                save["returned_mono_ns"], response_publish
+            ),
             "storage_queue_ms": _elapsed(storage_dequeue, storage_enqueue),
             "storage_execute_ms": _elapsed(storage_complete, storage_dequeue),
             "client_return_to_storage_complete_ms": (

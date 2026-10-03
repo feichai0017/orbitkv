@@ -111,6 +111,15 @@ records; their JSON representation is built only by the writer. Less common
 legacy transfer records retain their existing structured fields but consume the
 same total bound.
 
+`publish_manager_response_publish` is recorded immediately before the response
+is made visible; `response_publish_to_client_ms` therefore includes response
+publication and notification/wakeup. It is not an after-send timestamp. Normal
+Manager shutdown stops the channel, drains GPU owners, then flushes deferred
+insert and SSD work before flushing the diagnostic writer. Writer-start failure
+emits a limit event and invalidates the run instead of falling back to unbounded
+logging. SSD completion accounting retains every intervening write batch even
+when only one batch carries diagnostic correlation.
+
 `cache_restore` supplies the GPU-completed boundary for
 Manager-executed restores, from preparation after framework page allocation
 through terminal GPU completion. Its plan retains `RestoreTargetShape`
