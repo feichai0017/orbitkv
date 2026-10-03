@@ -613,6 +613,16 @@ well. This observation-only change must repeat the three cells under another
 fresh artifact freeze. Neither failed pilot authorizes an isolation fix or a
 formal diagnostic launch.
 
+The fixed-record candidate at `14310a67` completes that final bounded repeat.
+Correctness, linkage, event bounds, source/Manager exits and resource drain pass,
+but save p50 remains 1.105x and query p99 increases by 0.494 ms; the mandatory
+limits are 1.05x and 0.25 ms. Its complete evidence is under
+`fixed-14310a67/`. S2.10a therefore stops before the formal ABBA/BAAB matrix:
+observation overhead remains unqualified, the accepted DRAM/SSD isolation
+failures remain unchanged, and no isolation production-path fix is made without
+causal evidence. A later substage must predeclare and independently review a new
+lower-overhead observation contract before collecting another formal cohort.
+
 Implement a production change only for a demonstrated owner/waiting path. Do not
 reduce pressure, input, correctness work or drain. If evidence is insufficient,
 hand off the bounded diagnosis and next discriminating experiment without adding
