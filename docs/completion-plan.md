@@ -651,12 +651,18 @@ Hardware-blocked cells remain explicit:
 
 - **Physical cross-host cache/HA:** needs at least two CUDA-capable hosts with
   mutually reachable data-plane addresses and TENT ports plus independently
-  controlled source/receiver failure; the available A100 qualification path is
-  same-host and the CPU/current-H20 environments cannot provide that CUDA/data
-  plane.
+  controlled source/receiver failure. The A100 host has a usable A100-SXM4 and
+  reaches `orbitkv-cpu` bidirectionally on their 10.x data addresses. The CPU
+  host has no GPU. The current host exposes eight H20 PCI functions but no
+  `/dev/nvidia*`; `nvidia-smi` cannot contact its driver, and neither A100 nor
+  CPU can reach its 26.x address. Thus only one usable CUDA data-plane node is
+  available and cross-host cache/HA stays blocked.
 - **Independent etcd failure domains:** needs three simultaneous machines in
   independent host/power/network domains with mutually reachable client and peer
-  networks. Three processes on one machine prove only process failure.
+  networks. The three SSH environments have distinct hostnames, kernels and
+  subnets, but A100/CPU cannot reach the current host and there is no evidence of
+  independently controlled power/network failure domains. A third process or SSH
+  alias alone proves only process isolation.
 - **Native GDS:** needs an NVIDIA GPU host with supported NVMe/filesystem,
   `nvidia-fs`/cuFile runtime and container access to the real block device/mount.
   The available SSD qualification path is io_uring, not native GDS.
