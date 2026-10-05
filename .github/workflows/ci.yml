@@ -19,6 +19,9 @@ env:
 jobs:
   website-check:
     name: website and documentation
+    needs:
+      - ruff-check
+      - python-unit-tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -72,6 +75,9 @@ jobs:
 
   typos-check:
     name: typos check
+    needs:
+      - commit-check
+      - version-consistency-check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -83,6 +89,9 @@ jobs:
 
   rust-fmt-check:
     name: rust fmt check
+    needs:
+      - commit-check
+      - version-consistency-check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -140,6 +149,9 @@ jobs:
 
   ruff-check:
     name: ruff check
+    needs:
+      - typos-check
+      - rust-fmt-check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -153,6 +165,9 @@ jobs:
 
   python-unit-tests:
     name: python unit tests
+    needs:
+      - typos-check
+      - rust-fmt-check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -175,16 +190,9 @@ jobs:
 
   cargo-check-variant:
     name: cargo check (${{ matrix.cuda-variant }})
-    # Finish the short feedback jobs before consuming the available runners with
-    # CUDA builds, so none of those jobs expires while waiting for a runner.
-    needs:
-      - website-check
-      - commit-check
-      - version-consistency-check
-      - typos-check
-      - rust-fmt-check
-      - ruff-check
-      - python-unit-tests
+    # Finish the short feedback waves before consuming the available runners
+    # with CUDA builds, so no job expires while waiting for a runner.
+    needs: website-check
     runs-on: ubuntu-latest
     strategy:
       matrix:
