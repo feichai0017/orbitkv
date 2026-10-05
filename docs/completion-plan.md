@@ -648,6 +648,22 @@ response publication, client completion and normal Manager shutdown drain in
 owner order without a native child or resource leak. This runtime gate does not
 reclassify isolation.
 
+The A100 lifecycle gate is accepted for production tree
+`6d120c37dc3a4e486ebac706d2ff4426b74ff1b1`, shared by candidate `54b5b161`
+and the final conservative `00f0dc9c` revert. A SIGTERM issued after Manager
+processing began and before its completion drained a 2 GiB/2,048-page Publish,
+deferred insert and io_uring SSD completion in 1.909 seconds; all ten required
+stages were present, the Manager exited zero, its PID disappeared and the client
+reported the permitted `peer_exit_after_drain` terminal result. This proves
+`completion or peer exit` while the client retains its source until actual
+Manager exit; it does not claim cancellation. The immutable evidence root is
+`/workspace/orbitkv-three-host-20260930/s2-10-isolation-diagnosis-20261003`
+on `orbitkv-a100`; the result is
+`s2-10b-candidate-54b5b161/run-3/result.json` (SHA-256
+`d960a8fe77a5896c0a6cee07b72944b70ddf6fa94c4d491769de871ba72fa2da`).
+The normal-return control and every earlier failed shutdown attempt remain beside
+that cohort and are not reclassified.
+
 Replace per-event channel delivery with a preallocated, process-bounded in-memory
 recording path while preserving the same authenticated operation key, monotonic
 clock and stage meanings. No request thread may format JSON, block on a writer or

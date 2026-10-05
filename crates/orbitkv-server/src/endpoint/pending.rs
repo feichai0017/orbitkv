@@ -155,12 +155,12 @@ impl PendingQueries {
             .is_some_and(|task| task.request.ticket == ticket)
             && let Some(task) = self.pending.remove(&key)
         {
-            orbitkv_common::timeline::record("query_cancel", || {
-                serde_json::json!({
-                    "request_id": task.request.request_id,
-                    "operation_id": ticket.operation_id, "revision": ticket.revision,
-                })
-            });
+            orbitkv_common::timeline::record_query_control(
+                "query_cancel",
+                &task.request.request_id,
+                ticket.operation_id,
+                ticket.revision,
+            );
         }
         engine.cancel_query(owner(token, ticket));
     }
@@ -306,12 +306,12 @@ impl PendingQueries {
             return Err(EngineError::Storage("cache query timed out".into()));
         }
         if !task.request.wait_for_full_prefix && !task.request.discover && task.control.expired() {
-            orbitkv_common::timeline::record("read_deadline", || {
-                serde_json::json!({
-                    "request_id": task.request.request_id,
-                    "operation_id": ticket.operation_id, "revision": ticket.revision,
-                })
-            });
+            orbitkv_common::timeline::record_query_control(
+                "read_deadline",
+                &task.request.request_id,
+                ticket.operation_id,
+                ticket.revision,
+            );
             // Retire caller interest immediately. The spawned query keeps all
             // submitted buffers and permits until its current batch completes.
             self.pending.remove(&key);

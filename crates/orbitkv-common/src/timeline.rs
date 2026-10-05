@@ -1,9 +1,7 @@
 //! Opt-in stage observations; durations are measured within one process.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
-use std::sync::{LazyLock, mpsc};
-use std::time::Duration;
+use std::sync::{LazyLock, OnceLock};
 
 const MAX_DIAGNOSTIC_EVENTS: u64 = 65_536;
 
@@ -17,10 +15,11 @@ static DIAGNOSTIC_LIMIT: LazyLock<u64> = LazyLock::new(|| {
         .unwrap_or(0)
         .min(MAX_DIAGNOSTIC_EVENTS)
 });
-static BUFFERED_EVENTS: AtomicU64 = AtomicU64::new(0);
-static BUFFER_OVERFLOW: AtomicBool = AtomicBool::new(false);
 static BUFFER_START_FAILED: AtomicBool = AtomicBool::new(false);
 static BUFFER_START_FAILURE_REPORTED: AtomicBool = AtomicBool::new(false);
+
+const TIMELINE_SEALED: u64 = 1 << 63;
+const TIMELINE_COUNT: u64 = !TIMELINE_SEALED;
 
 const HAS_BLOCKS: u16 = 1 << 0;
 const HAS_BYTES: u16 = 1 << 1;
@@ -131,6 +130,59 @@ impl DiagnosticFields {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RestoreTimelineFields {
+    manager_epoch: u64,
+    client_token: u64,
+    operation_id: u64,
+    elapsed_us: Option<u64>,
+    success: Option<bool>,
+    drain_timing: Option<[u64; 6]>,
+}
+
+impl RestoreTimelineFields {
+    pub const fn operation(manager_epoch: u64, client_token: u64, operation_id: u64) -> Self {
+        Self {
+            manager_epoch,
+            client_token,
+            operation_id,
+            elapsed_us: None,
+            success: None,
+            drain_timing: None,
+        }
+    }
+
+    pub const fn elapsed_us(mut self, elapsed_us: u64) -> Self {
+        self.elapsed_us = Some(elapsed_us);
+        self
+    }
+
+    pub const fn success(mut self, success: bool) -> Self {
+        self.success = Some(success);
+        self
+    }
+
+    pub const fn drain_timing(
+        mut self,
+        readiness_ns: u64,
+        dispatched_ns: u64,
+        dequeued_ns: u64,
+        claimed_ns: u64,
+        submitted_ns: u64,
+        drained_ns: u64,
+    ) -> Self {
+        self.drain_timing = Some([
+            readiness_ns,
+            dispatched_ns,
+            dequeued_ns,
+            claimed_ns,
+            submitted_ns,
+            drained_ns,
+        ]);
+        self
+    }
+}
+
 struct DiagnosticEvent {
     index: u64,
     stage: &'static str,
@@ -177,60 +229,140 @@ struct QueryPathEvent {
     hit_blocks: usize,
 }
 
+struct RestoreEvent {
+    stage: &'static str,
+    pid: u32,
+    at_unix_ns: u64,
+    monotonic_ns: u64,
+    fields: RestoreTimelineFields,
+}
+
+struct QueryControlEvent {
+    stage: &'static str,
+    pid: u32,
+    at_unix_ns: u64,
+    monotonic_ns: u64,
+    request_id: FixedText,
+    operation_id: u64,
+    revision: u64,
+}
+
 enum BufferedEvent {
-    Json(serde_json::Value),
     Diagnostic(DiagnosticEvent),
     QueryPath(QueryPathEvent),
-    Flush(SyncSender<()>),
+    Restore(RestoreEvent),
+    QueryControl(QueryControlEvent),
 }
 
 struct BufferedTimeline {
-    sender: SyncSender<BufferedEvent>,
+    slots: Box<[OnceLock<BufferedEvent>]>,
+    state: AtomicU64,
+    overflow: AtomicBool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct FlushSummary {
+    reserved: u64,
+    ready: u64,
+    overflow: bool,
 }
 
 impl BufferedTimeline {
     fn start(limit: u64) -> Option<Self> {
-        let capacity = usize::try_from(limit).unwrap_or(usize::MAX);
-        let (sender, receiver) = mpsc::sync_channel(capacity);
-        std::thread::Builder::new()
-            .name("orbitkv-diagnostic-timeline".into())
-            .spawn(move || write_buffered_events(receiver))
-            .ok()?;
-        Some(Self { sender })
+        let capacity = usize::try_from(limit).ok()?;
+        if capacity == 0 {
+            return None;
+        }
+        let mut slots = Vec::new();
+        slots.try_reserve_exact(capacity).ok()?;
+        slots.resize_with(capacity, OnceLock::new);
+        Some(Self {
+            slots: slots.into_boxed_slice(),
+            state: AtomicU64::new(0),
+            overflow: AtomicBool::new(false),
+        })
     }
 
     fn reserve(&self) -> Option<u64> {
-        let index = BUFFERED_EVENTS.fetch_add(1, Ordering::Relaxed);
-        if index >= *DIAGNOSTIC_LIMIT {
-            BUFFER_OVERFLOW.store(true, Ordering::Relaxed);
-            return None;
+        let mut state = self.state.load(Ordering::Relaxed);
+        loop {
+            if state & TIMELINE_SEALED != 0 {
+                self.overflow.store(true, Ordering::Relaxed);
+                return None;
+            }
+            let index = state & TIMELINE_COUNT;
+            if index >= self.slots.len() as u64 {
+                self.overflow.store(true, Ordering::Relaxed);
+                return None;
+            }
+            match self.state.compare_exchange_weak(
+                state,
+                state + 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return Some(index),
+                Err(observed) => state = observed,
+            }
         }
-        Some(index)
     }
 
-    fn send(&self, event: BufferedEvent) {
-        if let Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) =
-            self.sender.try_send(event)
-        {
-            BUFFER_OVERFLOW.store(true, Ordering::Relaxed);
-        }
-    }
-
-    fn record_json(&self, event: serde_json::Value) {
-        if self.reserve().is_some() {
-            self.send(BufferedEvent::Json(event));
+    fn write(&self, index: u64, event: BufferedEvent) {
+        if self.slots[index as usize].set(event).is_err() {
+            self.overflow.store(true, Ordering::Relaxed);
         }
     }
 
     fn record_diagnostic(&self, stage: &'static str, fields: DiagnosticFields) {
         if let Some(index) = self.reserve() {
-            self.send(BufferedEvent::Diagnostic(DiagnosticEvent {
+            self.write(
                 index,
-                stage,
-                pid: std::process::id(),
-                monotonic_ns: monotonic_ns(),
-                fields,
-            }));
+                BufferedEvent::Diagnostic(DiagnosticEvent {
+                    index,
+                    stage,
+                    pid: std::process::id(),
+                    monotonic_ns: monotonic_ns(),
+                    fields,
+                }),
+            );
+        }
+    }
+
+    fn record_restore(&self, stage: &'static str, fields: RestoreTimelineFields) {
+        if let Some(index) = self.reserve() {
+            self.write(
+                index,
+                BufferedEvent::Restore(RestoreEvent {
+                    stage,
+                    pid: std::process::id(),
+                    at_unix_ns: unix_ns(),
+                    monotonic_ns: monotonic_ns(),
+                    fields,
+                }),
+            );
+        }
+    }
+
+    fn record_query_control(
+        &self,
+        stage: &'static str,
+        request_id: &str,
+        operation_id: u64,
+        revision: u64,
+    ) {
+        if let Some(index) = self.reserve() {
+            self.write(
+                index,
+                BufferedEvent::QueryControl(QueryControlEvent {
+                    stage,
+                    pid: std::process::id(),
+                    at_unix_ns: unix_ns(),
+                    monotonic_ns: monotonic_ns(),
+                    request_id: FixedText::new(request_id),
+                    operation_id,
+                    revision,
+                }),
+            );
         }
     }
 
@@ -246,39 +378,72 @@ impl BufferedTimeline {
         elapsed_us: u64,
         hit_blocks: usize,
     ) {
-        if self.reserve().is_some() {
-            self.send(BufferedEvent::QueryPath(QueryPathEvent {
-                stage,
-                pid: std::process::id(),
-                monotonic_ns: monotonic_ns(),
-                request_id: FixedText::new(request_id),
-                instance_id: FixedText::new(instance_id),
-                group_id,
-                warmup,
-                prepare,
-                elapsed_us,
-                hit_blocks,
-            }));
+        if let Some(index) = self.reserve() {
+            self.write(
+                index,
+                BufferedEvent::QueryPath(QueryPathEvent {
+                    stage,
+                    pid: std::process::id(),
+                    monotonic_ns: monotonic_ns(),
+                    request_id: FixedText::new(request_id),
+                    instance_id: FixedText::new(instance_id),
+                    group_id,
+                    warmup,
+                    prepare,
+                    elapsed_us,
+                    hit_blocks,
+                }),
+            );
         }
     }
 
-    fn flush(&self) {
-        if BUFFER_OVERFLOW.swap(false, Ordering::Relaxed) {
-            let event = diagnostic_limit_event();
-            if self.sender.send(BufferedEvent::Json(event)).is_err() {
-                log::info!("cache_timeline {}", diagnostic_limit_event());
-                return;
+    fn flush_with(&self, mut write: impl FnMut(serde_json::Value)) -> Option<FlushSummary> {
+        let state = self.state.fetch_or(TIMELINE_SEALED, Ordering::AcqRel);
+        if state & TIMELINE_SEALED != 0 {
+            return None;
+        }
+        let reserved = state & TIMELINE_COUNT;
+        let mut ready = 0;
+        for slot in &self.slots[..reserved as usize] {
+            if let Some(event) = slot.get() {
+                ready += 1;
+                write(buffered_event_json(event));
             }
         }
-        let (complete, completed) = mpsc::sync_channel(0);
-        if self.sender.send(BufferedEvent::Flush(complete)).is_ok() {
-            let _ = completed.recv_timeout(Duration::from_secs(30));
+        let overflow = self.overflow.load(Ordering::Acquire);
+        if overflow || ready != reserved {
+            let reason = match (overflow, ready != reserved) {
+                (true, true) => "capacity_exceeded_or_post_seal_and_slot_not_ready",
+                (true, false) => "capacity_exceeded_or_post_seal",
+                (false, true) => "slot_not_ready",
+                (false, false) => unreachable!(),
+            };
+            write(diagnostic_limit_event(
+                reason,
+                self.slots.len() as u64,
+                reserved,
+                ready,
+            ));
+        }
+        Some(FlushSummary {
+            reserved,
+            ready,
+            overflow,
+        })
+    }
+
+    fn flush(&self) {
+        if self
+            .flush_with(|fields| log::info!("cache_timeline {fields}"))
+            .is_some()
+        {
+            log::logger().flush();
         }
     }
 }
 
 static BUFFERED_TIMELINE: LazyLock<Option<BufferedTimeline>> = LazyLock::new(|| {
-    if *DIAGNOSTIC_LIMIT == 0 {
+    if !*ENABLED || *DIAGNOSTIC_LIMIT == 0 {
         return None;
     }
     let timeline = BufferedTimeline::start(*DIAGNOSTIC_LIMIT);
@@ -292,33 +457,21 @@ fn report_buffer_start_failure() {
     if BUFFER_START_FAILED.load(Ordering::Relaxed)
         && !BUFFER_START_FAILURE_REPORTED.swap(true, Ordering::Relaxed)
     {
-        let mut event = diagnostic_limit_event();
-        event["reason"] = "writer_start_failed".into();
+        let event = diagnostic_limit_event("buffer_allocation_failed", *DIAGNOSTIC_LIMIT, 0, 0);
         log::info!("cache_timeline {event}");
     }
 }
 
-fn write_buffered_events(receiver: Receiver<BufferedEvent>) {
-    while let Ok(event) = receiver.recv() {
-        match event {
-            BufferedEvent::Json(fields) => log::info!("cache_timeline {fields}"),
-            BufferedEvent::Diagnostic(event) => {
-                let fields = diagnostic_event_json(event);
-                log::info!("cache_timeline {fields}");
-            }
-            BufferedEvent::QueryPath(event) => {
-                let fields = query_path_event_json(&event);
-                log::info!("cache_timeline {fields}");
-            }
-            BufferedEvent::Flush(complete) => {
-                log::logger().flush();
-                let _ = complete.send(());
-            }
-        }
+fn buffered_event_json(event: &BufferedEvent) -> serde_json::Value {
+    match event {
+        BufferedEvent::Diagnostic(event) => diagnostic_event_json(event),
+        BufferedEvent::QueryPath(event) => query_path_event_json(event),
+        BufferedEvent::Restore(event) => restore_event_json(event),
+        BufferedEvent::QueryControl(event) => query_control_event_json(event),
     }
 }
 
-fn diagnostic_event_json(event: DiagnosticEvent) -> serde_json::Value {
+fn diagnostic_event_json(event: &DiagnosticEvent) -> serde_json::Value {
     let mut value = serde_json::json!({
         "diagnostic_event": event.index,
         "stage": event.stage,
@@ -380,12 +533,71 @@ fn query_path_event_json(event: &QueryPathEvent) -> serde_json::Value {
     })
 }
 
-fn diagnostic_limit_event() -> serde_json::Value {
+fn restore_event_json(event: &RestoreEvent) -> serde_json::Value {
+    let mut value = serde_json::json!({
+        "stage": event.stage,
+        "pid": event.pid,
+        "at_unix_ns": event.at_unix_ns,
+        "monotonic_ns": event.monotonic_ns,
+        "restore_key": format!(
+            "manager:{}:{}:{}",
+            event.fields.manager_epoch, event.fields.client_token, event.fields.operation_id
+        ),
+    });
+    if let Some(elapsed_us) = event.fields.elapsed_us {
+        value["elapsed_us"] = elapsed_us.into();
+    }
+    if let Some(success) = event.fields.success {
+        value["success"] = success.into();
+    }
+    if let Some(
+        [
+            readiness_ns,
+            dispatched_ns,
+            dequeued_ns,
+            claimed_ns,
+            submitted_ns,
+            drained_ns,
+        ],
+    ) = event.fields.drain_timing
+    {
+        value["readiness_ns"] = readiness_ns.into();
+        value["dispatched_ns"] = dispatched_ns.into();
+        value["dequeued_ns"] = dequeued_ns.into();
+        value["claimed_ns"] = claimed_ns.into();
+        value["submitted_ns"] = submitted_ns.into();
+        value["drained_ns"] = drained_ns.into();
+    }
+    value
+}
+
+fn query_control_event_json(event: &QueryControlEvent) -> serde_json::Value {
+    serde_json::json!({
+        "stage": event.stage,
+        "pid": event.pid,
+        "at_unix_ns": event.at_unix_ns,
+        "monotonic_ns": event.monotonic_ns,
+        "request_id": event.request_id.as_str(),
+        "request_id_truncated": event.request_id.truncated,
+        "operation_id": event.operation_id,
+        "revision": event.revision,
+    })
+}
+
+fn diagnostic_limit_event(
+    reason: &'static str,
+    limit: u64,
+    reserved: u64,
+    ready: u64,
+) -> serde_json::Value {
     serde_json::json!({
         "stage": "diagnostic_timeline_limit",
         "pid": std::process::id(),
         "monotonic_ns": monotonic_ns(),
-        "limit": *DIAGNOSTIC_LIMIT,
+        "reason": reason,
+        "limit": limit,
+        "reserved": reserved,
+        "ready": ready,
     })
 }
 
@@ -397,34 +609,69 @@ pub fn monotonic_ns() -> u64 {
         .saturating_add(u64::try_from(now.tv_nsec).unwrap_or(0))
 }
 
+fn unix_ns() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64
+}
+
 pub fn diagnostic_enabled() -> bool {
     *ENABLED && *DIAGNOSTIC_LIMIT > 0
 }
 
-pub fn record(stage: &str, fields: impl FnOnce() -> serde_json::Value) {
+pub fn record_restore(stage: &'static str, fields: RestoreTimelineFields) {
     if !*ENABLED {
         return;
     }
-    let mut fields = fields();
-    fields["stage"] = stage.into();
-    fields["pid"] = std::process::id().into();
-    fields["at_unix_ns"] = (std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64)
-        .into();
-    fields["monotonic_ns"] = monotonic_ns().into();
     if let Some(timeline) = BUFFERED_TIMELINE.as_ref() {
-        timeline.record_json(fields);
+        timeline.record_restore(stage, fields);
     } else if *DIAGNOSTIC_LIMIT > 0 {
         report_buffer_start_failure();
     } else {
-        log::info!("cache_timeline {fields}");
+        let event = RestoreEvent {
+            stage,
+            pid: std::process::id(),
+            at_unix_ns: unix_ns(),
+            monotonic_ns: monotonic_ns(),
+            fields,
+        };
+        log::info!("cache_timeline {}", restore_event_json(&event));
+    }
+}
+
+pub fn record_query_control(
+    stage: &'static str,
+    request_id: &str,
+    operation_id: u64,
+    revision: u64,
+) {
+    if !*ENABLED {
+        return;
+    }
+    if let Some(timeline) = BUFFERED_TIMELINE.as_ref() {
+        timeline.record_query_control(stage, request_id, operation_id, revision);
+    } else if *DIAGNOSTIC_LIMIT > 0 {
+        report_buffer_start_failure();
+    } else {
+        let event = QueryControlEvent {
+            stage,
+            pid: std::process::id(),
+            at_unix_ns: unix_ns(),
+            monotonic_ns: monotonic_ns(),
+            request_id: FixedText::new(request_id),
+            operation_id,
+            revision,
+        };
+        log::info!("cache_timeline {}", query_control_event_json(&event));
     }
 }
 
 /// Drain diagnostic events after request, storage and lifecycle owners stop.
 pub fn flush_diagnostic() {
+    if !diagnostic_enabled() {
+        return;
+    }
     if let Some(timeline) = BUFFERED_TIMELINE.as_ref() {
         timeline.flush();
     } else if *DIAGNOSTIC_LIMIT > 0 {
@@ -471,60 +718,22 @@ pub fn record_query_path(
     } else if *DIAGNOSTIC_LIMIT > 0 {
         report_buffer_start_failure();
     } else {
-        record(stage, || {
-            serde_json::json!({
-                "request_id": request_id,
-                "instance_id": instance_id,
-                "group_id": group_id,
-                "warmup": warmup,
-                "prepare": prepare,
-                "elapsed_us": elapsed_us,
-                "hit_blocks": hit_blocks,
-            })
-        });
+        let event = QueryPathEvent {
+            stage,
+            pid: std::process::id(),
+            monotonic_ns: monotonic_ns(),
+            request_id: FixedText::new(request_id),
+            instance_id: FixedText::new(instance_id),
+            group_id,
+            warmup,
+            prepare,
+            elapsed_us,
+            hit_blocks,
+        };
+        log::info!("cache_timeline {}", query_path_event_json(&event));
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{DiagnosticEvent, DiagnosticFields};
-
-    #[test]
-    fn monotonic_clock_advances() {
-        let before = super::monotonic_ns();
-        let after = super::monotonic_ns();
-        assert!(before > 0);
-        assert!(after >= before);
-    }
-
-    #[test]
-    fn fixed_diagnostic_event_preserves_stage_correlation_and_queue_fields() {
-        let event = DiagnosticEvent {
-            index: 7,
-            stage: "publish_ssd_dequeue",
-            pid: 11,
-            monotonic_ns: 13,
-            fields: DiagnosticFields::operation(17, 19, 23)
-                .blocks(8)
-                .pending_blocks(3)
-                .inflight_writes(2)
-                .max_inflight_writes(4),
-        };
-        assert_eq!(
-            super::diagnostic_event_json(event),
-            serde_json::json!({
-                "diagnostic_event": 7,
-                "stage": "publish_ssd_dequeue",
-                "pid": 11,
-                "monotonic_ns": 13,
-                "request_id": 17,
-                "session_epoch": 19,
-                "session_token": 23,
-                "blocks": 8,
-                "pending_blocks": 3,
-                "inflight_writes": 2,
-                "max_inflight_writes": 4,
-            })
-        );
-    }
-}
+#[path = "../tests/unit/timeline.rs"]
+mod tests;
