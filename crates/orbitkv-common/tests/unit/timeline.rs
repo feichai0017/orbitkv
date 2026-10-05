@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use super::{
-    BufferedTimeline, DiagnosticEvent, DiagnosticFields, FlushSummary, RestoreEvent,
-    RestoreTimelineFields,
+    BufferedTimeline, DiagnosticEvent, DiagnosticFields, FlushSummary, QueryControlEvent,
+    RestoreEvent, RestoreTimelineFields,
 };
 
 #[test]
@@ -72,6 +72,28 @@ fn fixed_restore_event_preserves_existing_timing_schema() {
             "drained_ns": 47,
         })
     );
+
+    let observed = RestoreEvent {
+        stage: "local_restore_observed",
+        pid: 53,
+        at_unix_ns: 59,
+        monotonic_ns: 61,
+        fields: RestoreTimelineFields::operation(67, 71, 73)
+            .elapsed_ns(79)
+            .success(false),
+    };
+    assert_eq!(
+        super::restore_event_json(&observed),
+        serde_json::json!({
+            "stage": "local_restore_observed",
+            "pid": 53,
+            "at_unix_ns": 59,
+            "monotonic_ns": 61,
+            "restore_key": "manager:67:71:73",
+            "elapsed_ns": 79,
+            "success": false,
+        })
+    );
 }
 
 #[test]
@@ -107,6 +129,7 @@ fn concurrent_writers_claim_each_slot_once_and_flush_once() {
             reserved: THREADS * EVENTS_PER_THREAD,
             ready: THREADS * EVENTS_PER_THREAD,
             overflow: false,
+            late_records: 0,
         })
     );
     let mut indices = events
@@ -136,11 +159,12 @@ fn overflow_emits_invalidating_limit_event() {
             reserved: 1,
             ready: 1,
             overflow: true,
+            late_records: 0,
         })
     );
     assert_eq!(events.len(), 2);
     assert_eq!(events[1]["stage"], "diagnostic_timeline_limit");
-    assert_eq!(events[1]["reason"], "capacity_exceeded_or_post_seal");
+    assert_eq!(events[1]["reason"], "capacity_exceeded");
 }
 
 #[test]
@@ -156,6 +180,7 @@ fn incomplete_slot_emits_invalidating_limit_event() {
             reserved: 2,
             ready: 1,
             overflow: false,
+            late_records: 0,
         })
     );
     assert_eq!(events.len(), 2);
@@ -163,4 +188,50 @@ fn incomplete_slot_emits_invalidating_limit_event() {
     assert_eq!(events[1]["reason"], "slot_not_ready");
     assert_eq!(events[1]["reserved"], 2);
     assert_eq!(events[1]["ready"], 1);
+}
+
+#[test]
+fn post_seal_record_is_reported_by_followup_flush() {
+    let timeline = BufferedTimeline::start(1).unwrap();
+    let mut events = Vec::new();
+    assert_eq!(
+        timeline.flush_with(|event| events.push(event)),
+        Some(FlushSummary {
+            reserved: 0,
+            ready: 0,
+            overflow: false,
+            late_records: 0,
+        })
+    );
+    timeline.record_diagnostic("late", DiagnosticFields::default());
+    assert_eq!(
+        timeline.flush_with(|event| events.push(event)),
+        Some(FlushSummary {
+            reserved: 0,
+            ready: 0,
+            overflow: false,
+            late_records: 1,
+        })
+    );
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["stage"], "diagnostic_timeline_limit");
+    assert_eq!(events[0]["reason"], "post_seal_record");
+    assert_eq!(events[0]["late_records"], 1);
+}
+
+#[test]
+fn query_control_preserves_complete_request_id() {
+    let request_id = "r".repeat(256);
+    let event = QueryControlEvent {
+        stage: "query_cancel",
+        pid: 11,
+        at_unix_ns: 12,
+        monotonic_ns: 13,
+        request_id: request_id.clone(),
+        operation_id: 17,
+        revision: 19,
+    };
+    let value = super::query_control_event_json(&event);
+    assert_eq!(value["request_id"], request_id);
+    assert!(value.get("request_id_truncated").is_none());
 }

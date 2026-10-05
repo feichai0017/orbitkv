@@ -153,11 +153,11 @@ impl PendingQueries {
             .pending
             .get(&key)
             .is_some_and(|task| task.request.ticket == ticket)
-            && let Some(task) = self.pending.remove(&key)
+            && let Some(mut task) = self.pending.remove(&key)
         {
             orbitkv_common::timeline::record_query_control(
                 "query_cancel",
-                &task.request.request_id,
+                std::mem::take(&mut task.request.request_id),
                 ticket.operation_id,
                 ticket.revision,
             );
@@ -306,15 +306,19 @@ impl PendingQueries {
             return Err(EngineError::Storage("cache query timed out".into()));
         }
         if !task.request.wait_for_full_prefix && !task.request.discover && task.control.expired() {
+            let Some(mut task) = self.pending.remove(&key) else {
+                return Err(invalid(
+                    "pending query disappeared before deadline retirement",
+                ));
+            };
             orbitkv_common::timeline::record_query_control(
                 "read_deadline",
-                &task.request.request_id,
+                std::mem::take(&mut task.request.request_id),
                 ticket.operation_id,
                 ticket.revision,
             );
             // Retire caller interest immediately. The spawned query keeps all
             // submitted buffers and permits until its current batch completes.
-            self.pending.remove(&key);
             return Ok(Some(QueryReply {
                 outcome: Ok(QueryOutcome::Ready {
                     num_hit_blocks: 0,

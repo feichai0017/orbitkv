@@ -136,6 +136,7 @@ pub struct RestoreTimelineFields {
     client_token: u64,
     operation_id: u64,
     elapsed_us: Option<u64>,
+    elapsed_ns: Option<u64>,
     success: Option<bool>,
     drain_timing: Option<[u64; 6]>,
 }
@@ -147,6 +148,7 @@ impl RestoreTimelineFields {
             client_token,
             operation_id,
             elapsed_us: None,
+            elapsed_ns: None,
             success: None,
             drain_timing: None,
         }
@@ -154,6 +156,11 @@ impl RestoreTimelineFields {
 
     pub const fn elapsed_us(mut self, elapsed_us: u64) -> Self {
         self.elapsed_us = Some(elapsed_us);
+        self
+    }
+
+    pub const fn elapsed_ns(mut self, elapsed_ns: u64) -> Self {
+        self.elapsed_ns = Some(elapsed_ns);
         self
     }
 
@@ -242,7 +249,7 @@ struct QueryControlEvent {
     pid: u32,
     at_unix_ns: u64,
     monotonic_ns: u64,
-    request_id: FixedText,
+    request_id: String,
     operation_id: u64,
     revision: u64,
 }
@@ -258,6 +265,7 @@ struct BufferedTimeline {
     slots: Box<[OnceLock<BufferedEvent>]>,
     state: AtomicU64,
     overflow: AtomicBool,
+    late_records: AtomicU64,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -265,6 +273,7 @@ struct FlushSummary {
     reserved: u64,
     ready: u64,
     overflow: bool,
+    late_records: u64,
 }
 
 impl BufferedTimeline {
@@ -280,6 +289,7 @@ impl BufferedTimeline {
             slots: slots.into_boxed_slice(),
             state: AtomicU64::new(0),
             overflow: AtomicBool::new(false),
+            late_records: AtomicU64::new(0),
         })
     }
 
@@ -287,7 +297,7 @@ impl BufferedTimeline {
         let mut state = self.state.load(Ordering::Relaxed);
         loop {
             if state & TIMELINE_SEALED != 0 {
-                self.overflow.store(true, Ordering::Relaxed);
+                self.late_records.fetch_add(1, Ordering::Release);
                 return None;
             }
             let index = state & TIMELINE_COUNT;
@@ -346,7 +356,7 @@ impl BufferedTimeline {
     fn record_query_control(
         &self,
         stage: &'static str,
-        request_id: &str,
+        request_id: String,
         operation_id: u64,
         revision: u64,
     ) {
@@ -358,7 +368,7 @@ impl BufferedTimeline {
                     pid: std::process::id(),
                     at_unix_ns: unix_ns(),
                     monotonic_ns: monotonic_ns(),
-                    request_id: FixedText::new(request_id),
+                    request_id,
                     operation_id,
                     revision,
                 }),
@@ -399,36 +409,43 @@ impl BufferedTimeline {
 
     fn flush_with(&self, mut write: impl FnMut(serde_json::Value)) -> Option<FlushSummary> {
         let state = self.state.fetch_or(TIMELINE_SEALED, Ordering::AcqRel);
-        if state & TIMELINE_SEALED != 0 {
-            return None;
-        }
+        let first_flush = state & TIMELINE_SEALED == 0;
         let reserved = state & TIMELINE_COUNT;
-        let mut ready = 0;
-        for slot in &self.slots[..reserved as usize] {
-            if let Some(event) = slot.get() {
-                ready += 1;
-                write(buffered_event_json(event));
+        let mut ready = reserved;
+        if first_flush {
+            ready = 0;
+            for slot in &self.slots[..reserved as usize] {
+                if let Some(event) = slot.get() {
+                    ready += 1;
+                    write(buffered_event_json(event));
+                }
             }
         }
-        let overflow = self.overflow.load(Ordering::Acquire);
-        if overflow || ready != reserved {
-            let reason = match (overflow, ready != reserved) {
-                (true, true) => "capacity_exceeded_or_post_seal_and_slot_not_ready",
-                (true, false) => "capacity_exceeded_or_post_seal",
-                (false, true) => "slot_not_ready",
-                (false, false) => unreachable!(),
+        let overflow = first_flush && self.overflow.swap(false, Ordering::AcqRel);
+        let late_records = self.late_records.swap(0, Ordering::AcqRel);
+        if !first_flush && late_records == 0 {
+            return None;
+        }
+        if overflow || ready != reserved || late_records != 0 {
+            let reason = match (overflow, ready != reserved, late_records != 0) {
+                (_, true, _) => "slot_not_ready",
+                (true, false, _) => "capacity_exceeded",
+                (false, false, true) => "post_seal_record",
+                (false, false, false) => unreachable!(),
             };
             write(diagnostic_limit_event(
                 reason,
                 self.slots.len() as u64,
                 reserved,
                 ready,
+                late_records,
             ));
         }
         Some(FlushSummary {
             reserved,
             ready,
             overflow,
+            late_records,
         })
     }
 
@@ -457,7 +474,7 @@ fn report_buffer_start_failure() {
     if BUFFER_START_FAILED.load(Ordering::Relaxed)
         && !BUFFER_START_FAILURE_REPORTED.swap(true, Ordering::Relaxed)
     {
-        let event = diagnostic_limit_event("buffer_allocation_failed", *DIAGNOSTIC_LIMIT, 0, 0);
+        let event = diagnostic_limit_event("buffer_allocation_failed", *DIAGNOSTIC_LIMIT, 0, 0, 0);
         log::info!("cache_timeline {event}");
     }
 }
@@ -547,6 +564,9 @@ fn restore_event_json(event: &RestoreEvent) -> serde_json::Value {
     if let Some(elapsed_us) = event.fields.elapsed_us {
         value["elapsed_us"] = elapsed_us.into();
     }
+    if let Some(elapsed_ns) = event.fields.elapsed_ns {
+        value["elapsed_ns"] = elapsed_ns.into();
+    }
     if let Some(success) = event.fields.success {
         value["success"] = success.into();
     }
@@ -577,8 +597,7 @@ fn query_control_event_json(event: &QueryControlEvent) -> serde_json::Value {
         "pid": event.pid,
         "at_unix_ns": event.at_unix_ns,
         "monotonic_ns": event.monotonic_ns,
-        "request_id": event.request_id.as_str(),
-        "request_id_truncated": event.request_id.truncated,
+        "request_id": event.request_id,
         "operation_id": event.operation_id,
         "revision": event.revision,
     })
@@ -589,6 +608,7 @@ fn diagnostic_limit_event(
     limit: u64,
     reserved: u64,
     ready: u64,
+    late_records: u64,
 ) -> serde_json::Value {
     serde_json::json!({
         "stage": "diagnostic_timeline_limit",
@@ -598,6 +618,7 @@ fn diagnostic_limit_event(
         "limit": limit,
         "reserved": reserved,
         "ready": ready,
+        "late_records": late_records,
     })
 }
 
@@ -626,9 +647,7 @@ pub fn record_restore(stage: &'static str, fields: RestoreTimelineFields) {
     }
     if let Some(timeline) = BUFFERED_TIMELINE.as_ref() {
         timeline.record_restore(stage, fields);
-    } else if *DIAGNOSTIC_LIMIT > 0 {
-        report_buffer_start_failure();
-    } else {
+    } else if *DIAGNOSTIC_LIMIT == 0 {
         let event = RestoreEvent {
             stage,
             pid: std::process::id(),
@@ -642,7 +661,7 @@ pub fn record_restore(stage: &'static str, fields: RestoreTimelineFields) {
 
 pub fn record_query_control(
     stage: &'static str,
-    request_id: &str,
+    request_id: String,
     operation_id: u64,
     revision: u64,
 ) {
@@ -651,15 +670,13 @@ pub fn record_query_control(
     }
     if let Some(timeline) = BUFFERED_TIMELINE.as_ref() {
         timeline.record_query_control(stage, request_id, operation_id, revision);
-    } else if *DIAGNOSTIC_LIMIT > 0 {
-        report_buffer_start_failure();
-    } else {
+    } else if *DIAGNOSTIC_LIMIT == 0 {
         let event = QueryControlEvent {
             stage,
             pid: std::process::id(),
             at_unix_ns: unix_ns(),
             monotonic_ns: monotonic_ns(),
-            request_id: FixedText::new(request_id),
+            request_id,
             operation_id,
             revision,
         };
@@ -685,8 +702,6 @@ pub fn record_diagnostic(stage: &'static str, fields: DiagnosticFields) {
     }
     if let Some(timeline) = BUFFERED_TIMELINE.as_ref() {
         timeline.record_diagnostic(stage, fields);
-    } else {
-        report_buffer_start_failure();
     }
 }
 
@@ -715,22 +730,21 @@ pub fn record_query_path(
             elapsed_us,
             hit_blocks,
         );
-    } else if *DIAGNOSTIC_LIMIT > 0 {
-        report_buffer_start_failure();
-    } else {
-        let event = QueryPathEvent {
-            stage,
-            pid: std::process::id(),
-            monotonic_ns: monotonic_ns(),
-            request_id: FixedText::new(request_id),
-            instance_id: FixedText::new(instance_id),
-            group_id,
-            warmup,
-            prepare,
-            elapsed_us,
-            hit_blocks,
-        };
-        log::info!("cache_timeline {}", query_path_event_json(&event));
+    } else if *DIAGNOSTIC_LIMIT == 0 {
+        let fields = serde_json::json!({
+            "stage": stage,
+            "pid": std::process::id(),
+            "at_unix_ns": unix_ns(),
+            "monotonic_ns": monotonic_ns(),
+            "request_id": request_id,
+            "instance_id": instance_id,
+            "group_id": group_id,
+            "warmup": warmup,
+            "prepare": prepare,
+            "elapsed_us": elapsed_us,
+            "hit_blocks": hit_blocks,
+        });
+        log::info!("cache_timeline {fields}");
     }
 }
 
