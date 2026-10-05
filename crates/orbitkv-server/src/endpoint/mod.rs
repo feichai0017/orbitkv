@@ -48,6 +48,7 @@ pub(crate) enum ProcessEndpointError {
 /// QueryBundle uses a generation-checked memfd arena bootstrapped over UDS.
 /// Lifecycle metadata uses the authenticated bootstrap UDS.
 pub(crate) struct ProcessEndpoint {
+    accepting: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
     active_publishes: Arc<ActiveTasks>,
@@ -124,6 +125,8 @@ impl ProcessEndpoint {
         )?;
         bootstrap.set_nonblocking(true)?;
 
+        let accepting = Arc::new(AtomicBool::new(true));
+        let thread_accepting = Arc::clone(&accepting);
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
         let active_publishes = Arc::new(ActiveTasks::default());
@@ -148,11 +151,8 @@ impl ProcessEndpoint {
                 queries.read_max_batches = read_max_batches;
                 let mut next_bootstrap_poll = Instant::now();
                 let mut next_liveness_poll = Instant::now();
-                loop {
-                    if thread_stop.load(Ordering::Acquire) {
-                        if thread_active_publishes.count.load(Ordering::Acquire) == 0 {
-                            break;
-                        }
+                while !thread_stop.load(Ordering::Acquire) {
+                    if !thread_accepting.load(Ordering::Acquire) {
                         thread::sleep(Duration::from_millis(1));
                         continue;
                     }
@@ -210,8 +210,9 @@ impl ProcessEndpoint {
                         }
                     }) {
                         Ok(true) if request_shutdown => {
+                            thread_accepting.store(false, Ordering::Release);
                             shutdown.notify_waiters();
-                            break;
+                            continue;
                         }
                         Ok(true) => continue,
                         Ok(false) => {}
@@ -231,6 +232,7 @@ impl ProcessEndpoint {
             .map_err(|error| TransportError::Thread(error.to_string()))?;
 
         Ok(Self {
+            accepting,
             stop,
             thread: Some(thread),
             active_publishes,
@@ -239,6 +241,7 @@ impl ProcessEndpoint {
     }
 
     pub(crate) fn stop(&mut self) {
+        self.accepting.store(false, Ordering::Release);
         self.stop.store(true, Ordering::Release);
         self.join_thread();
     }
@@ -251,10 +254,9 @@ impl ProcessEndpoint {
         }
     }
 
-    pub(crate) async fn stop_and_drain_publishes(&mut self) {
-        self.stop.store(true, Ordering::Release);
+    pub(crate) async fn stop_admission_and_drain_publishes(&self) {
+        self.accepting.store(false, Ordering::Release);
         self.active_publishes.drain().await;
-        self.join_thread();
     }
 
     pub(crate) async fn drain_lifecycle_connections(&self) {

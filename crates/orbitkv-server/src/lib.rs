@@ -923,7 +923,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         }
 
         info!("Cache Manager stopped");
-        channel_endpoint.stop_and_drain_publishes().await;
+        channel_endpoint.stop_admission_and_drain_publishes().await;
         lifecycle_shutdown.notify_waiters();
         channel_endpoint.drain_lifecycle_connections().await;
 
@@ -931,6 +931,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         shutdown.notify_waiters();
         lifecycle.shutdown().await?;
         engine.flush_all().await;
+        channel_endpoint.stop();
         let _ = http_server_handle.await;
 
         if let Some(membership) = membership {
