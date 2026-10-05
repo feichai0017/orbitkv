@@ -639,6 +639,33 @@ The endpoint now counts admitted Publish tasks and awaits the last continuation
 before lifecycle/storage/timeline drain. This correction is unit-qualified and
 refrozen only; the stopped pilot cohort is not restarted.
 
+### S2.10b — Lifecycle runtime acceptance and lower-overhead diagnosis
+
+**Separately authorized after the S2.10a stop decision.** Keep all three failed
+instrumentation pilots immutable. First run the final review-fixed artifact on
+the A100 and prove that an admitted real Publish, deferred insert/SSD work,
+response publication, client completion and normal Manager shutdown drain in
+owner order without a native child or resource leak. This runtime gate does not
+reclassify isolation.
+
+Replace per-event channel delivery with a preallocated, process-bounded in-memory
+recording path while preserving the same authenticated operation key, monotonic
+clock and stage meanings. No request thread may format JSON, block on a writer or
+allocate an unbounded buffer. Repeat the three-cell SSD overhead/correlation
+pilot as a new cohort with the existing payload, budgets, 10 warm-up, 120 measured,
+250 ms foreground cadence, 17 ms source cadence, 25 ms observer cadence and the
+same 1.05 p50, 0.25 ms p99 and 1.15 CPU guards. Preserve every failure and stop
+again if any mandatory guard fails.
+
+Only after that pilot passes and independent review accepts its linkage and
+overhead may a formal diagnostic matrix be frozen. It must use independent runs,
+at least 1,000 measured operations per p99 run, balanced SSD ABBA/BAAB ordering,
+a smaller DRAM regression control and at most one predeclared phase-offset
+ablation. Correlation alone cannot authorize a production change. If a specific
+owner or wait path is causal, apply the smallest fix, validate matched before/after
+correctness, throughput, visibility and drain, then run a separately frozen new
+isolation cohort before changing the four-owner support boundary.
+
 Implement a production change only for a demonstrated owner/waiting path. Do not
 reduce pressure, input, correctness work or drain. If evidence is insufficient,
 hand off the bounded diagnosis and next discriminating experiment without adding
@@ -651,18 +678,20 @@ Hardware-blocked cells remain explicit:
 
 - **Physical cross-host cache/HA:** needs at least two CUDA-capable hosts with
   mutually reachable data-plane addresses and TENT ports plus independently
-  controlled source/receiver failure. The A100 host has a usable A100-SXM4 and
-  reaches `orbitkv-cpu` bidirectionally on their 10.x data addresses. The CPU
-  host has no GPU. The current host exposes eight H20 PCI functions but no
-  `/dev/nvidia*`; `nvidia-smi` cannot contact its driver, and neither A100 nor
-  CPU can reach its 26.x address. Thus only one usable CUDA data-plane node is
-  available and cross-host cache/HA stays blocked.
+  controlled source/receiver failure. H20 and A100 are two accessible physical
+  GPU machines. The current agent session runs inside a container on H20 whose
+  GPU devices are not mapped (`/dev/nvidia*` is absent), so its failed
+  `nvidia-smi` probe is a container-device limitation, not evidence that the H20
+  host or GPU is unavailable. Qualification still needs an H20 test container
+  with GPU device access plus mutually reachable, explicitly selected H20/A100
+  TENT data-plane addresses and ports.
 - **Independent etcd failure domains:** needs three simultaneous machines in
   independent host/power/network domains with mutually reachable client and peer
-  networks. The three SSH environments have distinct hostnames, kernels and
-  subnets, but A100/CPU cannot reach the current host and there is no evidence of
-  independently controlled power/network failure domains. A third process or SSH
-  alias alone proves only process isolation.
+  networks. H20, A100 and `orbitkv-cpu` are three accessible machine environments,
+  and A100/CPU data addresses are bidirectionally reachable. They form a candidate
+  three-member topology, but qualification still requires verified three-way
+  client/peer connectivity and independently controlled host, power and network
+  failures; SSH accessibility alone does not pass that gate.
 - **Native GDS:** needs an NVIDIA GPU host with supported NVMe/filesystem,
   `nvidia-fs`/cuFile runtime and container access to the real block device/mount.
   The available SSD qualification path is io_uring, not native GDS.
