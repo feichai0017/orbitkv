@@ -1,11 +1,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::ActivePublishes;
+use super::ActiveTasks;
 
 #[tokio::test]
 async fn publish_drain_waits_for_every_admitted_continuation() {
-    let active = Arc::new(ActivePublishes::default());
+    let active = Arc::new(ActiveTasks::default());
     let first = active.admit();
     let second = active.admit();
     let drain = tokio::spawn({

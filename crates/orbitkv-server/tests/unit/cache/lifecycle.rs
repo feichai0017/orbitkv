@@ -22,6 +22,7 @@ async fn process_channel_lifecycle_and_cache_control_need_no_grpc() {
         RegistryHandle::spawn(CudaTensorRegistry::empty()),
     );
     let shutdown = Arc::new(Notify::new());
+    let lifecycle_shutdown = Arc::new(Notify::new());
     let id = uuid::Uuid::new_v4();
     let socket = std::env::temp_dir().join(format!("orbitkv-lifecycle-{id}.sock"));
     let mut endpoint = ProcessEndpoint::start(
@@ -37,6 +38,7 @@ async fn process_channel_lifecycle_and_cache_control_need_no_grpc() {
             4,
         ))),
         Arc::clone(&shutdown),
+        Arc::clone(&lifecycle_shutdown),
         lifecycle.clone(),
         0,
         None,
@@ -130,5 +132,6 @@ async fn process_channel_lifecycle_and_cache_control_need_no_grpc() {
         Err(ChannelError::SessionRequiresReconnect)
     ));
     endpoint.stop();
+    lifecycle_shutdown.notify_waiters();
     shutdown.notify_waiters();
 }

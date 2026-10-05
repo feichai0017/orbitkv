@@ -50,19 +50,20 @@ pub(crate) enum ProcessEndpointError {
 pub(crate) struct ProcessEndpoint {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
-    active_publishes: Arc<ActivePublishes>,
+    active_publishes: Arc<ActiveTasks>,
+    lifecycle_connections: Arc<ActiveTasks>,
 }
 
 #[derive(Default)]
-struct ActivePublishes {
+struct ActiveTasks {
     count: AtomicUsize,
     drained: Notify,
 }
 
-impl ActivePublishes {
-    fn admit(self: &Arc<Self>) -> ActivePublish {
+impl ActiveTasks {
+    fn admit(self: &Arc<Self>) -> ActiveTask {
         self.count.fetch_add(1, Ordering::AcqRel);
-        ActivePublish(Arc::clone(self))
+        ActiveTask(Arc::clone(self))
     }
 
     async fn drain(&self) {
@@ -79,9 +80,9 @@ impl ActivePublishes {
     }
 }
 
-struct ActivePublish(Arc<ActivePublishes>);
+struct ActiveTask(Arc<ActiveTasks>);
 
-impl Drop for ActivePublish {
+impl Drop for ActiveTask {
     fn drop(&mut self) {
         if self.0.count.fetch_sub(1, Ordering::AcqRel) == 1 {
             self.0.drained.notify_one();
@@ -104,6 +105,7 @@ impl ProcessEndpoint {
         runtime: Handle,
         hll_tracker: Arc<std::sync::Mutex<MultiWindowHllTracker>>,
         shutdown: Arc<Notify>,
+        lifecycle_shutdown: Arc<Notify>,
         lifecycle: crate::cache::lifecycle::LifecycleService,
         read_batch_bytes: u64,
         read_timeout: Option<Duration>,
@@ -124,8 +126,10 @@ impl ProcessEndpoint {
 
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
-        let active_publishes = Arc::new(ActivePublishes::default());
+        let active_publishes = Arc::new(ActiveTasks::default());
         let thread_active_publishes = Arc::clone(&active_publishes);
+        let lifecycle_connections = Arc::new(ActiveTasks::default());
+        let thread_lifecycle_connections = Arc::clone(&lifecycle_connections);
         let thread_service = service_name.clone();
         let thread = thread::Builder::new()
             .name("orbitkv-channel-control".to_string())
@@ -154,7 +158,8 @@ impl ProcessEndpoint {
                             &runtime,
                             &lifecycle,
                             session_epoch,
-                            &shutdown,
+                            &lifecycle_shutdown,
+                            &thread_lifecycle_connections,
                         );
                         next_bootstrap_poll = now + BOOTSTRAP_POLL_INTERVAL;
                     }
@@ -222,6 +227,7 @@ impl ProcessEndpoint {
             stop,
             thread: Some(thread),
             active_publishes,
+            lifecycle_connections,
         })
     }
 
@@ -234,9 +240,13 @@ impl ProcessEndpoint {
         }
     }
 
-    pub(crate) async fn stop_and_drain(&mut self) {
+    pub(crate) async fn stop_and_drain_publishes(&mut self) {
         self.stop();
         self.active_publishes.drain().await;
+    }
+
+    pub(crate) async fn drain_lifecycle_connections(&self) {
+        self.lifecycle_connections.drain().await;
     }
 }
 
@@ -246,6 +256,10 @@ impl Drop for ProcessEndpoint {
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "session admission names separate shutdown and lifecycle owners"
+)]
 fn accept_pending_sessions(
     bootstrap: &BootstrapServer,
     sessions: &mut HashMap<u64, BootstrapSession>,
@@ -253,7 +267,8 @@ fn accept_pending_sessions(
     runtime: &Handle,
     lifecycle: &crate::cache::lifecycle::LifecycleService,
     epoch: u64,
-    shutdown: &Arc<Notify>,
+    lifecycle_shutdown: &Arc<Notify>,
+    lifecycle_connections: &Arc<ActiveTasks>,
 ) {
     loop {
         match bootstrap.try_accept() {
@@ -280,12 +295,13 @@ fn accept_pending_sessions(
                 }
                 match session.stream().try_clone() {
                     Ok(stream) => {
-                        runtime.spawn(session::serve(
-                            stream,
-                            epoch,
-                            lifecycle.clone(),
-                            Arc::clone(shutdown),
-                        ));
+                        let active = lifecycle_connections.admit();
+                        let lifecycle = lifecycle.clone();
+                        let shutdown = Arc::clone(lifecycle_shutdown);
+                        runtime.spawn(async move {
+                            let _active = active;
+                            session::serve(stream, epoch, lifecycle, shutdown).await;
+                        });
                     }
                     Err(error) => {
                         error!("Cannot start process-channel lifecycle: {error}");
@@ -549,7 +565,7 @@ fn dispatch_publish(
     sessions: &mut HashMap<u64, BootstrapSession>,
     engine: &Arc<OrbitKVEngine>,
     runtime: &Handle,
-    active_publishes: &Arc<ActivePublishes>,
+    active_publishes: &Arc<ActiveTasks>,
     reply: DeferredResponse,
 ) -> Result<(), TransportError> {
     orbitkv_common::timeline::record_diagnostic(

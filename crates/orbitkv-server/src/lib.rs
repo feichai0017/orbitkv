@@ -747,6 +747,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     crate::metric::register_hll_gauges(&hll_tracker);
 
     let shutdown = Arc::new(Notify::new());
+    let lifecycle_shutdown = Arc::new(Notify::new());
     let channel_config = {
         let service_name = cli
             .channel_service
@@ -807,6 +808,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             runtime_handle,
             Arc::clone(&hll_tracker),
             Arc::clone(&shutdown),
+            Arc::clone(&lifecycle_shutdown),
             lifecycle.clone(),
             cli.query_read_batch as u64,
             (cli.query_read_timeout_ms != 0).then(|| Duration::from_millis(cli.query_read_timeout_ms)),
@@ -921,7 +923,9 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         }
 
         info!("Cache Manager stopped");
-        channel_endpoint.stop_and_drain().await;
+        channel_endpoint.stop_and_drain_publishes().await;
+        lifecycle_shutdown.notify_waiters();
+        channel_endpoint.drain_lifecycle_connections().await;
 
         // Stop HTTP server
         shutdown.notify_waiters();
