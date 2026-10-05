@@ -148,7 +148,14 @@ impl ProcessEndpoint {
                 queries.read_max_batches = read_max_batches;
                 let mut next_bootstrap_poll = Instant::now();
                 let mut next_liveness_poll = Instant::now();
-                while !thread_stop.load(Ordering::Acquire) {
+                loop {
+                    if thread_stop.load(Ordering::Acquire) {
+                        if thread_active_publishes.count.load(Ordering::Acquire) == 0 {
+                            break;
+                        }
+                        thread::sleep(Duration::from_millis(1));
+                        continue;
+                    }
                     let now = Instant::now();
                     if now >= next_bootstrap_poll {
                         accept_pending_sessions(
@@ -233,6 +240,10 @@ impl ProcessEndpoint {
 
     pub(crate) fn stop(&mut self) {
         self.stop.store(true, Ordering::Release);
+        self.join_thread();
+    }
+
+    fn join_thread(&mut self) {
         if let Some(thread) = self.thread.take()
             && thread.join().is_err()
         {
@@ -241,8 +252,9 @@ impl ProcessEndpoint {
     }
 
     pub(crate) async fn stop_and_drain_publishes(&mut self) {
-        self.stop();
+        self.stop.store(true, Ordering::Release);
         self.active_publishes.drain().await;
+        self.join_thread();
     }
 
     pub(crate) async fn drain_lifecycle_connections(&self) {
