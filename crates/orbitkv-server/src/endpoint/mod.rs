@@ -153,19 +153,7 @@ impl ProcessEndpoint {
                 let mut next_liveness_poll = Instant::now();
                 while !thread_stop.load(Ordering::Acquire) {
                     if !thread_accepting.load(Ordering::Acquire) {
-                        match server
-                            .try_serve_deferred_for_epoch(session_epoch, |command, reply| {
-                                reply.send(shutdown_response(command, session_epoch))
-                            }) {
-                            Ok(true) => continue,
-                            Ok(false) => {}
-                            Err(error) => {
-                                error!("Process channel shutdown response failed: {error}");
-                            }
-                        }
-                        if let Err(error) = server.wait_for_request(Duration::from_millis(1)) {
-                            error!("Process channel shutdown wait failed: {error}");
-                        }
+                        thread::sleep(Duration::from_millis(1));
                         continue;
                     }
                     let now = Instant::now();
@@ -847,17 +835,6 @@ fn error_response(
     response.status = status;
     response.value0 = 0;
     response
-}
-
-fn shutdown_response(command: Command, session_epoch: u64) -> Response {
-    Response {
-        status: StatusCode::StaleSession,
-        request_id: command.request_id,
-        session_epoch,
-        descriptor: command.descriptor,
-        value0: 0,
-        value1: 0,
-    }
 }
 
 fn arena_error_status(error: &ArenaError) -> StatusCode {
