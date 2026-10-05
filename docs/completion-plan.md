@@ -36,7 +36,7 @@ record submitted, merged and released as different states.
 | --- | --- |
 | S0 | Agent handoff and Codex skill migration merged in PR #190. |
 | S1 | Evidence separation independently verified at `ec3add9b`; this delivery consolidates plans and release-based integration guidance. Acceptance covers S1 only; native CUDA qualification remains blocked on this host. |
-| S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. Independent final review accepts the second frozen S2.10 same-host formal handoff: all 25 cells are valid and five 16-owner ordinary visibility runs pass 50 ms, while both DRAM and SSD isolation fail the frozen per-pair/CI contract. The current queue head is S2.10a's same-host isolation diagnosis; the supported envelope stays four owners and both formal campaigns remain immutable. Physical cross-host cache/HA, independent etcd failure domains and native GDS are qualification blocked on missing hardware; final serving, RDMA and S3-dependent cells remain open. |
+| S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. Independent final review accepts the second frozen S2.10 same-host formal handoff: all 25 cells are valid and five 16-owner ordinary visibility runs pass 50 ms, while both DRAM and SSD isolation fail the frozen per-pair/CI contract. S2.10b has accepted lifecycle and low-overhead observation gates; its bounded formal diagnosis is running. The supported envelope stays four owners and both prior formal campaigns remain immutable. Physical cross-host cache/HA, independent etcd failure domains and native GDS are qualification blocked on missing hardware; final serving, RDMA and S3-dependent cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
 | S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.30.0 adapter upgrade consumes native transfer results with local A100 cache/P/D evidence. Independent upgrade acceptance and public lifecycle/deployment gates remain open. |
@@ -672,6 +672,28 @@ pilot as a new cohort with the existing payload, budgets, 10 warm-up, 120 measur
 250 ms foreground cadence, 17 ms source cadence, 25 ms observer cadence and the
 same 1.05 p50, 0.25 ms p99 and 1.15 CPU guards. Preserve every failure and stop
 again if any mandatory guard fails.
+
+The bounded-ring candidate is frozen at `0dd472d3` (tree `f9f636f5`). Its fresh
+A100 pilot passes every guard: save p50 is 0.1963155 ms off and 0.2017400 ms on
+(1.027632x), query p50 is 0.1084830/0.0998240 ms (0.920181x), save p99 increases
+0.010287 ms, query p99 decreases 0.026292 ms and CPU ticks are 174/173
+(0.994253x). Both enabled cells contain 1,560 required events with complete
+authenticated linkage and no limit/truncation record; all cells restore exact
+bytes from io_uring, exit normally and end with zero SSD/query residency. The
+independent evidence review accepts only the observation-overhead gate. Evidence
+is under `s2-10b-ring-0dd472d3/` at the external A100 root above; its frozen,
+harness and pilot manifest hashes are respectively `9c026d99`, `2efab6d4` and
+`496046e5`.
+
+The independently reviewed formal diagnosis uses four SSD pairs in
+`QPPQPQQP` order, two smaller DRAM pairs in `QPPQ` order and one symmetric SSD
+observer-cadence pair changing only 25 ms to 75 ms. Every run has 50 warm-up plus
+1,000 measured operations at 1 Hz, a 32,768-event limit, a 1,500-second watchdog
+and the unchanged pressure/payload/storage contract. The first controller attempt
+failed its runtime-probe syntax preflight before launching any measurement and is
+preserved as `formal-diagnosis-1`; corrected `formal-diagnosis-2` is the only live
+campaign. Its input manifest is `06bc29c1`. These diagnosis cells cannot replace
+the failed qualification cohort or change the four-owner support boundary.
 
 Only after that pilot passes and independent review accepts its linkage and
 overhead may a formal diagnostic matrix be frozen. It must use independent runs,
