@@ -36,7 +36,7 @@ record submitted, merged and released as different states.
 | --- | --- |
 | S0 | Agent handoff and Codex skill migration merged in PR #190. |
 | S1 | Evidence separation independently verified at `ec3add9b`; this delivery consolidates plans and release-based integration guidance. Acceptance covers S1 only; native CUDA qualification remains blocked on this host. |
-| S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. Independent final review accepts the second frozen S2.10 same-host formal handoff: all 25 cells are valid and five 16-owner ordinary visibility runs pass 50 ms, while both DRAM and SSD isolation fail the frozen per-pair/CI contract. S2.10b has accepted lifecycle and low-overhead observation gates; its bounded formal diagnosis is running. The supported envelope stays four owners and both prior formal campaigns remain immutable. Physical cross-host cache/HA, independent etcd failure domains and native GDS are qualification blocked on missing hardware; final serving, RDMA and S3-dependent cells remain open. |
+| S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. Independent final review accepts the second frozen S2.10 same-host formal handoff: all 25 cells are valid and five 16-owner ordinary visibility runs pass 50 ms, while both DRAM and SSD isolation fail the frozen per-pair/CI contract. S2.10b lifecycle, low-overhead observation and 14-cell diagnosis are complete. Independent review accepts the diagnostic archive but blocks a production repair: the dominant measured tail is after native return at the Python observer boundary, while no repeatable Manager, metadata-lock, completion-notification or SSD-owner shift is established. The supported envelope stays four owners and all prior formal campaigns remain immutable. Physical cross-host cache/HA, independent etcd failure domains and native GDS are qualification blocked on missing hardware; final serving, RDMA and S3-dependent cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
 | S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.30.0 adapter upgrade consumes native transfer results with local A100 cache/P/D evidence. Independent upgrade acceptance and public lifecycle/deployment gates remain open. |
@@ -53,10 +53,12 @@ independent work. Use **implementation open**, **implementation partial**,
 The [distributed inventory and recovery design](distributed-design.md) specifies
 the authorized evolution beyond the former etcd block index. S2.7–S2.9 and
 S2.10 same-host correctness and ordinary visibility are accepted; the current
-delivery is S2.10a's bounded same-host isolation diagnosis from accepted handoff
-`c5cf2782`. Retain both formal campaigns and their isolation failures unchanged.
-Add evidence before a minimal fix, and keep any replacement formal qualification
-as a separately reviewed future cohort. Do not enter S3, S6 or S7 from this delivery. Existing S3
+S2.10b delivery has completed its bounded same-host isolation diagnosis from
+accepted handoff `c5cf2782`. Retain both formal campaigns and their isolation
+failures unchanged. Independent review found no production owner path that
+authorizes a repair; the next discriminating harness experiment requires a new
+reviewed freeze. Keep any replacement formal qualification as a separately
+reviewed future cohort. Do not enter S3, S6 or S7 from this delivery. Existing S3
 lifetime gates still control any new payload concurrency, reuse or reclamation.
 Cross-host qualification remains open until actual failure-domain evidence exists.
 
@@ -446,9 +448,10 @@ frozen 5% DRAM/SSD isolation gates fail. Depends on:** accepted protocol impleme
 scoped claims. This carries forward S2's remaining performance, capacity, serving
 and cross-host obligations; it does not replace missing evidence with a new name.
 
-**Current next delivery:** S2.10a's same-host isolation root-cause diagnosis and,
-only when supported by its evidence, a minimal owner-local fix. It cannot replace
-the accepted failed cohort or start another formal qualification automatically.
+**Current next delivery:** independently review and freeze the S2.10b follow-up
+observer-isolation experiment described below. The completed diagnosis does not
+authorize a production repair, cannot replace the accepted failed cohort and
+cannot start another formal qualification automatically.
 Physical cross-host cache/HA, independent etcd failure domains and native GDS stay
 qualification blocked on the hardware listed below. The bounded
 fixture pacing/invalid-run cleanup repair has independent acceptance. Merged-artifact
@@ -685,24 +688,65 @@ is under `s2-10b-ring-0dd472d3/` at the external A100 root above; its frozen,
 harness and pilot manifest hashes are respectively `9c026d99`, `2efab6d4` and
 `496046e5`.
 
-The independently reviewed formal diagnosis uses four SSD pairs in
+The independently reviewed formal diagnosis used four SSD pairs in
 `QPPQPQQP` order, two smaller DRAM pairs in `QPPQ` order and one symmetric SSD
 observer-cadence pair changing only 25 ms to 75 ms. Every run has 50 warm-up plus
 1,000 measured operations at 1 Hz, a 32,768-event limit, a 1,500-second watchdog
 and the unchanged pressure/payload/storage contract. The first controller attempt
 failed its runtime-probe syntax preflight before launching any measurement and is
-preserved as `formal-diagnosis-1`; corrected `formal-diagnosis-2` is the only live
-campaign. Its input manifest is `06bc29c1`. These diagnosis cells cannot replace
-the failed qualification cohort or change the four-owner support boundary.
+preserved as `formal-diagnosis-1`; corrected `formal-diagnosis-2` is the only
+accepted diagnostic cohort. Its input manifest is `06bc29c1`. All 14 serial cells
+completed with 1,000 measured operations, exit zero, valid oracles and empty
+per-cell and campaign postflight. Runtime dependencies and every per-cell frozen
+hash match. The complete pre-review evidence archive/freeze is
+`s2-10-isolation-diagnosis-20261003/s2-10b-ring-0dd472d3/`; its 5,525-entry
+manifest SHA-256 is `7e97bf4e`. These diagnosis cells cannot replace the failed
+qualification cohort or change the four-owner support boundary.
 
-Only after that pilot passes and independent review accepts its linkage and
-overhead may a formal diagnostic matrix be frozen. It must use independent runs,
-at least 1,000 measured operations per p99 run, balanced SSD ABBA/BAAB ordering,
-a smaller DRAM regression control and at most one predeclared phase-offset
-ablation. Correlation alone cannot authorize a production change. If a specific
-owner or wait path is causal, apply the smallest fix, validate matched before/after
-correctness, throughput, visibility and drain, then run a separately frozen new
-isolation cohort before changing the four-owner support boundary.
+The SSD baseline does not show a stable metadata-pressure effect. Save p99
+pressure/quiet ratios are 0.321, 1.179, 1.079 and 1.073 with a four-pair geometric
+mean of 0.814 and bootstrap 95% CI `[0.435, 1.152]`. Query ratios are 2.549,
+0.971, 1.016 and 2.397 with geometric mean 1.567 and 95% CI `[0.993, 2.472]`:
+both quiet-to-pressure pairs regress while both reverse-order pairs are near one.
+DRAM query ratios are 1.0015 and 1.0065, and DRAM save ratios are 0.8847 and
+0.9060. Metadata pressure increases aggregate CPU, context switches and update
+lock hold time, but total update-lock wait is only 1.84--2.17 ms per roughly
+1,000-second pressure run; native Manager stages do not reproduce the endpoint
+shift. SSD execute p99 varies from about 1 to 65 ms with inconsistent pair
+direction, zero sampled queue/inflight at dequeue/completion and negligible
+correlation to the synchronous save endpoint.
+
+The dominant endpoint tail is outside the production channel: across all 14
+runs, `local_query_ms` correlates 0.981--0.997 with the interval after the native
+return timestamp and before the Python outer timer completes. All 140 per-run
+top-ten slow queries and all 154 independently selected p99-tail samples overlap
+an in-process observer poll; the strongest correlation with any recorded native
+query stage is only 0.242. The 75 ms pair reduces observer work and gives
+save/query ratios 1.0247/1.0263, but it is one final pressure-to-quiet pair and is
+confounded by observer phase and run order. Independent review therefore accepts
+the diagnostic archive and **blocks any production repair**. The result is
+consistent with diagnostic Python observer/return-boundary interference, not
+evidence of a Manager, metadata-lock, completion-notification or SSD-owner defect.
+
+The proposed next experiment, requiring separate review and authorization, is a
+fixed-phase, SSD pressure-only ABBA crossover comparing the current 25 ms
+in-process `_owner_status` observer with the identical polling workload in a
+separate helper process. Keep 50 warm-up plus 1,000 measured operations, 1 Hz
+foreground, 17 ms pressure, payload, budgets, correctness and drain unchanged.
+It must show that externalizing the observer collapses
+`returned_mono_ns`-to-`query_end_mono_ns` p99 and slow-sample overlap without
+changing native channel stages or pressure exposure. A positive result would
+authorize a benchmark-harness repair only, followed by a separately frozen
+isolation qualification; it would not authorize a production-path change.
+
+The pilot review and formal diagnostic matrix are complete. Any follow-up must
+again use independent runs, at least 1,000 measured operations per p99 run,
+balanced ordering, a single predeclared factor, bounded budgets and explicit
+stop rules. Correlation alone cannot authorize a production change. If a future
+experiment isolates a specific owner or wait path, apply the smallest fix,
+validate matched before/after correctness, throughput, visibility and drain,
+then run a separately frozen new isolation cohort before changing the four-owner
+support boundary.
 
 Implement a production change only for a demonstrated owner/waiting path. Do not
 reduce pressure, input, correctness work or drain. If evidence is insufficient,
