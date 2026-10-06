@@ -46,6 +46,7 @@ async fn serve(runtime: InventoryRuntime, port: u16) -> tokio::task::JoinHandle<
     task
 }
 
+#[cfg(feature = "test-hooks")]
 struct ScopedNode {
     cluster: crate::cluster::Cluster,
     runtime: InventoryRuntime,
@@ -53,6 +54,7 @@ struct ScopedNode {
     server: tokio::task::JoinHandle<()>,
 }
 
+#[cfg(feature = "test-hooks")]
 async fn scoped_node(
     etcd: &Etcd,
     cluster: &str,
