@@ -47,36 +47,33 @@ def isolated_environment(environment: dict[str, str], directory: Path) -> dict[s
 def distribution_snapshot(distribution, package: str) -> dict:
     direct_url = json.loads(distribution.read_text("direct_url.json") or "{}")
     assert not direct_url.get("dir_info", {}).get("editable", False), direct_url
-    files = distribution.files
-    assert files, f"{distribution.metadata['Name']} has no installed RECORD"
-    directories = {
-        Path(distribution.locate_file(row[0])).resolve()
-        for row in csv.reader((distribution.read_text("RECORD") or "").splitlines())
-        if row[0].endswith("/")
-    }
+    record = distribution.read_text("RECORD")
+    assert record, f"{distribution.metadata['Name']} has no installed RECORD"
+    rows = list(csv.reader(record.splitlines()))
+    assert rows, f"{distribution.metadata['Name']} has an empty installed RECORD"
     hashes = {}
     recorded = set()
-    for item in files:
-        path = Path(distribution.locate_file(item)).resolve()
+    for relative, checksum, size in rows:
+        path = Path(distribution.locate_file(relative)).resolve()
         recorded.add(path)
-        if path in directories:
+        if relative.endswith("/"):
             assert path.is_dir(), f"Missing installed directory: {path}"
-            assert item.size == 0, f"Nonempty directory RECORD: {item}"
-            if item.hash:
-                digest = base64.urlsafe_b64encode(hashlib.new(item.hash.mode, b"").digest())
-                assert digest.rstrip(b"=").decode() == item.hash.value, item
-            continue
-        if item.hash is None and item.name != "RECORD":
-            assert path.suffix not in {".py", ".so"}, f"Runtime file has no RECORD hash: {path}"
-            continue
-        assert path.is_file(), f"Missing installed file: {path}"
-        data = path.read_bytes()
-        if item.hash:
-            actual = base64.urlsafe_b64encode(hashlib.new(item.hash.mode, data).digest())
-            assert actual.rstrip(b"=").decode() == item.hash.value, (
+            assert size == "0", f"Nonempty directory RECORD: {relative}"
+            data = b""
+        else:
+            if not checksum and path.name != "RECORD":
+                assert path.suffix not in {".py", ".so"}, f"Runtime file has no RECORD hash: {path}"
+                continue
+            assert path.is_file(), f"Missing installed file: {path}"
+            data = path.read_bytes()
+        if checksum:
+            algorithm, expected = checksum.split("=", 1)
+            actual = base64.urlsafe_b64encode(hashlib.new(algorithm, data).digest())
+            assert actual.rstrip(b"=").decode() == expected, (
                 f"Installed file differs from RECORD: {path}"
             )
-        hashes[str(path)] = hashlib.sha256(data).hexdigest()
+        if not relative.endswith("/"):
+            hashes[str(path)] = hashlib.sha256(data).hexdigest()
     package_root = Path(distribution.locate_file(package)).resolve()
     assert package_root.is_dir(), package_root
     unrecorded = [

@@ -266,7 +266,7 @@ Run from the repository root; substitute the SGLang environment and `-k sglang`
 for the other adapter, with its own `--basetemp` directory. The test starts
 subprocesses outside the source package, rejects editable/source imports,
 checks the pinned engine version, verifies installed engine and OrbitKV files
-against their wheel RECORDs before and after execution, rejects unrecorded runtime
+against the wheel RECORD manifests before and after execution, rejects unrecorded runtime
 files and conflicting plugin metadata, and proves TENT libraries load from the
 installed wheel. Each engine runs DRAM and forced io_uring SSD cells. Use
 `-k "vllm and dram"` to select a single cell.
