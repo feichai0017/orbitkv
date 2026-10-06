@@ -725,6 +725,30 @@ development gate. Implementation and qualification are recorded separately; this
 addition alone does not close S5.2, public-Hook or native P/D lifecycle work.
 Evidence: `/root/orbitkv-artifacts/adapter-cleanup-20260930/`.
 
+On 2026-10-06, the frozen CUDA 13 wheel passes all four installed-package
+cells on A100 with Qwen3-8B. Native HBM hits add no external query or H2D copy;
+full and partial restores each load 113,246,208 bytes. SSD cells prove io_uring
+reads after DRAM eviction. All 16 service processes exit zero with no forced
+cleanup; installed engine and OrbitKV RECORD hashes are unchanged. The broader
+vLLM correctness gate passes six tests with one dense-model hybrid skip;
+released-engine lifecycle selections pass 15 vLLM and 43 SGLang tests. These
+controlled lifecycle tests do not qualify native P/D faults or hybrid serving.
+The installed console now executes the Manager directly, preserving its PID,
+signals and exit code. Raw RECORD validation also passes the Python 3.13 CI
+missing-file and missing-directory controls.
+
+**Local ordinary-cache checks pass; independent acceptance remains open.**
+A separate SGLang exit diagnosis reaches the released linker close and successful
+Manager unregister, but observes one nonzero exported CUDA IPC reference after
+close and at Python exit. Physical IPC reclamation remains unqualified under
+S5 lifecycle/S3 ownership work. This finding is retained, not suppressed or
+interpreted as proof of a DMA failure. This campaign does not qualify pressure,
+graphs, multi-GPU, cross-host cache or native P/D composition.
+Frozen inputs, failures, cleanup and diagnosis:
+`/root/orbitkv-artifacts/s5-installed-cache-20261006/candidate-1b3d4c22/`;
+A100 raw mirror:
+`/workspace/orbitkv-s5-installed-cache-20261006/candidate-1b3d4c22/`.
+
 - vLLM: retain `OrbitKVConnector` and distinct scheduler/worker responsibilities.
   Implement released lookup/allocation, registration, load/save and terminal
   callbacks; consume success and failure through the selected release's API.

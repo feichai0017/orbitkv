@@ -125,6 +125,13 @@ and pending-query admission. Enqueue preparation adds one Hook only when
 `ORBITKV_PREPARE_REQUESTS=1` or `ORBITKV_QUEUE_WARMUP=1` is set before startup.
 P/D transport factories and fork observation callbacks are removed. Native P/D
 uses the official engine lifecycle and is qualified separately.
+The installed-package ordinary-cache checks pass on A100 for dense eager
+DRAM/io_uring recovery. A separate normal-exit diagnosis observes one exported
+CUDA IPC reference still nonzero after the released linker close and Manager
+unregister. The [S5.2 evidence](completion-plan.md#s52--minimal-official-cache-backends)
+retains this finding; process exit and drained I/O gauges do not qualify physical
+IPC reclamation.
+
 These remaining targets are version-coupled dependencies, not stable public APIs.
 Replace them with consumed factory/lifecycle/component contracts and then delete
 the duplicate logic. Unknown DSA, draft, auxiliary state and unsupported request
