@@ -56,6 +56,7 @@ export const docGroups = [
       { slug: "client-performance", title: "Client control overhead" },
       { slug: "benchmark-evidence", title: "Benchmark evidence & archives" },
       { slug: "communication-performance", title: "Communication measurements" },
+      { slug: "kernel-optimization", title: "CUDA kernel optimization" },
       { slug: "single-node-performance", title: "Single-node comparisons" },
       { slug: "ssd-performance", title: "SSD recovery & capacity pressure" },
       { slug: "concurrent-performance", title: "Concurrent query budgets" },
