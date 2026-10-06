@@ -448,12 +448,13 @@ frozen 5% DRAM/SSD isolation gates fail. Depends on:** accepted protocol impleme
 scoped claims. This carries forward S2's remaining performance, capacity, serving
 and cross-host obligations; it does not replace missing evidence with a new name.
 
-**Current next delivery:** implement, smoke and independently review the frozen
-S2.10b observer process-isolation experiment described below. This substage is
-limited to the benchmark harness, fixed experiment inputs and two short A100
-tool smokes; the eight-cell formal matrix remains gated on a separate launch
-review. The completed diagnosis does not authorize a production repair, cannot
-replace the accepted failed cohort and cannot start another formal qualification
+**Current next delivery:** independently review the task-003 runtime-readiness
+fail-stop described below. Its corrected dependency closure passes preflight,
+but the first new A100 smoke remains invalid before observer/foreground start;
+the B smoke and eight-cell formal matrix remain unstarted. Any corrected launch
+requires another explicit task and a tensor-registration-capable preflight. The
+completed diagnosis does not authorize a production repair, cannot replace the
+accepted failed cohort and cannot start another formal qualification
 automatically.
 Physical cross-host cache/HA, independent etcd failure domains and native GDS stay
 qualification blocked on the hardware listed below. The bounded
@@ -773,6 +774,27 @@ formal cell started. This substage is therefore handed off incomplete for
 independent review; a corrected runtime bundle and a newly authorized smoke are
 required before the frozen eight-cell matrix can be considered for launch.
 
+Task-003 preserves that failed run and closes its two review findings in a new
+runtime bundle. The actual task-001 wheel SHA is the 64-character
+`2aa0bcfc8ffd67586259b470fb2f32bc4e6e2c5c56a73a37cf3e4d9fb680a091`.
+The bundle adds the matching `libyaml-cpp.so.0.7` from the existing Mooncake
+`71973589` release/CUDA-13 freeze without changing the reviewed Manager,
+server-tests, wheel, extension or TENT bytes. Malformed/mismatched hash controls,
+the complete ELF closure, real TENT `dlopen`, installed native import plus CUDA
+compute, and a Manager metadata startup/mapping/normal-SIGTERM preflight all
+pass within their watchdogs.
+
+The newly authorized A smoke then stops with numeric exit 1 before observer
+start and foreground round zero: the namespace-probe Manager's test launcher
+prepends the checkout `python/orbitkv` package, which has no extension, ahead of
+the validated installed wheel. Its first GPU-tensor registration therefore
+reports that the Rust extension is unavailable. Cleanup is normal with no
+forced signal, GPU allocation, owned process or socket left. Per the task-003
+fail-stop rule, B is not launched, no cell is replaced and the formal matrix
+remains unstarted. A later task must correct the controlled Manager Python path
+and extend readiness through real tensor registration before authorizing another
+fresh two-smoke attempt; the metadata-only Manager preflight was insufficient.
+
 The pilot review and formal diagnostic matrix are complete. Any follow-up must
 again use independent runs, at least 1,000 measured operations per p99 run,
 balanced ordering, a single predeclared factor, bounded budgets and explicit
@@ -792,22 +814,21 @@ fix does not close isolation: a new formal qualification is a later substage.
 
 Hardware-blocked cells remain explicit:
 
-- **Physical cross-host cache/HA:** needs at least two CUDA-capable hosts with
-  mutually reachable data-plane addresses and TENT ports plus independently
-  controlled source/receiver failure. H20 and A100 are two accessible physical
-  GPU machines. The current agent session runs inside a container on H20 whose
-  GPU devices are not mapped (`/dev/nvidia*` is absent), so its failed
-  `nvidia-smi` probe is a container-device limitation, not evidence that the H20
-  host or GPU is unavailable. Qualification still needs an H20 test container
-  with GPU device access plus mutually reachable, explicitly selected H20/A100
-  TENT data-plane addresses and ports.
-- **Independent etcd failure domains:** needs three simultaneous machines in
-  independent host/power/network domains with mutually reachable client and peer
-  networks. H20, A100 and `orbitkv-cpu` are three accessible machine environments,
-  and A100/CPU data addresses are bidirectionally reachable. They form a candidate
-  three-member topology, but qualification still requires verified three-way
-  client/peer connectivity and independently controlled host, power and network
-  failures; SSH accessibility alone does not pass that gate.
+- **Physical cross-host cache/HA:** H20 and A100 are accessible physical GPU
+  machines, and direct IPv6 TCP probes pass in both directions. H20 exposes an
+  H20 through `nvidia-smi`, but its default user `libcuda` is 590.48.01 while the
+  kernel driver is 535.161.08 and `cuInit(0)` returns 100; a bounded probe of the
+  existing matching 535 library timed out and was terminated. Cache qualification
+  therefore still needs a short-watchdog CUDA computation/IPC preflight plus the
+  actual H20/A100 TENT IPv6 listener and transfer path. IPv4 is not the candidate
+  topology because H20 has no route to the other two IPv4 addresses.
+- **Three-host etcd:** H20, A100 and `orbitkv-cpu` are three distinct machine
+  environments/boot IDs, and owned ephemeral listeners verified all six directed
+  direct-IPv6 TCP edges with zero exits and no SSH data tunneling. Three-member
+  etcd process-fault, leader, quorum-loss and recovery testing is now actionable,
+  subject to preflighting the exact frozen etcd client/peer listener ports. This
+  network readiness does not prove independent power or network failure domains
+  and is not itself an HA pass.
 - **Native GDS:** needs an NVIDIA GPU host with supported NVMe/filesystem,
   `nvidia-fs`/cuFile runtime and container access to the real block device/mount.
   The available SSD qualification path is io_uring, not native GDS.
@@ -877,13 +898,15 @@ runs degrade explicitly to `partial_hints`, keep two of four owner views, remain
 under the configured budget and clear staging. The earlier 256 MiB soak, shutdown
 timeout, harness failures and the session-counter failure remain archived.
 
-A100 and the CPU host now have verified bidirectional data IP connectivity, but
-the current/H20 environment cannot reach their data plane or execute CUDA. Three
-independent etcd failure domains therefore remain blocked. The final integrated
-S2.9/PR #198 wheel and official vLLM 0.30.0/SGLang 0.5.20 shared-cache serving,
-physical cross-host cache traffic, RDMA, native GDS and S3 crash reclamation are
-not qualified by this substage. Do not mark S2 or full S2.10 complete from this
-same-host delivery.
+H20, A100 and the CPU host now have verified six-way direct IPv6 TCP
+connectivity, so three-machine etcd process-fault/leader/quorum testing is the
+next actionable infrastructure stage after independent review. H20 CUDA remains
+unready for cache traffic, and the actual TENT IPv6 data path has not run; once
+those preflights pass, H20/A100 cross-host cache qualification follows. The final
+integrated S2.9/PR #198 wheel and official vLLM 0.30.0/SGLang 0.5.20
+shared-cache serving, independent physical failure domains, RDMA, native GDS and
+S3 crash reclamation are not qualified by this substage. Do not mark S2 or full
+S2.10 complete from this readiness evidence.
 
 ## S3 — Transfer lifetime and generation-safe ownership
 
