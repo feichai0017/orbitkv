@@ -556,6 +556,13 @@ layer hooks. The current contracts live in [transport](transport.md) and
 - Profile adapter hashing/conversions, repeated destination checks, fragmented
   descriptors, dispatch, allocation/scratch work and duplicate shared-prefix H2D.
   Remove measured redundant work one bottleneck at a time.
+- **KDA task implemented / qualification open:** validate and measure fragmented
+  mapped-host copies with the consumed NVRTC baseline and a benchmark-only
+  multi-CTA candidate. See [kernel optimization](kernel-optimization.md).
+  Preserve byte format, descriptor ABI and physical-drain ownership; promote
+  only after independent copy and consumed inference gates. Generated evidence
+  belongs outside the checkout. Codec/checksum fusion follows only if profiling
+  identifies a consumed bottleneck.
 - Extend readiness to legal multipart and SSD/codec pipelines where it can
   shorten the engine critical path. Retain the parent source/destination fence
   and final drain; a ready layer does not retire the whole operation.
