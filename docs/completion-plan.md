@@ -667,6 +667,17 @@ on `orbitkv-a100`; the result is
 The normal-return control and every earlier failed shutdown attempt remain beside
 that cohort and are not reclassified.
 
+A focused post-handoff correction now makes both shutdown boundaries durable.
+Publish close and active-count registration share one atomic state, so work
+registered before close drains and a prechecked late request cannot enter after
+the boundary. Lifecycle connections use a latched close state rather than a
+one-shot notification: partial frames close without dispatch, while a complete
+request finishes dispatch and its bounded response before the idle connection
+and session owners drain. CPU race regressions, inverse mutation controls and
+real A100 endpoint/session regressions cover both boundaries. This correction is
+implemented pending independent Codex review and does not reopen or reclassify
+the isolation cohort, observation result or four-owner support limit.
+
 Replace per-event channel delivery with a preallocated, process-bounded in-memory
 recording path while preserving the same authenticated operation key, monotonic
 clock and stage meanings. No request thread may format JSON, block on a writer or

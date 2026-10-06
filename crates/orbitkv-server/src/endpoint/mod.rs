@@ -26,7 +26,7 @@ use orbitkv_core::{
 };
 use thiserror::Error;
 use tokio::runtime::Handle;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, watch};
 
 use crate::cache::operations::{
     PublishInput, PublishLayerInput, QueryOutcome, RestoreInput, RestoreLeaseInput,
@@ -48,36 +48,80 @@ pub(crate) enum ProcessEndpointError {
 /// QueryBundle uses a generation-checked memfd arena bootstrapped over UDS.
 /// Lifecycle metadata uses the authenticated bootstrap UDS.
 pub(crate) struct ProcessEndpoint {
-    accepting: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
     active_publishes: Arc<ActiveTasks>,
     lifecycle_connections: Arc<ActiveTasks>,
+    lifecycle_shutdown: watch::Sender<bool>,
 }
 
-#[derive(Default)]
 struct ActiveTasks {
-    count: AtomicUsize,
+    state: AtomicUsize,
     drained: Notify,
 }
 
+const ACTIVE_TASKS_CLOSED: usize = 1usize << (usize::BITS - 1);
+const ACTIVE_TASKS_COUNT: usize = ACTIVE_TASKS_CLOSED - 1;
+
+impl Default for ActiveTasks {
+    fn default() -> Self {
+        Self {
+            state: AtomicUsize::new(0),
+            drained: Notify::new(),
+        }
+    }
+}
+
 impl ActiveTasks {
-    fn admit(self: &Arc<Self>) -> ActiveTask {
-        self.count.fetch_add(1, Ordering::AcqRel);
-        ActiveTask(Arc::clone(self))
+    fn is_accepting(&self) -> bool {
+        self.state.load(Ordering::Acquire) & ACTIVE_TASKS_CLOSED == 0
+    }
+
+    fn try_admit(self: &Arc<Self>) -> Option<ActiveTask> {
+        let mut current = self.state.load(Ordering::Acquire);
+        loop {
+            if current & ACTIVE_TASKS_CLOSED != 0
+                || current & ACTIVE_TASKS_COUNT == ACTIVE_TASKS_COUNT
+            {
+                return None;
+            }
+            match self.state.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Some(ActiveTask(Arc::clone(self))),
+                Err(updated) => current = updated,
+            }
+        }
+    }
+
+    fn close(&self) {
+        self.state.fetch_or(ACTIVE_TASKS_CLOSED, Ordering::AcqRel);
     }
 
     async fn drain(&self) {
         loop {
-            if self.count.load(Ordering::Acquire) == 0 {
+            if self.state.load(Ordering::Acquire) & ACTIVE_TASKS_COUNT == 0 {
                 return;
             }
             let drained = self.drained.notified();
-            if self.count.load(Ordering::Acquire) == 0 {
+            if self.state.load(Ordering::Acquire) & ACTIVE_TASKS_COUNT == 0 {
                 return;
             }
             drained.await;
         }
+    }
+
+    async fn close_and_drain(&self) {
+        self.close();
+        self.drain().await;
+    }
+
+    #[cfg(test)]
+    fn active_count(&self) -> usize {
+        self.state.load(Ordering::Acquire) & ACTIVE_TASKS_COUNT
     }
 }
 
@@ -85,8 +129,61 @@ struct ActiveTask(Arc<ActiveTasks>);
 
 impl Drop for ActiveTask {
     fn drop(&mut self) {
-        if self.0.count.fetch_sub(1, Ordering::AcqRel) == 1 {
+        let previous = self.0.state.fetch_sub(1, Ordering::AcqRel);
+        debug_assert_ne!(previous & ACTIVE_TASKS_COUNT, 0);
+        if previous & ACTIVE_TASKS_COUNT == 1 {
             self.0.drained.notify_one();
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_pause {
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+
+    use parking_lot::Mutex;
+    use tokio::sync::oneshot;
+
+    struct Hook {
+        reached: oneshot::Sender<()>,
+        resume: oneshot::Receiver<()>,
+    }
+
+    fn hooks() -> &'static Mutex<HashMap<&'static str, Hook>> {
+        static HOOKS: OnceLock<Mutex<HashMap<&'static str, Hook>>> = OnceLock::new();
+        HOOKS.get_or_init(Mutex::default)
+    }
+
+    pub(crate) fn install(name: &'static str) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (reached_tx, reached_rx) = oneshot::channel();
+        let (resume_tx, resume_rx) = oneshot::channel();
+        let previous = hooks().lock().insert(
+            name,
+            Hook {
+                reached: reached_tx,
+                resume: resume_rx,
+            },
+        );
+        assert!(previous.is_none(), "test pause {name} is already installed");
+        (reached_rx, resume_tx)
+    }
+
+    fn take(name: &'static str) -> Option<Hook> {
+        hooks().lock().remove(name)
+    }
+
+    pub(crate) async fn pause(name: &'static str) {
+        if let Some(hook) = take(name) {
+            let _ = hook.reached.send(());
+            let _ = hook.resume.await;
+        }
+    }
+
+    pub(crate) fn pause_blocking(name: &'static str) {
+        if let Some(hook) = take(name) {
+            let _ = hook.reached.send(());
+            let _ = hook.resume.blocking_recv();
         }
     }
 }
@@ -106,7 +203,6 @@ impl ProcessEndpoint {
         runtime: Handle,
         hll_tracker: Arc<std::sync::Mutex<MultiWindowHllTracker>>,
         shutdown: Arc<Notify>,
-        lifecycle_shutdown: Arc<Notify>,
         lifecycle: crate::cache::lifecycle::LifecycleService,
         read_batch_bytes: u64,
         read_timeout: Option<Duration>,
@@ -125,14 +221,14 @@ impl ProcessEndpoint {
         )?;
         bootstrap.set_nonblocking(true)?;
 
-        let accepting = Arc::new(AtomicBool::new(true));
-        let thread_accepting = Arc::clone(&accepting);
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
         let active_publishes = Arc::new(ActiveTasks::default());
         let thread_active_publishes = Arc::clone(&active_publishes);
         let lifecycle_connections = Arc::new(ActiveTasks::default());
         let thread_lifecycle_connections = Arc::clone(&lifecycle_connections);
+        let (lifecycle_shutdown, _) = watch::channel(false);
+        let thread_lifecycle_shutdown = lifecycle_shutdown.clone();
         let thread_service = service_name.clone();
         let thread = thread::Builder::new()
             .name("orbitkv-channel-control".to_string())
@@ -152,7 +248,7 @@ impl ProcessEndpoint {
                 let mut next_bootstrap_poll = Instant::now();
                 let mut next_liveness_poll = Instant::now();
                 while !thread_stop.load(Ordering::Acquire) {
-                    if !thread_accepting.load(Ordering::Acquire) {
+                    if !thread_active_publishes.is_accepting() {
                         thread::sleep(Duration::from_millis(1));
                         continue;
                     }
@@ -165,7 +261,7 @@ impl ProcessEndpoint {
                             &runtime,
                             &lifecycle,
                             session_epoch,
-                            &lifecycle_shutdown,
+                            &thread_lifecycle_shutdown,
                             &thread_lifecycle_connections,
                         );
                         next_bootstrap_poll = now + BOOTSTRAP_POLL_INTERVAL;
@@ -210,7 +306,7 @@ impl ProcessEndpoint {
                         }
                     }) {
                         Ok(true) if request_shutdown => {
-                            thread_accepting.store(false, Ordering::Release);
+                            thread_active_publishes.close();
                             shutdown.notify_waiters();
                             continue;
                         }
@@ -232,16 +328,18 @@ impl ProcessEndpoint {
             .map_err(|error| TransportError::Thread(error.to_string()))?;
 
         Ok(Self {
-            accepting,
             stop,
             thread: Some(thread),
             active_publishes,
             lifecycle_connections,
+            lifecycle_shutdown,
         })
     }
 
     pub(crate) fn stop(&mut self) {
-        self.accepting.store(false, Ordering::Release);
+        self.active_publishes.close();
+        self.lifecycle_connections.close();
+        self.lifecycle_shutdown.send_replace(true);
         self.stop.store(true, Ordering::Release);
         self.join_thread();
     }
@@ -255,12 +353,18 @@ impl ProcessEndpoint {
     }
 
     pub(crate) async fn stop_admission_and_drain_publishes(&self) {
-        self.accepting.store(false, Ordering::Release);
-        self.active_publishes.drain().await;
+        self.active_publishes.close_and_drain().await;
     }
 
-    pub(crate) async fn drain_lifecycle_connections(&self) {
+    pub(crate) async fn stop_lifecycle_and_drain_connections(&self) {
+        self.lifecycle_connections.close();
+        self.lifecycle_shutdown.send_replace(true);
         self.lifecycle_connections.drain().await;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn active_lifecycle_connections(&self) -> usize {
+        self.lifecycle_connections.active_count()
     }
 }
 
@@ -281,12 +385,21 @@ fn accept_pending_sessions(
     runtime: &Handle,
     lifecycle: &crate::cache::lifecycle::LifecycleService,
     epoch: u64,
-    lifecycle_shutdown: &Arc<Notify>,
+    lifecycle_shutdown: &watch::Sender<bool>,
     lifecycle_connections: &Arc<ActiveTasks>,
 ) {
     loop {
         match bootstrap.try_accept() {
             Ok(Some(session)) => {
+                let Some(active) = lifecycle_connections.try_admit() else {
+                    info!(
+                        "Rejecting process-channel lifecycle during shutdown: pid={} uid={} slot={}",
+                        session.credentials().pid,
+                        session.credentials().uid,
+                        session.slot_index()
+                    );
+                    continue;
+                };
                 info!(
                     "Inference client bootstrapped: pid={} uid={} slot={}",
                     session.credentials().pid,
@@ -309,9 +422,8 @@ fn accept_pending_sessions(
                 }
                 match session.stream().try_clone() {
                     Ok(stream) => {
-                        let active = lifecycle_connections.admit();
                         let lifecycle = lifecycle.clone();
-                        let shutdown = Arc::clone(lifecycle_shutdown);
+                        let shutdown = lifecycle_shutdown.subscribe();
                         runtime.spawn(async move {
                             let _active = active;
                             session::serve(stream, epoch, lifecycle, shutdown).await;
@@ -582,6 +694,21 @@ fn dispatch_publish(
     active_publishes: &Arc<ActiveTasks>,
     reply: DeferredResponse,
 ) -> Result<(), TransportError> {
+    let reply_notification = sessions
+        .get(&command.arg0)
+        .map(|session| Arc::clone(session.reply_notification_fd()));
+    let send_reply = move |response| match reply_notification.as_deref() {
+        Some(notification) => reply.send_and_notify(response, notification),
+        None => reply.send(response),
+    };
+    #[cfg(test)]
+    test_pause::pause_blocking("publish_before_admission");
+    let Some(active_publish) = active_publishes.try_admit() else {
+        let mut response = Response::ok(command);
+        response.status = StatusCode::StaleSession;
+        response.value1 = 0;
+        return send_reply(response);
+    };
     orbitkv_common::timeline::record_diagnostic(
         "publish_manager_receive",
         orbitkv_common::timeline::DiagnosticFields::operation(
@@ -590,13 +717,6 @@ fn dispatch_publish(
             command.arg0,
         ),
     );
-    let reply_notification = sessions
-        .get(&command.arg0)
-        .map(|session| Arc::clone(session.reply_notification_fd()));
-    let send_reply = move |response| match reply_notification.as_deref() {
-        Some(notification) => reply.send_and_notify(response, notification),
-        None => reply.send(response),
-    };
     let mut response = Response::ok(command);
     response.value1 = 0;
     let payload = match consume_descriptor(command, bootstrap, sessions, &mut response) {
@@ -632,9 +752,10 @@ fn dispatch_publish(
             session_epoch,
             session_token,
         });
-    let active_publish = active_publishes.admit();
     runtime.spawn(async move {
         let _active_publish = active_publish;
+        #[cfg(test)]
+        test_pause::pause("publish_after_admission").await;
         orbitkv_common::timeline::record_diagnostic(
             "publish_manager_process_start",
             orbitkv_common::timeline::DiagnosticFields::operation(

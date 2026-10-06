@@ -183,6 +183,21 @@ then release imported CUDA IPC mappings. The native client separately drains
 its engine-local operations. Manager cleanup cannot discard active local grant
 owners merely because the instance or UDS session has closed.
 
+Manager shutdown first closes one atomic Publish admission/count state. A
+Publish that registers before that close is an accepted operation and its full
+continuation is drained; a control iteration that was prechecked but has not yet
+registered is rejected after close and cannot enter during resource drain. No
+mutex is held while an accepted continuation completes.
+
+Lifecycle close is durable rather than an edge-triggered notification. A full
+header and payload establish the accepted-operation boundary. Shutdown may close
+a partial header or payload without dispatch, but an accepted operation keeps its
+dispatch and bounded response write; the connection then observes the latched
+close even when the client stays open and idle. Connections accepted around the
+boundary either join the tracked pre-close set or are rejected by the same
+closeable connection gate. Session-owner cleanup remains part of connection
+drain.
+
 ## Measured process-channel baseline
 
 The [current communication measurements](communication-performance.md) compare
