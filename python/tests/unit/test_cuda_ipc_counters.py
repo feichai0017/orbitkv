@@ -1,6 +1,9 @@
 """Counter diagnostics must distinguish MapInfo from actual exported credits."""
 
 import struct
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -23,3 +26,37 @@ def test_invalid_counter_slot_is_not_a_zero(tmp_path, offset):
 
     with pytest.raises(ValueError):
         read_counter(path, offset)
+
+
+def test_spawned_worker_installs_trace_without_starting_server(tmp_path):
+    helper = Path(__file__).parents[1] / "support" / "trace_sglang_ipc.py"
+    script = """
+import os
+import runpy
+import sys
+from types import ModuleType
+
+linker = ModuleType("orbitkv.sglang.linker")
+original_close = lambda self: None
+original_serialize = lambda tensor: b"payload"
+linker.OrbitKVLinker = type("Linker", (), {"close": original_close})
+linker.serialize_gpu_buffer = original_serialize
+package = ModuleType("orbitkv")
+package.__path__ = []
+sglang = ModuleType("orbitkv.sglang")
+sglang.__path__ = []
+package.sglang = sglang
+sglang.linker = linker
+sys.modules.update({"orbitkv": package, "orbitkv.sglang": sglang, "orbitkv.sglang.linker": linker})
+os.environ["ORBITKV_CLOSE_TRACE_DIRECTORY"] = sys.argv[2]
+runpy.run_path(sys.argv[1], run_name="__mp_main__")
+assert linker.OrbitKVLinker.close is not original_close
+assert linker.serialize_gpu_buffer is not original_serialize
+"""
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", script, str(helper), str(tmp_path)],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

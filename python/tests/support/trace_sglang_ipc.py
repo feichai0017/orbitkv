@@ -18,12 +18,11 @@ def read_counter(path: Path, offset: int) -> int:
     return struct.unpack("=q", data)[0]
 
 
-def main() -> None:
+def install_trace() -> None:
     import atexit
     import json
     import os
     import pickle
-    import runpy
     import time
 
     import orbitkv.sglang.linker as linker_module
@@ -76,8 +75,12 @@ def main() -> None:
     linker_module.serialize_gpu_buffer = serialize
     linker_module.OrbitKVLinker.close = close
     atexit.register(lambda: emit("python_atexit", exports=len(exports), counters=counters()))
-    runpy.run_module("sglang.launch_server", run_name="__main__")
 
+
+if __name__ in {"__main__", "__mp_main__"}:
+    install_trace()
 
 if __name__ == "__main__":
-    main()
+    import runpy
+
+    runpy.run_module("sglang.launch_server", run_name="__main__")
