@@ -284,6 +284,20 @@ Run the engines sequentially on one GPU. This dense TP=1/PP=1 eager gate does
 not qualify CUDA graphs, P/D, multi-GPU or cancellation during transfer. See
 [release preparation](../../docs/releases.md) for the wheel build matrix.
 
+For a targeted SGLang normal-exit IPC diagnosis, replace `python -I -m
+sglang.launch_server` with `python -I /absolute/path/to/python/tests/support/trace_sglang_ipc.py`
+and retain the same engine arguments and installed wheel. Set
+`ORBITKV_CLOSE_TRACE_DIRECTORY` to a new external directory before startup.
+The test helper wraps only OrbitKV export/close in memory; it does not edit
+installed files and is separate from the ordinary installed-package gate.
+Read the `linker_close_return` and `python_atexit` rows: require nonempty exports,
+no read errors and zero credits after normal unregister. A missing slot or file
+must not be counted as zero. Calibrate the 64-byte counter payload offset against
+the installed PyTorch revision using a known live and then drained IPC export;
+keep the revision and calibration with the trace. The file header and PyTorch
+exit warning cannot substitute for those credits. This does not prove crash or
+in-flight cancellation safety.
+
 Minimum checks:
 - `orbitkv-cache-manager --help`
 - minimal installed `orbitkv-cache-manager` startup and `/health` 200

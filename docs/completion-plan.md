@@ -738,12 +738,24 @@ signals and exit code. Raw RECORD validation also passes the Python 3.13 CI
 missing-file and missing-directory controls.
 
 **Local ordinary-cache checks pass; independent acceptance remains open.**
-A separate SGLang exit diagnosis reaches the released linker close and successful
-Manager unregister, but observes one nonzero exported CUDA IPC reference after
-close and at Python exit. Physical IPC reclamation remains unqualified under
-S5 lifecycle/S3 ownership work. This finding is retained, not suppressed or
-interpreted as proof of a DMA failure. This campaign does not qualify pressure,
-graphs, multi-GPU, cross-host cache or native P/D composition.
+The first SGLang exit-counter diagnosis is an **invalid measurement**: it read
+`offset * 8` from the shared-memory file, including the 64-byte MapInfo header,
+instead of `64 + offset * 8` from its counter payload. Its reported remaining
+value was the file reference count, not a tensor export credit. The failed
+interpretation and original trace remain immutable.
+
+The calibrated follow-up on the same installed wheel checks independent tensors
+and shared-storage views with 3 and 72 exports: every credit returns to zero while
+the consumer remains alive. Official SGLang normal close similarly returns all
+72 OrbitKV credits to zero after successful Manager unregister and at Python
+exit; both service exits are zero and GPU postflight is empty. The PyTorch exit
+warning remains: its producer bookkeeping is not a per-counter leak oracle.
+The counter reader has first/last-live and truncated-slot regression controls.
+This is local normal-exit evidence, pending independent review; it does not
+qualify crash reclamation, cancellation during DMA, pressure, graphs, multi-GPU,
+cross-host cache or native P/D composition. S5/S3 broader lifetime work remains
+open. Follow-up evidence: `/root/orbitkv-artifacts/s5-ipc-release-20261006/`;
+A100 raw root: `/workspace/orbitkv-s5-ipc-release-20261006/`.
 Frozen inputs, failures, cleanup and diagnosis:
 `/root/orbitkv-artifacts/s5-installed-cache-20261006/candidate-1b3d4c22/`;
 A100 raw mirror:
