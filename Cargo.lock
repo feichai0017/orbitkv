@@ -2034,6 +2034,7 @@ dependencies = [
 name = "orbitkv-catalog"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "orbitkv-state",
  "parking_lot",
  "serde",
@@ -2047,6 +2048,7 @@ dependencies = [
  "iceoryx2",
  "log",
  "memmap2",
+ "orbitkv-common",
  "orbitkv-state",
  "rustix",
  "tempfile",
@@ -2060,6 +2062,7 @@ dependencies = [
  "colored",
  "log",
  "logforth",
+ "rustix",
  "serde_json",
 ]
 

@@ -132,3 +132,121 @@ async fn process_channel_lifecycle_and_cache_control_need_no_grpc() {
     endpoint.stop();
     shutdown.notify_waiters();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn lifecycle_shutdown_latches_while_an_accepted_request_finishes() {
+    let engine = test_engine();
+    let lifecycle = LifecycleService::new(
+        Arc::clone(&engine),
+        RegistryHandle::spawn(CudaTensorRegistry::empty()),
+    );
+    let shutdown = Arc::new(Notify::new());
+    let id = uuid::Uuid::new_v4();
+    let socket = std::env::temp_dir().join(format!("orbitkv-lifecycle-shutdown-{id}.sock"));
+    let mut endpoint = ProcessEndpoint::start(
+        format!("orbitkv/test/lifecycle-shutdown/{id}"),
+        42,
+        socket.clone(),
+        1 << 20,
+        1 << 16,
+        engine,
+        tokio::runtime::Handle::current(),
+        Arc::new(std::sync::Mutex::new(MultiWindowHllTracker::new(
+            vec![("test".into(), Duration::from_secs(60))],
+            4,
+        ))),
+        Arc::clone(&shutdown),
+        lifecycle.clone(),
+        0,
+        None,
+        usize::MAX,
+    )
+    .unwrap();
+    let client = Arc::new(
+        tokio::task::spawn_blocking({
+            let socket = socket.clone();
+            move || ChannelClient::connect(socket, CallOptions::default()).unwrap()
+        })
+        .await
+        .unwrap(),
+    );
+    let session = SessionRequest {
+        instance_id: "shutdown-inst".into(),
+        namespace: "shutdown-ns".into(),
+        tp_size: 1,
+        world_size: 1,
+    }
+    .encode_to_vec();
+    tokio::task::spawn_blocking({
+        let client = Arc::clone(&client);
+        move || client.lifecycle(LifecycleCommand::Session, &session)
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(lifecycle.sessions.topology("shutdown-inst").is_some());
+
+    let (request_accepted, resume_request) =
+        crate::endpoint::test_pause::install("lifecycle_after_request");
+    let health = tokio::task::spawn_blocking({
+        let client = Arc::clone(&client);
+        move || client.lifecycle(LifecycleCommand::Health, &[])
+    });
+    tokio::time::timeout(Duration::from_secs(2), request_accepted)
+        .await
+        .expect("lifecycle request must reach its full-frame acceptance boundary")
+        .expect("lifecycle request hook must remain connected");
+
+    let late;
+    {
+        let drain = endpoint.stop_lifecycle_and_drain_connections();
+        tokio::pin!(drain);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), drain.as_mut())
+                .await
+                .is_err(),
+            "shutdown must preserve an accepted lifecycle operation"
+        );
+        resume_request.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), health)
+            .await
+            .expect("accepted lifecycle response must finish")
+            .expect("lifecycle client task must not panic")
+            .expect("accepted lifecycle request must receive its response");
+        tokio::time::timeout(Duration::from_secs(2), drain.as_mut())
+            .await
+            .expect("latched shutdown must close an idle client after its response");
+        assert_eq!(endpoint.active_lifecycle_connections(), 0);
+        assert!(lifecycle.sessions.topology("shutdown-inst").is_none());
+
+        let idle_result = tokio::task::spawn_blocking({
+            let client = Arc::clone(&client);
+            move || client.lifecycle(LifecycleCommand::Health, &[])
+        })
+        .await
+        .unwrap();
+        assert!(idle_result.is_err());
+
+        late = Arc::new(
+            tokio::task::spawn_blocking({
+                let socket = socket.clone();
+                move || ChannelClient::connect(socket, CallOptions::default()).unwrap()
+            })
+            .await
+            .unwrap(),
+        );
+        let late_result = tokio::task::spawn_blocking({
+            let late = Arc::clone(&late);
+            move || late.lifecycle(LifecycleCommand::Health, &[])
+        })
+        .await
+        .unwrap();
+        assert!(late_result.is_err());
+        assert_eq!(endpoint.active_lifecycle_connections(), 0);
+    }
+
+    client.close();
+    late.close();
+    endpoint.stop();
+    shutdown.notify_waiters();
+}

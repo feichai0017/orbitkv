@@ -114,13 +114,16 @@ impl RestoreResult {
             }
             Self::Ready(response, observed) => {
                 if let Some((handle, drained_at)) = observed {
-                    orbitkv_common::timeline::record("local_restore_observed", || {
-                        serde_json::json!({
-                            "restore_key": format!("manager:{}:{}:{}", handle.session_epoch, handle.session_token, handle.operation_id),
-                            "elapsed_ns": drained_at.elapsed().as_nanos() as u64,
-                            "success": response.state == RestoreState::Succeeded,
-                        })
-                    });
+                    orbitkv_common::timeline::record_restore(
+                        "local_restore_observed",
+                        orbitkv_common::timeline::RestoreTimelineFields::operation(
+                            handle.session_epoch,
+                            handle.session_token,
+                            handle.operation_id,
+                        )
+                        .elapsed_ns(drained_at.elapsed().as_nanos() as u64)
+                        .success(response.state == RestoreState::Succeeded),
+                    );
                 }
                 Ok(Some(response))
             }

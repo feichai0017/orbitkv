@@ -19,6 +19,9 @@ env:
 jobs:
   website-check:
     name: website and documentation
+    needs:
+      - ruff-check
+      - python-unit-tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -72,6 +75,9 @@ jobs:
 
   typos-check:
     name: typos check
+    needs:
+      - commit-check
+      - version-consistency-check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -83,6 +89,9 @@ jobs:
 
   rust-fmt-check:
     name: rust fmt check
+    needs:
+      - commit-check
+      - version-consistency-check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -99,6 +108,9 @@ jobs:
 
   rust-clippy-check:
     name: rust clippy check
+    # Keep heavy jobs in bounded waves. Some runner pools cancel jobs that stay
+    # eligible but unassigned for 15 minutes.
+    needs: build-wheel
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -137,6 +149,9 @@ jobs:
 
   ruff-check:
     name: ruff check
+    needs:
+      - typos-check
+      - rust-fmt-check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -150,6 +165,9 @@ jobs:
 
   python-unit-tests:
     name: python unit tests
+    needs:
+      - typos-check
+      - rust-fmt-check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -172,6 +190,9 @@ jobs:
 
   cargo-check-variant:
     name: cargo check (${{ matrix.cuda-variant }})
+    # Finish the short feedback waves before consuming the available runners
+    # with CUDA builds, so no job expires while waiting for a runner.
+    needs: website-check
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -232,6 +253,7 @@ jobs:
 
   build-wheel:
     name: build Python 3.14 wheel (${{ matrix.cuda-variant }})
+    needs: cargo-check
     runs-on: ubuntu-24.04
     strategy:
       matrix:

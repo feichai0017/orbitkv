@@ -664,6 +664,10 @@ async fn scope_change_restart_never_reuses_the_old_view_or_cursor() {
 #[path = "inventory_capacity.rs"]
 mod capacity;
 
+#[cfg(feature = "test-hooks")]
+#[path = "inventory_pressure.rs"]
+mod pressure;
+
 #[tokio::test]
 async fn fenced_source_stops_before_queueing_an_inventory_frame() {
     let (runtime, _, _) = runtime_for_protocol_test();

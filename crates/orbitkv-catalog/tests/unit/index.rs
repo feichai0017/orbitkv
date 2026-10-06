@@ -296,6 +296,8 @@ fn deltas_are_atomic_and_reject_gaps_overlap_and_conflicts() {
         vec![record(1, 1, ReplicaMedium::Dram, true)],
         1,
     );
+    let first_install = index.owner_status(remote.incarnation).unwrap();
+    assert!(first_install.installed_mono_ns > 0);
     assert_eq!(
         index
             .apply_delta(
@@ -312,6 +314,17 @@ fn deltas_are_atomic_and_reject_gaps_overlap_and_conflicts() {
         DeltaApply::Applied
     );
     assert_eq!(index.owner_watermark(remote.incarnation), Some((view, 3)));
+    let delta_install = index
+        .owner_status(remote.incarnation)
+        .unwrap()
+        .installed_mono_ns;
+    assert!(
+        index
+            .owner_status(remote.incarnation)
+            .unwrap()
+            .installed_mono_ns
+            >= first_install.installed_mono_ns
+    );
     assert_eq!(
         index
             .apply_delta(remote.incarnation, view, 1, 3, Vec::new())
@@ -344,6 +357,34 @@ fn deltas_are_atomic_and_reject_gaps_overlap_and_conflicts() {
             .is_err()
     );
     assert_eq!(index.owner_watermark(remote.incarnation), Some((view, 3)));
+    index.confirm_progress(remote.incarnation, view, 3).unwrap();
+    assert_eq!(
+        index
+            .owner_status(remote.incarnation)
+            .unwrap()
+            .installed_mono_ns,
+        delta_install
+    );
+    index.mark_stale(remote.incarnation);
+    index.confirm_progress(remote.incarnation, view, 3).unwrap();
+    assert_eq!(
+        index
+            .owner_status(remote.incarnation)
+            .unwrap()
+            .installed_mono_ns,
+        delta_install
+    );
+    index
+        .apply_delta(remote.incarnation, view, 3, 4, Vec::new())
+        .unwrap();
+    assert!(
+        index
+            .owner_status(remote.incarnation)
+            .unwrap()
+            .installed_mono_ns
+            >= delta_install
+    );
+    assert_eq!(index.owner_watermark(remote.incarnation), Some((view, 4)));
 }
 
 #[test]

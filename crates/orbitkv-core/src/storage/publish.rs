@@ -5,6 +5,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use log::{debug, error, info, warn};
 use tokio::sync::oneshot;
 
+use crate::PublishDiagnostic;
 use crate::block::{InflightBlock, RawBlock, SealedBlock, SlotInsertResult, StateKey};
 use crate::memory::numa::NumaNode;
 use crate::metrics::core_metrics;
@@ -34,6 +35,7 @@ pub(crate) struct RawSaveBatch {
     pub namespace: String,
     pub total_slots: usize,
     pub numa_node: NumaNode,
+    pub diagnostic: Option<PublishDiagnostic>,
     pub layers: Vec<RawSaveLayer>,
 }
 
@@ -206,6 +208,13 @@ impl PublishWorker {
     }
 
     fn save(&mut self, batch: RawSaveBatch) {
+        let diagnostic = batch.diagnostic;
+        if let Some(diagnostic) = diagnostic {
+            diagnostic.record(
+                "publish_storage_dequeue",
+                orbitkv_common::timeline::DiagnosticFields::default(),
+            );
+        }
         let start = std::time::Instant::now();
         let namespace = batch.namespace.clone();
         let numa_node = batch.numa_node;
@@ -213,7 +222,17 @@ impl PublishWorker {
 
         let (entries, total_bytes, total_blocks) = build_insert_entries(batch);
 
-        self.insert(entries, total_slots, numa_node, &namespace);
+        self.insert(entries, total_slots, numa_node, &namespace, diagnostic);
+
+        if let Some(diagnostic) = diagnostic {
+            diagnostic.record(
+                "publish_storage_complete",
+                orbitkv_common::timeline::DiagnosticFields::default()
+                    .blocks(total_blocks)
+                    .bytes(total_bytes)
+                    .elapsed_us(start.elapsed().as_micros() as u64),
+            );
+        }
 
         debug!(
             "insert_worker: batch sealed blocks={} bytes={} ms={:.2}",
@@ -229,6 +248,7 @@ impl PublishWorker {
         total_slots: usize,
         numa_node: NumaNode,
         namespace: &str,
+        diagnostic: Option<PublishDiagnostic>,
     ) -> usize {
         let mut sealed_blocks: Vec<(StateKey, Arc<SealedBlock>)> = Vec::new();
         let mut inflight_bytes_added: u64 = 0;
@@ -294,7 +314,11 @@ impl PublishWorker {
         if !sealed_blocks.is_empty() {
             self.dram.batch_insert_refs(&sealed_blocks);
             if let Some(ssd) = &self.ssd {
-                ssd.ingest_batch(sealed_blocks.iter().map(|(key, block)| (key, block)), false);
+                ssd.ingest_batch_diagnostic(
+                    sealed_blocks.iter().map(|(key, block)| (key, block)),
+                    false,
+                    diagnostic,
+                );
             }
         }
 

@@ -13,6 +13,7 @@ name = "orbitkv_catalog"
 path = "src/lib.rs"
 
 [dependencies]
+libc.workspace = true
 serde.workspace = true
 orbitkv-state.workspace = true
 parking_lot.workspace = true

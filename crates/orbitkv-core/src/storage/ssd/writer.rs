@@ -1,4 +1,5 @@
 use super::{SsdStore, index::Encoding, uring::UringIoEngine};
+use crate::PublishDiagnostic;
 use crate::block::{SealedBlock, StateKey};
 use crate::cost::{Observation, Outcome};
 use crate::metrics::core_metrics;
@@ -12,18 +13,22 @@ use std::time::Instant;
 pub(super) struct SsdWriteBatch {
     pub blocks: Vec<(StateKey, Weak<SealedBlock>)>,
     pub observation: Observation,
+    pub diagnostic: Option<Box<PublishDiagnostic>>,
 }
 
 struct WriteBatchObservation {
     remaining: usize,
     outcome: Outcome,
     observation: Observation,
+    diagnostic: Option<PublishDiagnostic>,
 }
 
-fn complete_write_batch(batches: &mut VecDeque<WriteBatchObservation>, success: bool, bytes: u64) {
-    let Some(batch) = batches.front_mut() else {
-        return;
-    };
+fn complete_write_batch(
+    batches: &mut VecDeque<WriteBatchObservation>,
+    success: bool,
+    bytes: u64,
+) -> Option<(PublishDiagnostic, Outcome)> {
+    let batch = batches.front_mut()?;
     batch.remaining -= 1;
     if !success {
         if bytes != 0 {
@@ -38,7 +43,11 @@ fn complete_write_batch(batches: &mut VecDeque<WriteBatchObservation>, success: 
         // FuturesOrdered returns writes in submission order. Completion follows
         // every ring commit; the physical io_uring owner counts actual bytes.
         batch.observation.finish(batch.outcome, None);
+        return batch
+            .diagnostic
+            .map(|diagnostic| (diagnostic, batch.outcome));
     }
+    None
 }
 
 /// Commands sent to the SSD writer task.
@@ -55,6 +64,16 @@ struct WriteTask {
 
 /// Result: key, success, elapsed seconds, physical bytes (zero for unreserved skips).
 type WriteResult = (StateKey, bool, f64, u64);
+
+const fn outcome_name(outcome: Outcome) -> &'static str {
+    match outcome {
+        Outcome::Completed => "Completed",
+        Outcome::Failed => "Failed",
+        Outcome::Cancelled => "Cancelled",
+        Outcome::TimedOut => "TimedOut",
+        Outcome::Abandoned => "Abandoned",
+    }
+}
 
 // ============================================================================
 // SSD Writer Loop
@@ -108,7 +127,18 @@ pub(super) async fn ssd_writer_loop(
                     metrics.ssd_write_failures.add(1, &[]);
                     warn!("SSD cache write failed for {:?}", key);
                 }
-                complete_write_batch(&mut batches, success, block_size);
+                if let Some((diagnostic, outcome)) =
+                    complete_write_batch(&mut batches, success, block_size)
+                {
+                    diagnostic.record(
+                        "publish_ssd_complete",
+                        orbitkv_common::timeline::DiagnosticFields::default()
+                            .outcome(outcome_name(outcome))
+                            .pending_blocks(pending.len())
+                            .inflight_writes(inflight.len())
+                            .max_inflight_writes(max_inflight),
+                    );
+                }
             }
 
             // Priority 2: Submit pending writes if inflight has room
@@ -131,8 +161,26 @@ pub(super) async fn ssd_writer_loop(
                         // Dequeue metric
                         metrics.ssd_write_queue_pending.add(-(b.blocks.len() as i64), &[]);
                         b.observation.admitted();
+                        if let Some(diagnostic) = b.diagnostic.as_deref().copied() {
+                            let blocks = b.blocks.len();
+                            diagnostic.record(
+                                "publish_ssd_dequeue",
+                                orbitkv_common::timeline::DiagnosticFields::default()
+                                    .blocks(blocks)
+                                    .pending_blocks(pending.len())
+                                    .inflight_writes(inflight.len())
+                                    .max_inflight_writes(max_inflight),
+                            );
+                        }
 
                         let Some(s) = store.upgrade() else {
+                            if let Some(diagnostic) = b.diagnostic.as_deref().copied() {
+                                diagnostic.record(
+                                    "publish_ssd_complete",
+                                    orbitkv_common::timeline::DiagnosticFields::default()
+                                        .outcome("Cancelled:store_dropped"),
+                                );
+                            }
                             b.observation.finish(Outcome::Cancelled, None);
                             continue;
                         };
@@ -146,12 +194,20 @@ pub(super) async fn ssd_writer_loop(
                             }
                         }
                         if pending.is_empty() {
+                            if let Some(diagnostic) = b.diagnostic.as_deref().copied() {
+                                diagnostic.record(
+                                    "publish_ssd_complete",
+                                    orbitkv_common::timeline::DiagnosticFields::default()
+                                        .outcome("Cancelled:sources_dropped"),
+                                );
+                            }
                             b.observation.finish(Outcome::Cancelled, None);
-                        } else if crate::cost::enabled() {
+                        } else {
                             batches.push_back(WriteBatchObservation {
                                 remaining: pending.len(),
                                 outcome,
                                 observation: b.observation,
+                                diagnostic: b.diagnostic.as_deref().copied(),
                             });
                         }
                     }
@@ -200,7 +256,15 @@ async fn drain_inflight(
             metrics.ssd_write_failures.add(1, &[]);
             warn!("SSD cache write failed for {:?}", key);
         }
-        complete_write_batch(batches, success, block_size);
+        if let Some((diagnostic, outcome)) = complete_write_batch(batches, success, block_size) {
+            diagnostic.record(
+                "publish_ssd_complete",
+                orbitkv_common::timeline::DiagnosticFields::default()
+                    .outcome(outcome_name(outcome))
+                    .pending_blocks(0)
+                    .inflight_writes(inflight.len()),
+            );
+        }
     }
 }
 

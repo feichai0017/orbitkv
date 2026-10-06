@@ -33,7 +33,7 @@ from tests.support.cluster import TcpGate, etcd_server
 from tests.support.metrics import fetch_orbitkv_metrics
 
 from .artifacts import external_path
-from .scoped_metadata import _process_sample, _summary
+from .live_store_measurements import _process_sample, _summary
 
 FULL_DURATION_SECONDS = 2 * 60 * 60
 FAULTS = (

@@ -124,6 +124,20 @@ class BlockHashes:
     def __len__(self) -> int: ...
     def __getitem__(self, view: slice) -> BlockHashes: ...
 
+class ChannelCallObservation:
+    """One opt-in same-host process-channel call observation."""
+
+    @property
+    def request_id(self) -> int: ...
+    @property
+    def session_epoch(self) -> int: ...
+    @property
+    def session_token(self) -> int: ...
+    @property
+    def submitted_mono_ns(self) -> int: ...
+    @property
+    def returned_mono_ns(self) -> int: ...
+
 class CacheManagerClient:
     """Native owner of query, publish and restore lifetimes."""
 
@@ -217,6 +231,14 @@ class CacheManagerClient:
         wait_for_full_prefix: bool = False,
         group_id: int = 0,
     ) -> QueryLoading | QueryReady: ...
+    def query_prefetch_diagnostic(
+        self,
+        instance_id: str,
+        block_hashes: BlockHashes,
+        req_id: str,
+        wait_for_full_prefix: bool = False,
+        group_id: int = 0,
+    ) -> tuple[QueryLoading | QueryReady, ChannelCallObservation]: ...
     def prepare_prefix(self, instance_id: str, block_hashes: BlockHashes, req_id: str) -> bool:
         """Prepare a partial attention prefix for a later counted query_prefetch claim."""
 
@@ -244,6 +266,14 @@ class CacheManagerClient:
         device_id: int,
         saves: list[tuple[str, list[int], list[bytes]]],
     ) -> tuple[bool, str]: ...
+    def save_diagnostic(
+        self,
+        instance_id: str,
+        tp_rank: int,
+        pp_rank: int,
+        device_id: int,
+        saves: list[tuple[str, list[int], list[bytes]]],
+    ) -> tuple[bool, str, ChannelCallObservation]: ...
     def start_restore(
         self,
         instance_id: str,

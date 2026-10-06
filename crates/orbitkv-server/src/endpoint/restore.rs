@@ -221,18 +221,23 @@ async fn reap_sources(
                                 }),
                             );
                             if let Some(timing) = timing {
-                                orbitkv_common::timeline::record("local_restore_complete", || {
-                                    serde_json::json!({
-                                        "restore_key": format!("manager:{epoch}:{client_token}:{id}"),
-                                        "success": success,
-                                        "readiness_ns": timing.readiness_ns,
-                                        "dispatched_ns": timing.dispatched_ns,
-                                        "dequeued_ns": timing.dequeued_ns,
-                                        "claimed_ns": timing.claimed_ns,
-                                        "submitted_ns": timing.submitted_ns,
-                                        "drained_ns": timing.drained_ns,
-                                    })
-                                });
+                                orbitkv_common::timeline::record_restore(
+                                    "local_restore_complete",
+                                    orbitkv_common::timeline::RestoreTimelineFields::operation(
+                                        epoch,
+                                        client_token,
+                                        id,
+                                    )
+                                    .success(success)
+                                    .drain_timing(
+                                        timing.readiness_ns,
+                                        timing.dispatched_ns,
+                                        timing.dequeued_ns,
+                                        timing.claimed_ns,
+                                        timing.submitted_ns,
+                                        timing.drained_ns,
+                                    ),
+                                );
                             }
                         }
                         if let Err(error) = records.reap(id) {
@@ -315,13 +320,12 @@ pub(super) async fn publish(
     while orbitkv_core::test_faults::active("restore") {
         tokio::time::sleep(std::time::Duration::from_millis(1)).await;
     }
-    orbitkv_common::timeline::record("restore_complete", || {
-        serde_json::json!({
-            "restore_key": format!("manager:{epoch}:{client_token}:{id}"),
-            "elapsed_us": completed_at.saturating_duration_since(started).as_micros() as u64,
-            "success": result.is_ok(),
-        })
-    });
+    orbitkv_common::timeline::record_restore(
+        "restore_complete",
+        orbitkv_common::timeline::RestoreTimelineFields::operation(epoch, client_token, id)
+            .elapsed_us(completed_at.saturating_duration_since(started).as_micros() as u64)
+            .success(result.is_ok()),
+    );
     if let Err(error) = completions.complete(id, result) {
         log::error!("Cannot publish restore completion: {error}");
         return;
@@ -333,12 +337,11 @@ pub(super) async fn publish(
     if let Err(error) = completions.notify() {
         log::error!("Cannot notify restore completion: {error}");
     }
-    orbitkv_common::timeline::record("restore_notification", || {
-        serde_json::json!({
-            "restore_key": format!("manager:{epoch}:{client_token}:{id}"),
-            "elapsed_us": completed_at.elapsed().as_micros() as u64,
-        })
-    });
+    orbitkv_common::timeline::record_restore(
+        "restore_notification",
+        orbitkv_common::timeline::RestoreTimelineFields::operation(epoch, client_token, id)
+            .elapsed_us(completed_at.elapsed().as_micros() as u64),
+    );
 }
 
 #[cfg(test)]

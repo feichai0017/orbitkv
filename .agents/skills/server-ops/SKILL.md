@@ -60,6 +60,24 @@ and effective hits. Etcd network counters now cover membership/configuration,
 not block propagation. A lower mutation count alone does not establish serving
 improvement.
 
+For S2.10 performance qualification, keep `s2.10-performance-v2` endpoint names
+separate. Serial or concurrent `/cache/metadata/await` duration measures barrier
+verification, not ordinary visibility. Ordinary visibility uses the source
+`inventory_last_change_mono_ns` and matching owner `installed_mono_ns` without a
+sync/flush in the measured path; compare them only on one host after matching the
+node epoch, incarnation, scope digest and sequence. Report HTTP observation delay
+separately. All/scoped establishes filtering benefit, while save/query isolation
+uses the same scope and matched quiet versus metadata-only pressure controls.
+Reject pressure runs whose foreground always lands in a quiet phase. Source
+cadence, actual publication/operation clocks, advancing observer windows and
+sampler overhead must be recorded symmetrically. Short capacity runs and runs
+that skip real restore cannot qualify the 16-owner threshold. Formal metadata-only
+pressure uses a release-built server-test fixture with the same frozen record
+cadence and budgets; preserve dev-profile observations separately. Controllers
+must reject optimized Python, validate cadence after each cell, and bound helper
+and measurement waits against the fresh global deadline. A watchdog leaves an
+active native process isolated; it does not establish drain.
+
 For scoped-stream qualification, pair all-domain and scoped runs with the same
 exact namespace/key/payload mutations and coalescing. Report input/output filter
 records and CPU, encoded bytes/frames, scope-bound coverage, active/staging/index
@@ -72,3 +90,30 @@ are not a node-wide network scheduler; engine-local P/D WRITE is a separate
 submitter. Receiver credit/pacing is planned in S6, not an existing runtime flag.
 Source authority, network credits and destination lifetime need separate drain
 evidence. Report that distinction when diagnosing congestion or retained memory.
+
+Pressure qualification must pace after the prior completed source iteration as
+well as the original schedule. A delayed tick cannot emit compressed catch-up
+bursts. Keep the frozen minimum interval and mutation count; never fix this by
+lowering a threshold or dropping events. A terminal exposure failure remains an
+invalid run, but should still execute explicit local drain, unregister and
+normal Manager shutdown before raising and preserve that cleanup evidence.
+
+For S2.10a stage diagnosis, enable `ORBITKV_TRACE_TRANSFERS=1` and a positive
+`ORBITKV_DIAGNOSTIC_TIMELINE_LIMIT` symmetrically in quiet and pressure runs.
+The latter is capped at 65,536 events and zero means off. Correlate client,
+Manager, insert and SSD stages only by session epoch/token plus channel request
+ID on one host monotonic clock. A limit event or missing required stage invalidates
+the run. Save return means GPU copy/encode completed and insertion was queued;
+insert and SSD completion are later diagnostic stages. Use per-thread schedstat
+when perf is unavailable, and report that precision limit instead of inferring
+scheduler causality. Diagnostic results never replace the frozen isolation cohort.
+With a positive limit, all transfer/stage records share the bounded asynchronous
+writer; required stage/query-path entries are fixed-size until that writer
+formats them. Require normal Manager shutdown to flush it before accepting linkage.
+An instrumentation pilot that fails its frozen overhead guard blocks a diagnostic
+matrix even when correlation, correctness and cleanup otherwise pass.
+Treat `publish_manager_response_publish` as the before-publication boundary; its
+client interval includes publication plus notification. Writer-start failure or
+missing post-drain flush invalidates linkage rather than permitting fallback logs.
+Shutdown must stop channel admission, await all admitted Publish continuations,
+then flush insert/SSD owners before flushing diagnostic output.

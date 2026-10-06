@@ -693,6 +693,139 @@ a two-hour contention/fault soak for the advertised deployment profile.
 | Scoped fanout | Delivered residency events equal the matching-scope oracle; lower bytes demonstrated without losing in-scope candidates |
 | Executed routing | At least 10% p95 or p99 ready-time improvement on two predeclared contention cases, with no more than 5% cold/noncontended serving regression |
 
+The S2.10 same-host performance rerun uses measurement contract
+`s2.10-performance-v2`. Source inventory changes and observer owner-view commits
+record `CLOCK_MONOTONIC` nanoseconds in their existing bounded status fields.
+Same-host samples bind node, epoch, incarnation, scope digest and sequence before
+subtracting those timestamps. The harness verifies the same boot ID, Linux time
+namespace and time offsets. They are not comparable across hosts. Publication is
+timestamped after residency/journal mutation under the inventory lock; installation
+is timestamped after reverse rows, coverage and accounting are committed under the
+index lock. Duplicate frames and progress confirmation do not rewrite that time.
+The bounded diagnostics retain the latest sequence only. The workload therefore
+stops each owner's mutations at a predetermined terminal sequence, requires exact
+sequence and view identity (not `>=`), and observes it before the next mutation.
+Superseded or replacement-view samples fail collection. This measures the terminal
+watermark of a controlled burst, not every record's first installation in unbounded
+concurrent churn.
+
+Visibility reports four distinct endpoints:
+
+- historical serial barrier verification, after every source fence is captured;
+- bounded concurrent barrier verification with an unchanged exact per-owner
+  check and a fixed concurrency limit;
+- ordinary source publication to observer owner-view installation, without
+  `/cache/sync`, flush or `/cache/metadata/await` in the measured path;
+- save start to observer installation, when an application-facing end-to-end
+  diagnostic is required.
+
+HTTP observation completion is reported after the install timestamp and cannot
+replace it. Barrier-forced results do not qualify ordinary production visibility.
+Cold/bootstrap and repair remain separate phases.
+
+Filtering benefit and local isolation use different controls. All-domain versus
+scoped runs keep the same mutation/payload oracle and establish byte/resource
+effects. Isolation fixes the scope and compares a full Manager's identical local
+save/query/restore workload under an idle inventory peer versus a test-owned
+metadata-only inventory peer. Live-store mixed pressure is labeled separately.
+The formal isolation matrix has a fixed warm-up, at least 1,000 measured rounds
+per run, five order-balanced independent pairs per medium and the declared
+cadence. Per-run p99 ratios must all be at most 1.05, and the paired-run geometric
+mean ratio's predeclared 95% bootstrap upper bound must also be at most 1.05.
+Qualification commands require at least 50 warm-up cycles and 1,000 measured
+samples, with real restore checks enabled. Short duration runs cannot qualify
+visibility. The pressure profile has an independent source cadence (17 ms),
+1-second foreground cadence and symmetric 25 ms observer sampling. Actual
+publication times, operation endpoints and observed installed timestamps must
+show pressure across the entire measured interval, advancing observer windows
+and all four offered phase quarters. Source rate must stay within 5% of the
+predeclared cadence; actual first/last publication lateness and gaps, source loop gaps and observer polling
+gaps are bounded at 100 ms, and inter-burst intervals below half the source
+period fail collection as catch-up. Report sampler CPU/HTTP cost and conservative
+positive install-overlap counts; a missed/superseded install is unknown. The
+initial 1 Hz burst profile remains rejected evidence for sustained isolation.
+
+Before formal collection, every block's payload carries a little-endian u64
+generation and u64 block index in a fixed 16-byte header. This disambiguates the
+251-round periodic body without changing bytes per block or timed endpoints.
+The capacity run restores every owner's final payload after measurement, with
+an exact owner/view/sequence/record count, cleared destination and observer DRAM,
+remote byte evidence and native drain. Those final oracle operations are not
+visibility samples.
+
+Requests within one run are never bootstrap units; increasing bootstrap resamples
+cannot compensate for fewer independent pairs. Warm-up runs at the same cadence
+and with the selected pressure condition; both warm-up and measured raw samples
+are retained. The foreground save endpoint is the native `save` call's submission,
+not SSD durability; query ends at `QueryReady` and includes any prefetch waiting,
+but excludes restore. Native restore completion and GPU-consumable completion
+are separate endpoints. SSD samples wait for writes, clear DRAM and require
+actual SSD read counters plus exact GPU bytes. Pressure records have no GPU or
+SSD payload. The final source window is checked key-by-key, including generation
+and medium, then the observer must have that exact source watermark before the
+fixture is allowed to revoke membership. Context-switch snapshots cover live
+threads; deltas identify surviving/new/exited threads and do not count missing
+threads as zero. Pre-experiment summaries cannot qualify isolation.
+
+### S2.10a same-host isolation diagnostic contract
+
+The accepted `formal-qualification-2` cohort remains immutable. It proves valid
+pressure and failed DRAM/SSD isolation, but does not prove that a Catalog lock,
+specific owner install or SSD operation directly caused a slow request. The SSD
+save pressure p99 stays near 0.94–1.03 ms, while quiet p99 varies with balanced
+run order; pressure also increases CPU ticks and context switches. Direct
+publication/install overlap and cumulative lock counters do not explain all tail
+samples. Those are facts; the following are hypotheses to distinguish:
+
+1. host phase or quiet/pressure order changes the quiet baseline;
+2. channel endpoint or Manager runtime scheduling delays foreground operations;
+3. native publish execution or completion notification creates the submit tail;
+4. deferred insert/SSD writer work competes indirectly after the save response.
+
+Diagnostic contract `s2.10-isolation-diagnosis-v1` records one bounded channel
+operation identity `(session_epoch, session_token, request_id)` across client
+submit/return, Manager receive/runtime start/execute complete/response, insert
+enqueue/dequeue/complete and SSD enqueue/dequeue/complete. Same-host
+`CLOCK_MONOTONIC` timestamps permit those differences; no cross-host subtraction
+is valid. The save response still means GPU copy/encode completed and insertion
+was queued. Storage and SSD completion remain later diagnostic stages, not a
+redefinition of `manager_save_submit_ms` or durability.
+
+New stage events require both `ORBITKV_TRACE_TRANSFERS=1` and a positive
+`ORBITKV_DIAGNOSTIC_TIMELINE_LIMIT`, capped at 65,536 per process. Reaching the
+limit invalidates the run. The diagnostic Python methods return their client
+observation directly instead of maintaining an unbounded native ring. Thread
+snapshots add per-thread CPU ticks and Linux schedstat runtime/runqueue-wait/
+timeslice counters when available. The current A100 has schedstat but no usable
+`perf`; missing perf therefore limits scheduling attribution rather than being
+replaced with synthetic evidence. Observation is enabled symmetrically in quiet
+and pressure runs.
+
+The preregistered instrumentation pilot is SSD-only and non-qualifying: 10 warm-up
+plus 120 measured rounds at 250 ms foreground cadence, unchanged 17 ms metadata
+source cadence, 25 ms owner sampler, original payload/namespace/budgets/hit path,
+and a 16,384-event diagnostic limit. Run diagnostic-off quiet, diagnostic-on
+quiet and diagnostic-on pressure serially. It passes only if all operation stages
+link without truncation, payload/SSD bytes and cleanup remain exact, and diagnostic
+quiet save/query p50 regresses by at most 5%, p99 increases by at most 0.25 ms,
+and total process CPU ticks regress by at most 15%. These short-run overhead guards
+do not qualify isolation. Failure preserves the run and blocks a formal diagnostic freeze.
+
+After that pilot, an independent reviewer freezes the diagnostic matrix and total
+runtime. The starting design is SSD ABBA/BAAB with at least 1,000 measured rounds
+per independent run plus a smaller DRAM control. One single-factor phase-offset
+ablation may move only the metadata source's initial phase while preserving its
+event count, cadence and entire foreground exposure. Observation-off/on overhead
+is a separate pilot factor, not pooled with cause estimation. CPU affinity is not
+a default or planned acceptance factor; adding it requires another reviewed
+diagnostic condition. The matrix stops at its declared repeat/time budget and
+never becomes replacement isolation qualification.
+
+Implement a fix only when stage and scheduling evidence identifies its owner.
+Reduce neither source pressure nor required correctness/drain work. If the data
+remain associative, hand off the next discriminating experiment without adding a
+thread pool, priority, scheduler or configuration layer speculatively.
+
 These are design targets, not measurements. If a target is infeasible or noisy,
 report the failed run and have the reviewer assess a revised contract before a
 new run; do not change a threshold after observing a result and call the old run

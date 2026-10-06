@@ -13,3 +13,4 @@ log.workspace = true
 logforth.workspace = true
 colored.workspace = true
 serde_json.workspace = true
+rustix = { workspace = true, features = ["time"] }

@@ -36,7 +36,9 @@ pub use bootstrap::{
     PeerCredentials,
 };
 #[cfg(target_os = "linux")]
-pub use cache_client::{BlockHashes, CacheClient, QueryIntent, RecoveryRead, RestoreHandle};
+pub use cache_client::{
+    BlockHashes, CacheClient, ChannelCallObservation, QueryIntent, RecoveryRead, RestoreHandle,
+};
 pub use cache_protocol::{
     CacheProtocolError, CancelQueryRequest, CompletionAdmission, CompletionIntent,
     CompletionObservationRequest, CompletionOutcome, CompletionRoute, PublishLayer, PublishRequest,
