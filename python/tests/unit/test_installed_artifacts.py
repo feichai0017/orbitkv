@@ -42,6 +42,8 @@ def installed_distribution(tmp_path):
         "added",
         "editable",
         "unhashed",
+        "unhashed_data",
+        "foreign_record",
         "missing_record",
         "missing_directory",
     ],
@@ -65,6 +67,12 @@ def test_installed_record_integrity(installed_distribution, change):
         rows[0][1] = ""
         with record.open("w", newline="") as stream:
             csv.writer(stream).writerows(rows)
+    elif change in {"unhashed_data", "foreign_record"}:
+        filename = "runtime_config.json" if change == "unhashed_data" else "RECORD"
+        (package / filename).write_text("unverified contents")
+        record = installed_distribution.locate_file("sample-1.0.dist-info/RECORD")
+        with record.open("a", newline="") as stream:
+            csv.writer(stream).writerow((f"sample/{filename}", "", ""))
     elif change == "missing_record":
         installed_distribution.locate_file("sample-1.0.dist-info/RECORD").unlink()
     elif change == "missing_directory":

@@ -51,19 +51,18 @@ def distribution_snapshot(distribution, package: str) -> dict:
     assert record, f"{distribution.metadata['Name']} has no installed RECORD"
     rows = list(csv.reader(record.splitlines()))
     assert rows, f"{distribution.metadata['Name']} has an empty installed RECORD"
+    record_path = (Path(distribution._path) / "RECORD").resolve()
     hashes = {}
     recorded = set()
     for relative, checksum, size in rows:
         path = Path(distribution.locate_file(relative)).resolve()
         recorded.add(path)
+        assert checksum or path == record_path, f"Installed file has no RECORD hash: {path}"
         if relative.endswith("/"):
             assert path.is_dir(), f"Missing installed directory: {path}"
             assert size == "0", f"Nonempty directory RECORD: {relative}"
             data = b""
         else:
-            if not checksum and path.name != "RECORD":
-                assert path.suffix not in {".py", ".so"}, f"Runtime file has no RECORD hash: {path}"
-                continue
             assert path.is_file(), f"Missing installed file: {path}"
             data = path.read_bytes()
         if checksum:
