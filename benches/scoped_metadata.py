@@ -8,7 +8,6 @@ import contextlib
 import hashlib
 import json
 import os
-import statistics
 import time
 import uuid
 from contextlib import ExitStack
@@ -35,45 +34,9 @@ from tests.support.cluster import TcpGate, etcd_server
 from tests.support.metrics import fetch_orbitkv_metrics
 
 from .artifacts import external_path
+from .live_store_measurements import _process_sample, _summary
 
 DEFAULT_JOURNAL_BYTES = 256 * 1024
-
-
-def _summary(values):
-    ordered = sorted(values)
-    if not ordered:
-        return {"samples": 0, "p50": None, "p95": None, "p99": None, "max": None}
-
-    def percentile(fraction):
-        return ordered[round((len(ordered) - 1) * fraction)]
-
-    return {
-        "samples": len(ordered),
-        "p50": statistics.median(ordered),
-        "p95": percentile(0.95),
-        "p99": percentile(0.99),
-        "max": ordered[-1],
-    }
-
-
-def _process_sample(pids):
-    result = {"cpu_ticks": 0, "rss_kib": 0, "hwm_kib": 0, "processes": 0}
-    for pid in pids:
-        try:
-            stat = Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()
-            status = Path(f"/proc/{pid}/status").read_text().splitlines()
-        except (FileNotFoundError, IndexError):
-            continue
-        values = {
-            line.split(":", 1)[0]: int(line.split()[1])
-            for line in status
-            if line.startswith(("VmRSS:", "VmHWM:"))
-        }
-        result["cpu_ticks"] += int(stat[11]) + int(stat[12])
-        result["rss_kib"] += values.get("VmRSS", 0)
-        result["hwm_kib"] += values.get("VmHWM", 0)
-        result["processes"] += 1
-    return result
 
 
 def _etcd_revision(endpoint, prefix):

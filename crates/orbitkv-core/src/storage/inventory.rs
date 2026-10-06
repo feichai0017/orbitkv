@@ -26,6 +26,7 @@ struct Inventory {
     journal_bytes_peak: usize,
     byte_limit: usize,
     history_gaps: u64,
+    last_change_mono_ns: u64,
     flush_through_sequence: u64,
     delta_input_records: u64,
     delta_input_bytes: u64,
@@ -48,6 +49,7 @@ pub struct InventoryStatus {
     pub journal_bytes_peak: usize,
     pub journal_capacity_bytes: usize,
     pub history_gaps: u64,
+    pub last_change_mono_ns: u64,
     pub flush_through_sequence: u64,
     pub delta_input_records: u64,
     pub delta_input_bytes: u64,
@@ -104,6 +106,7 @@ impl ResidencyInventory {
                 journal_bytes_peak: 0,
                 byte_limit,
                 history_gaps: 0,
+                last_change_mono_ns: 0,
                 flush_through_sequence: 0,
                 delta_input_records: 0,
                 delta_input_bytes: 0,
@@ -162,6 +165,7 @@ impl ResidencyInventory {
             }
         }
         state.journal_bytes_peak = state.journal_bytes_peak.max(state.journal_bytes);
+        state.last_change_mono_ns = monotonic_ns();
         self.changed.send_replace(state.sequence);
     }
 
@@ -189,6 +193,7 @@ impl ResidencyInventory {
             journal_bytes_peak: state.journal_bytes_peak,
             journal_capacity_bytes: state.byte_limit,
             history_gaps: state.history_gaps,
+            last_change_mono_ns: state.last_change_mono_ns,
             flush_through_sequence: state.flush_through_sequence,
             delta_input_records: state.delta_input_records,
             delta_input_bytes: state.delta_input_bytes,
@@ -432,6 +437,22 @@ impl ResidencyInventory {
         self.request_flush(target);
         target
     }
+}
+
+fn monotonic_ns() -> u64 {
+    let mut now = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `now` is a valid writable timespec and CLOCK_MONOTONIC has no
+    // additional pointer lifetime requirements.
+    if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &raw mut now) } != 0 {
+        return 0;
+    }
+    u64::try_from(now.tv_sec)
+        .unwrap_or(0)
+        .saturating_mul(1_000_000_000)
+        .saturating_add(u64::try_from(now.tv_nsec).unwrap_or(0))
 }
 
 fn bounded_records(

@@ -569,6 +569,15 @@ impl SsdStore {
         blocks: impl IntoIterator<Item = (&'a StateKey, &'a Arc<SealedBlock>)>,
         reused: bool,
     ) {
+        self.ingest_batch_diagnostic(blocks, reused, None);
+    }
+
+    pub(crate) fn ingest_batch_diagnostic<'a>(
+        &self,
+        blocks: impl IntoIterator<Item = (&'a StateKey, &'a Arc<SealedBlock>)>,
+        reused: bool,
+        diagnostic: Option<crate::PublishDiagnostic>,
+    ) {
         if reused && self.write_policy == SsdWritePolicy::All {
             return;
         }
@@ -642,14 +651,29 @@ impl SsdStore {
                     .pending_writes
                     .extend(admitted.iter().map(|(key, _)| key.clone()));
                 metrics.ssd_write_queue_pending.add(len as i64, &[]);
+                if let Some(diagnostic) = diagnostic {
+                    diagnostic.record(
+                        "publish_ssd_enqueue",
+                        orbitkv_common::timeline::DiagnosticFields::default().blocks(len),
+                    );
+                }
                 permit.send(SsdWriteCommand::Write(SsdWriteBatch {
                     blocks: admitted,
                     observation,
+                    diagnostic: diagnostic.map(Box::new),
                 }));
             }
             Err(_) => {
                 warn!("SSD write queue full, dropping {len} blocks");
                 metrics.ssd_write_queue_full.add(len as u64, &[]);
+                if let Some(diagnostic) = diagnostic {
+                    diagnostic.record(
+                        "publish_ssd_rejected",
+                        orbitkv_common::timeline::DiagnosticFields::default()
+                            .blocks(len)
+                            .outcome("queue_full"),
+                    );
+                }
                 observation.finish(Outcome::Cancelled, None);
             }
         }

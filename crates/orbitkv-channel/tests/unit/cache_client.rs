@@ -568,6 +568,38 @@ fn blocked_publish_does_not_serialize_query_or_restore() {
 }
 
 #[test]
+fn observed_publish_and_query_share_the_manager_session_and_bound_the_call() {
+    let peer = Peer::new(|command, _, _| {
+        Some(if command.code == CommandCode::Publish {
+            Vec::new()
+        } else {
+            loading()
+        })
+    });
+    let client = peer.client();
+    let publish = client
+        .publish_observed(&PublishRequest {
+            instance_id: "m".into(),
+            tp_rank: 0,
+            pp_rank: 0,
+            device_id: 0,
+            layers: vec![],
+        })
+        .unwrap();
+    let (query, observed_query) = client
+        .query_observed("m", &hashes(&[b"h"]), "r", 0, LOOKUP)
+        .unwrap();
+    assert_eq!(query.outcome, QueryOutcomeCode::Loading);
+    assert_ne!(publish.request_id, observed_query.request_id);
+    assert!(publish.submitted_mono_ns <= publish.returned_mono_ns);
+    assert!(observed_query.submitted_mono_ns <= observed_query.returned_mono_ns);
+    assert!(publish.session_epoch > 0);
+    assert!(publish.session_token > 0);
+    assert!(observed_query.session_epoch > 0);
+    assert!(observed_query.session_token > 0);
+}
+
+#[test]
 fn planned_read_fetches_only_its_window_and_releases_a_stale_partial_lease() {
     use orbitkv_state::{
         RecoveryContract, RecoveryRule, StateComponent, StateRequirement, TokenRange,

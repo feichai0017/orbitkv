@@ -91,6 +91,36 @@ and Manager to collect it. `ORBITKV_TRACE_TRANSFERS=1` additionally exposes the
 stage decomposition and native result-consumption delay; tracing alone does not
 enable cost selection.
 
+S2.10a publish/query stage diagnosis additionally requires a positive
+`ORBITKV_DIAGNOSTIC_TIMELINE_LIMIT`. It is disabled at zero and capped at 65,536
+events per process. Events bind the authenticated session epoch/token and channel
+request ID, use same-host `CLOCK_MONOTONIC`, and cover client, Manager, insert and
+SSD-writer boundaries. A `diagnostic_timeline_limit` event invalidates the run.
+Client return, insert completion and SSD completion are different endpoints; the
+diagnostic never redefines save submission as SSD durability.
+
+With a positive diagnostic limit, existing transfer records and the additional
+stage records share a bounded asynchronous writer instead of synchronously
+formatting output on request/storage threads. The total accepted records, not
+only the additional stage records, consume the process limit. Normal Manager
+shutdown drains request and storage owners before flushing the writer. A missing
+required stage, a limit event or an abnormal process exit remains invalid; the
+buffer does not manufacture completion evidence.
+Required stage and foreground query-path events enter the writer as fixed-size
+records; their JSON representation is built only by the writer. Less common
+legacy transfer records retain their existing structured fields but consume the
+same total bound.
+
+`publish_manager_response_publish` is recorded immediately before the response
+is made visible; `response_publish_to_client_ms` therefore includes response
+publication and notification/wakeup. It is not an after-send timestamp. Normal
+Manager shutdown stops the channel, drains GPU owners, then flushes deferred
+Publish continuations, insert and SSD work before flushing the diagnostic writer.
+Writer-start failure
+emits a limit event and invalidates the run instead of falling back to unbounded
+logging. SSD completion accounting retains every intervening write batch even
+when only one batch carries diagnostic correlation.
+
 `cache_restore` supplies the GPU-completed boundary for
 Manager-executed restores, from preparation after framework page allocation
 through terminal GPU completion. Its plan retains `RestoreTargetShape`
@@ -555,6 +585,9 @@ coverage `unavailable`. A complete empty owner view differs from a missing view.
 
 The same response includes the local inventory sequence, resident and retained-
 journal record counts, current/peak journal bytes, capacity and history gaps.
+`inventory_last_change_mono_ns` is the source process's `CLOCK_MONOTONIC`
+timestamp for the latest committed residency sequence. It is a same-host
+qualification diagnostic, not a cross-host clock or a publication barrier.
 Completed stream intervals report input/coalesced records, encoded bytes, delta
 frames and elapsed coalescing wait. `inventory_flush_through_sequence` is the
 latest requested source-fence target; it is not a received-frame or installed-
@@ -580,8 +613,14 @@ session-lifecycle fault, not harmless telemetry drift.
 
 `GET /cache/metadata/owners?after=<uuid>&limit=<1..128>` reports bounded,
 UUID-ordered installed owner views with their committed sequence, freshness,
-receipt age and record count. It is an operational/qualification surface, not a
-request-path directory lookup.
+receipt age, record count and `installed_mono_ns`. The latter is the observer's
+`CLOCK_MONOTONIC` timestamp at atomic snapshot commit or delta apply; an exact
+progress confirmation at unchanged sequence preserves it. Compare it with a
+source timestamp only when both
+processes run in the same host clock domain and the sample also matches owner,
+epoch, incarnation, scope digest and sequence. HTTP response time remains a
+separate harness-observation delay. This endpoint is an operational/qualification
+surface, not a request-path directory lookup.
 
 Standalone Managers return JSON `null`. `POST /cache/sync` returns an
 `inventory_fence`; `POST /cache/metadata/await` succeeds only after the matching
@@ -599,6 +638,9 @@ connectivity and etcd membership health. See [metadata recovery](distributed-cac
 ### Environment Variables
 
 - `RUST_LOG`: Control logging verbosity (e.g., `info,orbitkv_core=debug`)
+- `ORBITKV_TRACE_TRANSFERS=1`: Enable opt-in timeline records.
+- `ORBITKV_DIAGNOSTIC_TIMELINE_LIMIT=<1..65536>`: Bound S2.10a channel/storage
+  stage records; zero or omission disables those additional events.
 
 ## Quick Start: Direct Prometheus (Recommended)
 
@@ -794,3 +836,9 @@ orbitkv_hll_estimated_hit_rate{window="1h"}
 - [Prometheus Query Language](https://prometheus.io/docs/prometheus/latest/querying/basics/)
 - [Grafana Dashboard Guide](https://grafana.com/docs/grafana/latest/dashboards/)
 - [OpenTelemetry Documentation](https://opentelemetry.io/docs/)
+
+The inventory publication/install clocks are same-host diagnostics for the latest
+exact sequence. A progress confirmation at unchanged sequence preserves the
+original install time; snapshot/delta commit updates it after the index becomes
+complete under its write lock. A benchmark must reject superseded targets and
+verify the host clock domain; these timestamps do not give a cross-host latency.

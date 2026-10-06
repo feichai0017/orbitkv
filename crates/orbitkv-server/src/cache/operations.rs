@@ -4,19 +4,22 @@ use super::read::ReadControl;
 use crate::metric::hll::MultiWindowHllTracker;
 use orbitkv_core::QueryLeaseId;
 use orbitkv_core::{
-    EngineError, LayerSave, OrbitKVEngine, QueryMode, QueryOwner, QueryReservation,
+    EngineError, LayerSave, OrbitKVEngine, PublishDiagnostic, QueryMode, QueryOwner,
+    QueryReservation,
 };
 use thiserror::Error;
 
-fn trace_query(stage: &str, input: &QueryInput, elapsed_us: u64, hit_blocks: usize) {
-    orbitkv_common::timeline::record(stage, || {
-        serde_json::json!({
-            "request_id": input.request_id, "instance_id": input.instance_id,
-            "group_id": input.group_id, "warmup": input.warmup,
-            "prepare": input.prepare,
-            "elapsed_us": elapsed_us, "hit_blocks": hit_blocks,
-        })
-    });
+fn trace_query(stage: &'static str, input: &QueryInput, elapsed_us: u64, hit_blocks: usize) {
+    orbitkv_common::timeline::record_query_path(
+        stage,
+        &input.request_id,
+        &input.instance_id,
+        input.group_id,
+        input.warmup,
+        input.prepare,
+        elapsed_us,
+        hit_blocks,
+    );
 }
 
 #[derive(Clone, Debug)]
@@ -62,6 +65,7 @@ pub(crate) struct PublishInput {
     pub pp_rank: u32,
     pub device_id: i32,
     pub layers: Vec<PublishLayerInput>,
+    pub diagnostic: Option<PublishDiagnostic>,
 }
 
 #[derive(Clone, Debug)]
@@ -157,9 +161,31 @@ pub(crate) async fn execute_publish(
             block_hashes: layer.block_hashes,
         });
     }
-    engine
-        .batch_save_kv_blocks_from_ipc(&input.instance_id, tp_rank, pp_rank, input.device_id, saves)
-        .await
+    match input.diagnostic {
+        Some(diagnostic) => {
+            engine
+                .batch_save_kv_blocks_from_ipc_diagnostic(
+                    &input.instance_id,
+                    tp_rank,
+                    pp_rank,
+                    input.device_id,
+                    saves,
+                    diagnostic,
+                )
+                .await
+        }
+        None => {
+            engine
+                .batch_save_kv_blocks_from_ipc(
+                    &input.instance_id,
+                    tp_rank,
+                    pp_rank,
+                    input.device_id,
+                    saves,
+                )
+                .await
+        }
+    }
 }
 
 #[derive(Debug, Error)]

@@ -61,11 +61,15 @@ def _sync(manager):
 
 def _await_fence(manager, fence, managers, *, timeout=30):
     scope = _metadata(manager)["stream"]["scope_digest"]
+    _await_fence_for_scope(manager, fence, scope, managers, timeout=timeout)
+
+
+def _await_fence_for_scope(manager, fence, scope_digest, managers, *, timeout=30):
     response = requests.post(
         f"http://127.0.0.1:{manager.http_port}/cache/metadata/await",
         json={
             "inventory_fence": fence,
-            "scope_digest": scope,
+            "scope_digest": scope_digest,
             "timeout_ms": int(timeout * 1000),
         },
         timeout=timeout + 5,

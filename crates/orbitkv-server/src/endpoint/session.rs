@@ -1,7 +1,6 @@
 //! Lifecycle metadata over the same authenticated UDS that bootstraps local IPC.
 use std::collections::HashMap;
 use std::os::fd::AsFd;
-use std::sync::Arc;
 use std::time::Duration;
 
 use orbitkv_channel::lifecycle::{
@@ -11,7 +10,7 @@ use orbitkv_channel::lifecycle::{
 use prost::Message;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
-use tokio::sync::Notify;
+use tokio::sync::watch;
 
 use crate::cache::lifecycle::{ControlError, LifecycleService};
 use crate::proto::engine::{RegisterContextRequest, SessionRequest, UnregisterRequest};
@@ -20,16 +19,19 @@ pub(crate) async fn serve(
     stream: std::os::unix::net::UnixStream,
     epoch: u64,
     lifecycle: LifecycleService,
-    shutdown: Arc<Notify>,
+    mut shutdown: watch::Receiver<bool>,
 ) {
     let connection = stream.try_clone().ok();
     let mut owners = HashMap::new();
     let result = async {
         let mut stream = UnixStream::from_std(stream)?;
         loop {
+            if *shutdown.borrow_and_update() {
+                return Ok::<(), std::io::Error>(());
+            }
             let mut bytes = [0; LIFECYCLE_HEADER_BYTES];
             tokio::select! {
-                _ = shutdown.notified() => return Ok::<(), std::io::Error>(()),
+                _ = wait_for_shutdown(&mut shutdown) => return Ok::<(), std::io::Error>(()),
                 result = stream.read_exact(&mut bytes) => { result?; }
             }
             let header = LifecycleHeader::decode(bytes)?;
@@ -41,8 +43,15 @@ pub(crate) async fn serve(
             }
             let command = LifecycleCommand::try_from(header.code)?;
             let mut payload = vec![0; header.payload_len];
-            tokio::time::timeout(Duration::from_secs(10), stream.read_exact(&mut payload))
-                .await??;
+            tokio::select! {
+                _ = wait_for_shutdown(&mut shutdown) => return Ok(()),
+                result = tokio::time::timeout(
+                    Duration::from_secs(10),
+                    stream.read_exact(&mut payload),
+                ) => { result??; }
+            }
+            #[cfg(test)]
+            super::test_pause::pause("lifecycle_after_request").await;
             let result = dispatch(command, &payload, &lifecycle, &mut owners).await;
             let (code, body, arenas) = match result {
                 Ok((body, arenas)) => (0, body, arenas),
@@ -85,6 +94,17 @@ pub(crate) async fn serve(
     }
     for (instance, token) in owners {
         lifecycle.close_session(&instance, token).await;
+    }
+}
+
+async fn wait_for_shutdown(shutdown: &mut watch::Receiver<bool>) {
+    loop {
+        if *shutdown.borrow_and_update() {
+            return;
+        }
+        if shutdown.changed().await.is_err() {
+            return;
+        }
     }
 }
 
@@ -153,3 +173,7 @@ async fn dispatch(
     }
     Ok((Vec::new(), Vec::new()))
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/endpoint/session.rs"]
+mod tests;

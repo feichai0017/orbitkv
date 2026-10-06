@@ -4,9 +4,10 @@ use std::time::Duration;
 
 use orbitkv_channel::lifecycle::LifecycleCommand;
 use orbitkv_channel::{
-    BlockHashes, CacheClient, CallOptions, ChannelError, CompletionAdmission, CompletionIntent,
-    CompletionObservationRequest, CompletionOutcome, CompletionRoute, PublishLayer, PublishRequest,
-    QueryIntent, RestoreHandle, RestoreLease, RestoreRequest, RestoreState,
+    BlockHashes, CacheClient, CallOptions, ChannelCallObservation, ChannelError,
+    CompletionAdmission, CompletionIntent, CompletionObservationRequest, CompletionOutcome,
+    CompletionRoute, PublishLayer, PublishRequest, QueryIntent, RestoreHandle, RestoreLease,
+    RestoreRequest, RestoreState,
 };
 use orbitkv_core::transfer::local::{LocalRestoreExecutor, LocalTensor};
 use orbitkv_core::{PayloadArena, TransferMode as LocalTransferMode};
@@ -24,6 +25,60 @@ use crate::local_restore::{LocalCompletions, LocalRestore, LocalRestoreWorker};
 use crate::{OrbitKVError, OrbitKVInternal, query_response};
 
 type PyLeaseLoad = (Vec<u8>, Vec<Vec<Option<u32>>>);
+
+#[pyclass(name = "ChannelCallObservation", frozen)]
+pub(crate) struct PyChannelCallObservation(ChannelCallObservation);
+
+#[pymethods]
+impl PyChannelCallObservation {
+    #[getter]
+    fn request_id(&self) -> u64 {
+        self.0.request_id
+    }
+
+    #[getter]
+    fn session_epoch(&self) -> u64 {
+        self.0.session_epoch
+    }
+
+    #[getter]
+    fn session_token(&self) -> u64 {
+        self.0.session_token
+    }
+
+    #[getter]
+    fn submitted_mono_ns(&self) -> u64 {
+        self.0.submitted_mono_ns
+    }
+
+    #[getter]
+    fn returned_mono_ns(&self) -> u64 {
+        self.0.returned_mono_ns
+    }
+}
+
+fn publish_request(
+    instance_id: String,
+    tp_rank: u32,
+    pp_rank: u32,
+    device_id: i32,
+    saves: Vec<(String, Vec<u32>, Vec<Vec<u8>>)>,
+) -> PublishRequest {
+    PublishRequest {
+        instance_id,
+        tp_rank,
+        pp_rank,
+        device_id,
+        layers: saves
+            .into_iter()
+            .map(|(layer_name, block_ids, block_hashes)| PublishLayer {
+                layer_name,
+                block_ids,
+                block_hashes,
+            })
+            .collect(),
+    }
+}
 
 #[derive(PartialEq, Eq)]
 #[pyclass(name = "BlockHashes", frozen, eq)]
@@ -594,6 +649,35 @@ impl PyCacheManagerClient {
         query_response(py, response)
     }
 
+    #[pyo3(signature = (instance_id, block_hashes, req_id, wait_for_full_prefix=false, group_id=0))]
+    fn query_prefetch_diagnostic(
+        &self,
+        py: Python<'_>,
+        instance_id: &str,
+        block_hashes: &PyBlockHashes,
+        req_id: &str,
+        wait_for_full_prefix: bool,
+        group_id: u32,
+    ) -> PyResult<(Py<PyAny>, PyChannelCallObservation)> {
+        let (response, observation) = py
+            .detach(|| {
+                self.inner.query_observed(
+                    instance_id,
+                    &block_hashes.0,
+                    req_id,
+                    group_id,
+                    QueryIntent::Lookup {
+                        wait_for_full_prefix,
+                    },
+                )
+            })
+            .map_err(client_error)?;
+        Ok((
+            query_response(py, response)?,
+            PyChannelCallObservation(observation),
+        ))
+    }
+
     #[pyo3(signature = (instance_id, block_hashes, req_id, group_id=0))]
     fn query_candidates(
         &self,
@@ -734,25 +818,26 @@ impl PyCacheManagerClient {
         device_id: i32,
         saves: Vec<(String, Vec<u32>, Vec<Vec<u8>>)>,
     ) -> PyResult<(bool, String)> {
-        let layers = saves
-            .into_iter()
-            .map(|(layer_name, block_ids, block_hashes)| PublishLayer {
-                layer_name,
-                block_ids,
-                block_hashes,
-            })
-            .collect();
-        py.detach(|| {
-            self.inner.publish(&PublishRequest {
-                instance_id,
-                tp_rank,
-                pp_rank,
-                device_id,
-                layers,
-            })
-        })
-        .map_err(client_error)?;
+        let request = publish_request(instance_id, tp_rank, pp_rank, device_id, saves);
+        py.detach(|| self.inner.publish(&request))
+            .map_err(client_error)?;
         Ok((true, String::new()))
+    }
+
+    fn save_diagnostic(
+        &self,
+        py: Python<'_>,
+        instance_id: String,
+        tp_rank: u32,
+        pp_rank: u32,
+        device_id: i32,
+        saves: Vec<(String, Vec<u32>, Vec<Vec<u8>>)>,
+    ) -> PyResult<(bool, String, PyChannelCallObservation)> {
+        let request = publish_request(instance_id, tp_rank, pp_rank, device_id, saves);
+        let observation = py
+            .detach(|| self.inner.publish_observed(&request))
+            .map_err(client_error)?;
+        Ok((true, String::new(), PyChannelCallObservation(observation)))
     }
 
     #[allow(

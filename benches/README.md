@@ -13,6 +13,10 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | `cpu_codec.rs` | Production scalar/AVX2/AVX-512/auto CPU FP8 conversion with an independent oracle before timing |
 | `cost_observations.py` | Same-binary off/on observation overhead, three reversed-order pairs on both engines |
 | `metadata.py` | Explicit full-Manager 0/2/5 ms metadata coalescing comparison using frozen binaries |
+| `live_store_capacity.py` | S2.10 1/4/16-owner ordinary install visibility plus separately named serial/concurrent barrier diagnostics |
+| `live_store_isolation.py` | Matched full-Manager local save/query/restore under quiet or metadata-only inventory pressure |
+| `summarize_live_store_isolation.py` | Independent-run-pair ratios, absolute deltas and paired-run confidence intervals |
+| `summarize_live_store_diagnostics.py` | Same-host channel/Manager/insert/SSD stage decomposition for bounded S2.10a runs |
 | `single_node.py` | Fixed-capacity cold, HBM-hit, and post-pressure experiment |
 | `shared_cache.py` | Independent-replica serving requests with remote-byte, GPU-copy, output and reservation-drain evidence |
 | `launch.py` | Engine/backend commands and matched memory budgets |
@@ -28,6 +32,79 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | `tests/` | CPU-only checks for measurement and report correctness |
 | `artifacts.py` | Validate external output locations, including symlink resolution |
 | `reproduce_preparation.sh` | Repeated preparation controls with an explicit external output root |
+
+### S2.10 metadata performance qualification
+
+Build and freeze the Manager, wheel, server-test pressure source, extension and
+TENT libraries before starting these gates. Build the metadata-only pressure
+fixture with `cargo test --release --no-run -p orbitkv-server --no-default-features
+--features cuda-13,mooncake,test-hooks` on the CUDA 13 profile. Freeze that test
+executable separately; debug fixture CPU/RSS is not the formal production-profile
+reference. The capacity harness selects one visibility endpoint per run:
+
+```bash
+python -m benches.live_store_capacity \
+  --owners 16 --seed capacity-01 --samples 1000 --warmup-cycles 50 \
+  --visibility-mode ordinary --enforce-thresholds \
+  --output /external/s2-10/capacity-16-ordinary
+
+python -m benches.live_store_capacity \
+  --owners 16 --seed capacity-01 --duration-seconds 60 \
+  --visibility-mode concurrent-barrier --barrier-concurrency 4 \
+  --output /external/s2-10/capacity-16-concurrent
+```
+
+`ordinary` never calls the synchronization endpoints in its measured path.
+Serial and concurrent barrier runs are diagnostics and cannot pass the ordinary
+50 ms gate on its behalf.
+
+Isolation uses one full foreground Manager and a test-owned Rust inventory source
+from the frozen `orbitkv-server` test binary. Quiet and pressure runs have the
+same topology, scope, foreground bytes, medium, cadence and GPU synchronization.
+The pressure source changes metadata through the production inventory stream
+without foreground GPU copies or SSD I/O:
+
+```bash
+python -m benches.live_store_isolation \
+  --condition quiet --medium dram --seed pair-01 --warmup-rounds 50 \
+  --samples 1000 --cadence-ms 1000 --order-index 0 \
+  --output /external/s2-10/isolation/dram-pair-01-quiet
+
+python -m benches.live_store_isolation \
+  --condition pressure --medium dram --seed pair-01 --warmup-rounds 50 \
+  --samples 1000 --cadence-ms 1000 --order-index 1 \
+  --output /external/s2-10/isolation/dram-pair-01-pressure
+```
+
+Set `ETCD_BIN`, `ORBITKV_CACHE_MANAGER_BINARY`, `ORBITKV_MOONCAKE_LIB_DIR`
+and `ORBITKV_SERVER_TEST_BINARY` to one frozen candidate. Reverse condition order
+for alternating pairs. Use `benches.summarize_live_store_isolation` only after all
+five pairs finish; request samples within a run are not independent repetitions.
+
+S2.10a diagnostics reuse the same harness without changing the foreground path.
+Pass a positive bounded event limit to use the explicit diagnostic client calls
+and Manager/storage timeline. The pilot contract is non-qualifying:
+
+```bash
+python -m benches.live_store_isolation \
+  --condition quiet --medium ssd --seed diagnostic-pilot-on \
+  --warmup-rounds 10 --samples 120 --cadence-ms 250 --order-index 1 \
+  --diagnostic-timeline-limit 16384 \
+  --output /external/s2-10a/pilot/ssd-quiet-diagnostic-on
+
+python -m benches.summarize_live_store_diagnostics \
+  --run /external/s2-10a/pilot/ssd-quiet-diagnostic-on \
+  --output /external/s2-10a/pilot/ssd-quiet-diagnostic-on/stage-summary.json
+```
+
+The limit requires transfer tracing and is set by the harness before importing
+the native extension or starting the Manager. Zero leaves the new stages off.
+`samples.jsonl` owns client submit/return observations; `diagnostic-events.jsonl`
+owns bounded Manager/insert/SSD events keyed by session epoch/token and channel
+request ID. Thread resource snapshots include schedstat when Linux exposes it.
+Reaching `diagnostic_timeline_limit`, missing a required stage or comparing clocks
+outside the recorded host domain invalidates the run. SSD queue/durability stages
+remain after save return and are never folded into `manager_save_submit_ms`.
 
 ## CPU codec benchmark
 
@@ -720,3 +797,21 @@ estimates in a production process or qualify an automatic selector. Keep
 registration defaults unchanged until useful gains, shared-device admission and
 switching margins have their own evidence. `--report-only` must use the same
 comparison, tiers and other predeclared arguments.
+
+The S2.10 formal capacity command requires `--samples 1000 --warmup-cycles 50`
+with ordinary mode, 16 owners and real restores before `--enforce-thresholds`
+can run. Duration-only smoke runs cannot qualify the threshold. Isolation uses
+`--pressure-cadence-ms 17 --observer-sample-ms 25` independently of the 1000 ms
+foreground cadence; both quiet and pressure include the same observer sampler.
+`exposure.json` records offered phase coverage, observed installation overlap,
+source/sampler gaps and rate checks. It preserves unknown missed observations.
+All fields and minimum exposure checks must be frozen before a qualification run.
+
+The metadata pressure fixture prevents catch-up bursts by respecting both the
+original schedule and half a source period after the prior iteration completes.
+For a controlled pacing regression only, set `ORBITKV_PRESSURE_STALL_ROUND=200`
+and `ORBITKV_PRESSURE_STALL_MS=38`; every event must remain present and the
+8.5 ms minimum interval still applies to the 17 ms profile. A 200 ms stall is an
+intentional invalid-exposure control: it must fail the 100 ms upper bound while
+retaining explicit drain and graceful cleanup evidence. These fault variables
+are not part of the ordinary formal workload.

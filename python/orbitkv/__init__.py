@@ -12,6 +12,7 @@ from typing import Any
 _NATIVE_EXPORTS = {
     "ChannelProbeClient",
     "CacheManagerClient",
+    "ChannelCallObservation",
     "BlockHashes",
     "MooncakeTransferEngine",
     "OrbitKVError",
@@ -52,6 +53,7 @@ __all__ = [
     "__version__",
     "ChannelProbeClient",
     "CacheManagerClient",
+    "ChannelCallObservation",
     "BlockHashes",
     "MooncakeTransferEngine",
     "OrbitKVError",
