@@ -760,6 +760,19 @@ Any helper failure, sample-count/digest mismatch or phase/cadence violation make
 the cell invalid. Only one 10-warm-up/20-measured smoke per condition may run
 before independent review; those smokes establish tool validity only.
 
+The tool candidate is `8be53548`. Independent CPU-host validation passes Ruff,
+all 221 benchmark tests, Python compilation and the tracked experiment-output
+guard. The first A100 A smoke is preserved as `INVALID_SMOKE`: the accepted
+task-001 Manager reached CUDA and SSD initialization but could not load TENT
+because `libyaml-cpp.so.0.7` was absent from that reused frozen native bundle and
+the host loader path. It stopped before observer start and before foreground
+round zero; no samples or performance result exist. Postflight shows zero GPU
+memory, no owned process/socket and unchanged runtime hashes. Per the frozen
+fail-stop rule, B was not launched, the environment was not repaired and no
+formal cell started. This substage is therefore handed off incomplete for
+independent review; a corrected runtime bundle and a newly authorized smoke are
+required before the frozen eight-cell matrix can be considered for launch.
+
 The pilot review and formal diagnostic matrix are complete. Any follow-up must
 again use independent runs, at least 1,000 measured operations per p99 run,
 balanced ordering, a single predeclared factor, bounded budgets and explicit
