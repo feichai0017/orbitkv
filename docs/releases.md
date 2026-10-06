@@ -75,7 +75,10 @@ Mooncake libraries. `maturin build` alone does not stage the complete runtime.
    then verify a completion and an external restore after engine restart.
    The smoke gate removes external TENT search paths, initializes TENT, and
    checks `/proc/self/maps` to prove that its three primary libraries came from
-   the installed package.
+   the installed package. It verifies pinned versions and installed RECORD hashes,
+   then compares cold, native HBM, full and partial recovery against native
+   controls in DRAM and io_uring SSD cells. The installed console entry executes
+   the Manager directly: SIGTERM must drain and exit 0; forced cleanup fails.
    Run the [release smoke and correctness gates](../python/tests/README.md#release-smoke).
 4. Review the final benchmark summaries and known limits. Publish only after
    these checks pass and the release is approved.

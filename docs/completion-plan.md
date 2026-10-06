@@ -716,6 +716,13 @@ Follow-up evidence: `/root/orbitkv-artifacts/adapter-cleanup-20260930/pd-followu
 
 Overall S5.2 acceptance, engine upgrades, upstream registration, and additional
 multi-GPU/P/D qualification remain open.
+
+The installed-wheel ordinary-cache gate now defines four pinned-release cells:
+vLLM/SGLang × DRAM/io_uring SSD, dense TP=1/PP=1 eager. It compares native
+controls, cold/native-HBM/full/partial reuse, strict Manager SIGTERM drain and
+installed engine/OrbitKV RECORD integrity. Source-injected E2E remains a separate
+development gate. Implementation and qualification are recorded separately; this
+addition alone does not close S5.2, public-Hook or native P/D lifecycle work.
 Evidence: `/root/orbitkv-artifacts/adapter-cleanup-20260930/`.
 
 - vLLM: retain `OrbitKVConnector` and distinct scheduler/worker responsibilities.

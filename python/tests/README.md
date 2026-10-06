@@ -264,10 +264,23 @@ After installing the candidate wheel in the pinned engine environment, run:
 Run from the repository root; substitute the SGLang environment and `-k sglang`
 for the other adapter, with its own `--basetemp` directory. The test starts
 subprocesses outside the source package, rejects editable/source imports,
-initializes TENT and proves its primary libraries came from the installed wheel,
-uses installed plugin metadata and the bundled console script, and verifies
-exact output plus positive GPU-load bytes after engine restart. It also checks
-final query/I/O drain. Run the engines sequentially on one GPU. See
+checks the pinned engine version, verifies installed engine and OrbitKV files
+against their wheel RECORDs before and after execution, rejects unrecorded runtime
+files and conflicting plugin metadata, and proves TENT libraries load from the
+installed wheel. Each engine runs DRAM and forced io_uring SSD cells. Use
+`-k "vllm and dram"` to select a single cell.
+
+Each cell compares cold, native HBM, full external recovery after engine restart,
+and partial recovery against an engine-native control. HBM hits must increase
+native reuse without external query or H2D work. The partial case first resets
+HBM and requires positive external GPU-load bytes; SSD cases also require
+positive io_uring reads after DRAM eviction. Output text/tokens, final query/I/O
+ownership, process exit status and installed-file integrity are checked.
+`responses.json`, metrics, before/after manifests and per-service cleanup records
+stay under the selected external `--basetemp`. A forced cleanup fails the cell;
+Manager SIGTERM must drain and exit 0 through the installed console entry.
+Run the engines sequentially on one GPU. This dense TP=1/PP=1 eager gate does
+not qualify CUDA graphs, P/D, multi-GPU or cancellation during transfer. See
 [release preparation](../../docs/releases.md) for the wheel build matrix.
 
 Minimum checks:

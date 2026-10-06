@@ -9,6 +9,12 @@ DRAM/SSD and eager/graph evidence; independent acceptance and broader deployment
 qualification remain open. Historical 0.29.0 model/topology evidence is not
 automatically transferred to the new release.
 
+The [installed-wheel gate](releases.md#validate-before-publishing) checks the
+selected official versions with cold/native-HBM/full/partial reuse and
+DRAM/io_uring SSD recovery. It rejects editable/source imports and changed
+installed files. Its dense TP=1/PP=1 eager profile is separate from graph, P/D
+and failure-lifetime qualification; see S5.2 for current acceptance status.
+
 ## Ownership contract
 
 | Responsibility | Owner |
