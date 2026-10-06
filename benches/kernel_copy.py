@@ -272,7 +272,7 @@ def run_case(torch, case, direction, kernels, properties, warmup, samples, seed)
         "candidate_ctas": candidate_ctas,
         "correctness": "pass",
         "samples": timing,
-        "median_cuda_ratio": (
+        "median_upload_and_kernel_ratio": (
             statistics.median(s["cuda_upload_and_kernel_ms"] for s in timing["candidate"])
             / statistics.median(s["cuda_upload_and_kernel_ms"] for s in timing["baseline"])
         )

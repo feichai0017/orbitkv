@@ -43,6 +43,16 @@ Publish/Restore gates under inference contention; preserve source/destination
 holds, layer dependencies and final drain. Kernel timing alone cannot establish
 a TTFT/ITL advantage or qualify a production replacement.
 
+## Current candidate status
+
+The A100 SM80 candidate passes all 30 byte/canary controls and three matched
+measurement runs. The frozen raw sources, timings and failed attempts are at
+`/root/orbitkv-artifacts/kda-fragment-copy-20261006/`, with an A100 mirror at
+`/workspace/orbitkv-kda-fragment-copy-20261006/`. The component evidence is
+**implemented and locally measured; independent acceptance and production
+promotion remain open**. It does not qualify H20, inference contention or the
+DMA route. No production kernel is changed.
+
 ## Other candidate requirements
 
 - Encoding and checksum fusion: identify a measured extra HBM pass, preserve the
