@@ -255,6 +255,7 @@ Release smoke validates the final installed package, not the source checkout. It
 After installing the candidate wheel in the pinned engine environment, run:
 
 ```bash
+mkdir -p /var/tmp/orbitkv-bench
 .venv/vllm-release/bin/python -m pytest -m release_smoke \
   python/tests/release/test_installed_wheel.py -k vllm \
   --model /workspace/models/qwen3-8b \

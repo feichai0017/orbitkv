@@ -68,9 +68,10 @@ def service(command, url, env, directory, name):
             pytest.fail(f"{name} startup timed out: {log_path.read_text()[-8000:]}")
         yield
     finally:
+        stop_started = time.monotonic()
         with contextlib.suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGTERM)
-        deadline = time.monotonic() + 30
+            process.send_signal(signal.SIGTERM)
+        deadline = stop_started + 90
         while time.monotonic() < deadline:
             process.poll()
             if not process_group_members(process.pid):
@@ -85,6 +86,8 @@ def service(command, url, env, directory, name):
             "command": command,
             "pid": process.pid,
             "exit_code": process.returncode,
+            "sigterm_target": process.pid,
+            "shutdown_seconds": time.monotonic() - stop_started,
             "forced_kill": bool(remaining),
             "before_forced_kill": remaining,
             "remaining_processes": process_group_members(process.pid),
