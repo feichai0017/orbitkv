@@ -151,7 +151,9 @@ class VLLMServer:
             linear_attention is not None if self.prefix_caching is None else self.prefix_caching
         )
         cmd = [
-            "vllm",
+            sys.executable,
+            "-m",
+            "vllm.entrypoints.cli.main",
             "serve",
             self.model,
             "--port",

@@ -1,6 +1,7 @@
 """Installed-package provenance for release gates; runnable in isolated Python."""
 
 import base64
+import csv
 import hashlib
 import importlib
 import importlib.metadata as metadata
@@ -48,11 +49,23 @@ def distribution_snapshot(distribution, package: str) -> dict:
     assert not direct_url.get("dir_info", {}).get("editable", False), direct_url
     files = distribution.files
     assert files, f"{distribution.metadata['Name']} has no installed RECORD"
+    directories = {
+        Path(distribution.locate_file(row[0])).resolve()
+        for row in csv.reader((distribution.read_text("RECORD") or "").splitlines())
+        if row[0].endswith("/")
+    }
     hashes = {}
     recorded = set()
     for item in files:
         path = Path(distribution.locate_file(item)).resolve()
         recorded.add(path)
+        if path in directories:
+            assert path.is_dir(), f"Missing installed directory: {path}"
+            assert item.size == 0, f"Nonempty directory RECORD: {item}"
+            if item.hash:
+                digest = base64.urlsafe_b64encode(hashlib.new(item.hash.mode, b"").digest())
+                assert digest.rstrip(b"=").decode() == item.hash.value, item
+            continue
         if item.hash is None and item.name != "RECORD":
             assert path.suffix not in {".py", ".so"}, f"Runtime file has no RECORD hash: {path}"
             continue

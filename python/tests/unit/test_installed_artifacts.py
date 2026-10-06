@@ -24,6 +24,9 @@ def installed_distribution(tmp_path):
         data = path.read_bytes()
         digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
         records.append((str(path.relative_to(tmp_path)), f"sha256={digest}", len(data)))
+    (package / "empty").mkdir()
+    empty_digest = base64.urlsafe_b64encode(hashlib.sha256(b"").digest()).rstrip(b"=").decode()
+    records.append(("sample/empty/", f"sha256={empty_digest}", 0))
     records.append(("sample-1.0.dist-info/RECORD", "", ""))
     with (info / "RECORD").open("w", newline="") as stream:
         csv.writer(stream).writerows(records)
@@ -32,7 +35,16 @@ def installed_distribution(tmp_path):
 
 @pytest.mark.parametrize(
     "change",
-    ["unchanged", "modified", "missing", "added", "editable", "unhashed", "missing_record"],
+    [
+        "unchanged",
+        "modified",
+        "missing",
+        "added",
+        "editable",
+        "unhashed",
+        "missing_record",
+        "missing_directory",
+    ],
 )
 def test_installed_record_integrity(installed_distribution, change):
     package = installed_distribution.locate_file("sample")
@@ -55,6 +67,8 @@ def test_installed_record_integrity(installed_distribution, change):
             csv.writer(stream).writerows(rows)
     elif change == "missing_record":
         installed_distribution.locate_file("sample-1.0.dist-info/RECORD").unlink()
+    elif change == "missing_directory":
+        (package / "empty").rmdir()
     if change == "unchanged":
         assert distribution_snapshot(installed_distribution, "sample") == expected
     else:
