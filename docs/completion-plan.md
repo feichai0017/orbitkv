@@ -448,10 +448,13 @@ frozen 5% DRAM/SSD isolation gates fail. Depends on:** accepted protocol impleme
 scoped claims. This carries forward S2's remaining performance, capacity, serving
 and cross-host obligations; it does not replace missing evidence with a new name.
 
-**Current next delivery:** independently review and freeze the S2.10b follow-up
-observer-isolation experiment described below. The completed diagnosis does not
-authorize a production repair, cannot replace the accepted failed cohort and
-cannot start another formal qualification automatically.
+**Current next delivery:** implement, smoke and independently review the frozen
+S2.10b observer process-isolation experiment described below. This substage is
+limited to the benchmark harness, fixed experiment inputs and two short A100
+tool smokes; the eight-cell formal matrix remains gated on a separate launch
+review. The completed diagnosis does not authorize a production repair, cannot
+replace the accepted failed cohort and cannot start another formal qualification
+automatically.
 Physical cross-host cache/HA, independent etcd failure domains and native GDS stay
 qualification blocked on the hardware listed below. The bounded
 fixture pacing/invalid-run cleanup repair has independent acceptance. Merged-artifact
@@ -739,8 +742,8 @@ the diagnostic archive and **blocks any production repair**. The result is
 consistent with diagnostic Python observer/return-boundary interference, not
 evidence of a Manager, metadata-lock, completion-notification or SSD-owner defect.
 
-The proposed next experiment, requiring separate review and authorization, is a
-fixed-phase, SSD pressure-only ABBA crossover comparing the current 25 ms
+The authorized follow-up tool substage is a fixed-phase, SSD pressure-only ABBA
+crossover comparing the current 25 ms
 in-process `_owner_status` observer with the identical polling workload in a
 separate helper process. Keep 50 warm-up plus 1,000 measured operations, 1 Hz
 foreground, 17 ms pressure, payload, budgets, correctness and drain unchanged.
@@ -749,6 +752,13 @@ It must show that externalizing the observer collapses
 changing native channel stages or pressure exposure. A positive result would
 authorize a benchmark-harness repair only, followed by a separately frozen
 isolation qualification; it would not authorize a production-path change.
+The helper is a bounded benchmark child with explicit
+ready/start/complete/stop/exit/error records; it imports no GPU/native runtime,
+owns no cache client or tensor and shares the same absolute monotonic slots,
+HTTP request/parsing and finite JSONL recording path as the in-process condition.
+Any helper failure, sample-count/digest mismatch or phase/cadence violation makes
+the cell invalid. Only one 10-warm-up/20-measured smoke per condition may run
+before independent review; those smokes establish tool validity only.
 
 The pilot review and formal diagnostic matrix are complete. Any follow-up must
 again use independent runs, at least 1,000 measured operations per p99 run,

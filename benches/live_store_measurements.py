@@ -172,14 +172,21 @@ def _context_switch_delta(before, after):
 
 
 def _pressure_exposure(
-    output, condition, expected_rounds, pressure_cadence_ms, foreground_cadence_ms, shift
+    output,
+    condition,
+    expected_rounds,
+    pressure_cadence_ms,
+    foreground_cadence_ms,
+    shift,
+    observer_sample_ms=None,
 ):
     def rows(name):
         with (output / name).open() as file:
             for line in file:
                 yield json.loads(line)
 
-    foreground = [row for row in rows("samples.jsonl") if row["measured"]]
+    all_foreground = list(rows("samples.jsonl"))
+    foreground = [row for row in all_foreground if row["measured"]]
     bursts = []
     actual = []
     scheduling_lag = []
@@ -202,14 +209,23 @@ def _pressure_exposure(
     ]
     installed = {}
     poll_ms, poll_gaps, sampler_cpu = [], [], 0
+    observer_scheduling_deviation_ms = []
+    observer_response_bytes = []
+    scheduled_poll_starts = []
+    observer_rows = []
     previous_poll = None
     for row in rows("observer-samples.jsonl"):
+        observer_rows.append(row)
         owner = row["owner"]
         key = (owner["owner"], owner["view_id"], owner["applied_sequence"])
         timestamp = owner["installed_mono_ns"]
         assert installed.setdefault(key, timestamp) == timestamp
         poll_ms.append((row["poll_end_mono_ns"] - row["poll_start_mono_ns"]) / 1e6)
         sampler_cpu += row["sampler_cpu_ns"]
+        if "scheduled_poll_start_mono_ns" in row:
+            scheduled_poll_starts.append(row["scheduled_poll_start_mono_ns"])
+            observer_scheduling_deviation_ms.append(row["scheduling_deviation_ns"] / 1e6)
+            observer_response_bytes.append(row["response_bytes"])
         if previous_poll is not None:
             poll_gaps.append((row["poll_start_mono_ns"] - previous_poll) / 1e6)
         previous_poll = row["poll_start_mono_ns"]
@@ -244,6 +260,28 @@ def _pressure_exposure(
     publication_gaps = [
         (later[0] - earlier[0]) / 1e6 for earlier, later in zip(bursts, bursts[1:], strict=False)
     ]
+    foreground_scheduling_deviation_ms = [
+        row["foreground_start_deviation_ns"] / 1e6
+        for row in all_foreground
+        if "foreground_start_deviation_ns" in row
+    ]
+    scheduled_poll_gaps = [
+        (later - earlier) / 1e6
+        for earlier, later in zip(scheduled_poll_starts, scheduled_poll_starts[1:], strict=False)
+    ]
+    phase = None
+    if scheduled_poll_starts and all_foreground:
+        scheduled_phase_ms = (
+            all_foreground[0]["scheduled_foreground_start_mono_ns"] - scheduled_poll_starts[0]
+        ) / 1e6
+        actual_phase_ms = (
+            all_foreground[0]["round_start_mono_ns"] - observer_rows[0]["poll_start_mono_ns"]
+        ) / 1e6
+        phase = {
+            "scheduled_ms": scheduled_phase_ms,
+            "actual_ms": actual_phase_ms,
+            "deviation_ms": actual_phase_ms - scheduled_phase_ms,
+        }
     report = {
         "condition": condition,
         "publication_lateness_upper_ms": _summary(publication_lag),
@@ -256,7 +294,13 @@ def _pressure_exposure(
         "minimum_source_interval_ms": min(interval_ms),
         "observer_poll_ms": _summary(poll_ms),
         "observer_poll_gap_ms": _summary(poll_gaps),
+        "observer_scheduled_gap_ms": _summary(scheduled_poll_gaps),
+        "observer_scheduling_deviation_ms": _summary(observer_scheduling_deviation_ms),
+        "observer_response_bytes": _summary(observer_response_bytes),
+        "observer_poll_count": len(observer_rows),
         "observer_sampler_cpu_ms": sampler_cpu / 1e6,
+        "foreground_scheduling_deviation_ms": _summary(foreground_scheduling_deviation_ms),
+        "observer_foreground_phase": phase,
         "observed_unique_installs": len(install_times),
         "offered_phase_quarters": sorted(phases),
         "windows_without_observed_install": windows_without_install,
@@ -269,6 +313,12 @@ def _pressure_exposure(
     assert max(interval_ms) <= 100 and min(interval_ms) >= pressure_cadence_ms / 2, report
     assert max(scheduling_lag) <= 100, report
     assert max(poll_gaps) <= 100, report
+    if scheduled_poll_gaps:
+        assert observer_sample_ms is not None, report
+        assert all(gap == observer_sample_ms for gap in scheduled_poll_gaps), report
+        assert max(observer_scheduling_deviation_ms) <= 100, report
+        assert max(foreground_scheduling_deviation_ms) <= 100, report
+        assert abs(phase["deviation_ms"]) <= 100, report
     if condition == "pressure":
         assert max(publication_lag) <= 100, report
         assert max(publication_gaps) <= 100 and min(publication_gaps) >= pressure_cadence_ms / 2, (

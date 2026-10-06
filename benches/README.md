@@ -15,6 +15,8 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | `metadata.py` | Explicit full-Manager 0/2/5 ms metadata coalescing comparison using frozen binaries |
 | `live_store_capacity.py` | S2.10 1/4/16-owner ordinary install visibility plus separately named serial/concurrent barrier diagnostics |
 | `live_store_isolation.py` | Matched full-Manager local save/query/restore under quiet or metadata-only inventory pressure |
+| `observer_polling.py` | Bounded fixed-phase owner-status polling shared by the in-process and helper-process observer conditions |
+| `analyze_observer_isolation.py` | Independent-pair A/B summaries for the diagnostic observer process-isolation crossover |
 | `summarize_live_store_isolation.py` | Independent-run-pair ratios, absolute deltas and paired-run confidence intervals |
 | `summarize_live_store_diagnostics.py` | Same-host channel/Manager/insert/SSD stage decomposition for bounded S2.10a runs |
 | `single_node.py` | Fixed-capacity cold, HBM-hit, and post-pressure experiment |
@@ -105,6 +107,41 @@ request ID. Thread resource snapshots include schedstat when Linux exposes it.
 Reaching `diagnostic_timeline_limit`, missing a required stage or comparing clocks
 outside the recorded host domain invalidates the run. SSD queue/durability stages
 remain after save return and are never folded into `manager_save_submit_ms`.
+
+The S2.10b observer follow-up changes only where the same owner-status HTTP
+poll, JSON parse and bounded JSONL record execute. `in-process` uses a Python
+thread in the foreground harness; `helper-process` uses a child that imports no
+CUDA, Torch or OrbitKV module. Both modes use one future monotonic epoch, fixed
+observer/foreground phase offsets, every scheduled 25 ms slot without skipping,
+and the same finite poll count. The ready/start/complete/stop/exit/error records
+are mandatory: a helper error, digest mismatch or missing sample invalidates the
+cell. A short tool smoke uses the formal cadence and pressure but is not a
+performance result:
+
+```bash
+python -m benches.live_store_isolation \
+  --condition pressure --medium ssd --seed observer-smoke-a \
+  --warmup-rounds 10 --samples 20 --cadence-ms 1000 --order-index 0 \
+  --observer-mode in-process --observer-sample-ms 25 \
+  --observer-phase-offset-ms 0 --foreground-phase-offset-ms 12.5 \
+  --diagnostic-timeline-limit 32768 \
+  --output /external/s2-10b-observer/smoke-a
+
+python -m benches.live_store_isolation \
+  --condition pressure --medium ssd --seed observer-smoke-b \
+  --warmup-rounds 10 --samples 20 --cadence-ms 1000 --order-index 1 \
+  --observer-mode helper-process --observer-sample-ms 25 \
+  --observer-phase-offset-ms 0 --foreground-phase-offset-ms 12.5 \
+  --diagnostic-timeline-limit 32768 \
+  --output /external/s2-10b-observer/smoke-b
+```
+
+The formal A/B run is a separately reviewed, pressure-only SSD cohort. Do not
+pool request samples or use a smoke result for causality. Run
+`benches.analyze_observer_isolation` only against the frozen eight-cell settings
+and complete raw cells; its paired bootstrap unit is the independent A/B pair.
+A positive result can justify a benchmark-harness change only and cannot
+reclassify the failed isolation qualification.
 
 ## CPU codec benchmark
 
