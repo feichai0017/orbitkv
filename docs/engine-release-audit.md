@@ -13,9 +13,11 @@ The current upgrade freezes official vLLM
 [0.31.0 / db9527a4](https://github.com/vllm-project/vllm/tree/db9527a46873454610df6dbedf79a36d6bf1a7f6)
 and SGLang
 [0.5.21 / e00930c5](https://github.com/sgl-project/sglang/tree/e00930c5489053f26d86b179cee0d087f846acbb).
-Fifteen vLLM and 43 SGLang released callback/recovery tests pass on A100 with the
-existing frozen wheel in independent official-upgrade environments. The final
-wheel and model gates are separate; historical graphs/P/D are not inherited.
+The rebuilt complete wheel passes all four A100 dense eager installed-package
+DRAM/io_uring cells, 15 vLLM and 43 SGLang released callback/recovery tests,
+the standard vLLM model gate and two SGLang GPU restart gates. Independent
+acceptance remains open; historical P/D, hybrid and topology claims are not
+inherited. See S5.1 for the preserved compiler-cache failure and exact scope.
 
 The remaining interface gaps still exist in these exact release sources:
 

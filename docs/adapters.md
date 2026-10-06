@@ -5,7 +5,8 @@ request lifecycles. Start with the [single-node quickstart](single-node.md).
 The [completion plan](completion-plan.md#release-baseline-and-reference-policy)
 records release targets and upgrade gates. The package and source pins are
 vLLM **0.31.0** and SGLang **0.5.21**. Released callback contracts pass on A100;
-final installed-wheel upgrade and independent acceptance remain open. Historical
+all four installed-wheel dense eager DRAM/io_uring cells pass locally;
+independent acceptance and broader qualification remain open. Historical
 0.30.0 eager/graph evidence does not qualify 0.31.0. Historical 0.29.0 model/topology evidence is not
 automatically transferred to the new release.
 

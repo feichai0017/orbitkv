@@ -950,14 +950,25 @@ integration contracts from [the adapter guide](adapters.md#lmcache-and-flexkv-re
 
 ### S5.1 — Release and interface audit
 
-**2026-10-06 upgrade: vLLM 0.31.0 / SGLang 0.5.21 implemented; qualification open.**
-Both are official released sources, with aligned dependency and submodule pins.
-The frozen 0.30.0/0.5.20 wheel consumes 15 vLLM and 43 SGLang released callback
-checks in independent official-upgrade environments; those checks do not replace
-new final-wheel serving qualification. Integrate only the accepted main Manager
-lifecycle baseline, rebuild the complete wheel and run dense TP=1/PP=1 eager
-DRAM/io_uring cells with installed RECORD and normal-exit checks. Preserve older
-cohorts; do not transfer their graphs, P/D or hybrid claims to a new release.
+**2026-10-06 upgrade: vLLM 0.31.0 / SGLang 0.5.21 implemented; independent acceptance open.**
+Both are official released sources, with aligned dependency, probe and submodule
+pins checked by CI. The complete CUDA 13 wheel integrates only the accepted main
+Manager baseline `3af8022e`. Its 27 packaged Python source/stub files match the
+checkout. On A100, all four Qwen3-8B installed-wheel dense TP=1/PP=1 eager
+DRAM/io_uring cells pass cold/native-HBM/full/partial reuse, RECORD integrity and
+normal-exit gates. Each full and partial restore loads 113,246,208 bytes; all 16
+service processes exit zero without forced cleanup. Both SSD cells prove actual
+io_uring reads after DRAM eviction. The same final wheel passes the standard
+vLLM model gate (six tests and one dense-model recurrent skip), SGLang direct
+GPU restart recovery (two tests), and released lifecycle selections (15 vLLM,
+43 SGLang). The model gate uses the release's default graph selection; this is
+not a full-graph-specific, pressure or hybrid qualification. A first native
+baseline failed in shared-cache Triton compilation with `Unknown key: 'cubin'`;
+the same command passes with new per-run compiler caches. The failure remains
+preserved and the former shared cache is not certified. Final GPU use is zero
+and the owned-process postflight is empty.
+Preserve older cohorts; do not transfer their P/D, hybrid or topology claims to
+a new release. Independent review and broader S5 qualification remain open.
 Evidence: `/root/orbitkv-artifacts/s5-release-upgrade-20261006/`.
 
 The new release audit still finds V2 restore after recurrent preprocessing,

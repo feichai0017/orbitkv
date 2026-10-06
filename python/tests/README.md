@@ -146,8 +146,8 @@ run GPU gates sequentially on the same host.
 
 ## vLLM Correctness E2E Gate
 
-Use the vLLM `0.29.0` release environment described in
-[`python/README.md`](../README.md). The SGLang `0.5.20` environment is separate.
+Use the vLLM `0.31.0` release environment described in
+[`python/README.md`](../README.md). The SGLang `0.5.21` environment is separate.
 The default `uv run --group test` environment intentionally has no GPU framework.
 
 ```bash
@@ -158,6 +158,20 @@ cd python
   --pipeline-parallel-size 1 \
   --max-model-len 4096
 ```
+
+For release upgrades, use a new external cache directory for each run and
+record it with the command:
+
+```bash
+export ORBITKV_E2E_CACHE_ROOT=/var/tmp/orbitkv-e2e/run-001/cache
+export TORCHINDUCTOR_CACHE_DIR="$ORBITKV_E2E_CACHE_ROOT/inductor"
+export TRITON_CACHE_DIR="$ORBITKV_E2E_CACHE_ROOT/triton"
+export VLLM_CACHE_ROOT="$ORBITKV_E2E_CACHE_ROOT/vllm"
+```
+
+Preserve shared-cache failures before retrying with these isolated directories.
+A successful isolated run does not repair or qualify an older compiler cache.
+The installed-wheel gate already assigns independent cache paths per cell.
 
 This is the main correctness E2E. It runs the same ordered prompt plan with
 vLLM native prefix caching and with OrbitKV, then requires exact completion
