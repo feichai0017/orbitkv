@@ -11,8 +11,8 @@ Official latest non-prerelease versions were checked on **2026-10-06**:
 
 | Project | Reference release / commit | OrbitKV qualification |
 | --- | --- | --- |
-| [vLLM](https://github.com/vllm-project/vllm/releases/tag/v0.31.0) | `v0.31.0` / `db9527a46873454610df6dbedf79a36d6bf1a7f6` | Dependency/submodule upgraded after 15 released callback/recovery checks pass. Final installed-wheel and independent acceptance remain open; historical 0.30.0 graphs are not inherited. |
-| [SGLang](https://github.com/sgl-project/sglang/releases/tag/v0.5.21) | `v0.5.21` / `e00930c5489053f26d86b179cee0d087f846acbb` | Dependency/submodule upgraded after 43 released event/recovery checks pass. Final installed-wheel and independent acceptance remain open. |
+| [vLLM](https://github.com/vllm-project/vllm/releases/tag/v0.31.0) | `v0.31.0` / `db9527a46873454610df6dbedf79a36d6bf1a7f6` | Aligned official release pins; final installed-wheel DRAM/io_uring and model gates pass locally, including 15 released callback/recovery checks. Independent acceptance and broader profiles remain open; historical 0.30.0 graphs are not inherited. |
+| [SGLang](https://github.com/sgl-project/sglang/releases/tag/v0.5.21) | `v0.5.21` / `e00930c5489053f26d86b179cee0d087f846acbb` | Aligned official release pins; final installed-wheel DRAM/io_uring, direct GPU restart and 43 released event/recovery checks pass locally. Independent acceptance and public lifecycle/deployment gates remain open. |
 | [LMCache](https://github.com/LMCache/LMCache/releases/tag/v0.5.5) | `v0.5.5` / `05a013b29da78cf2321b9b46ec5039dde2fb0bb0` | Integration and matched-comparison reference, not evidence of OrbitKV support. |
 
 At the start of an engine upgrade, recheck official releases, record the selected
@@ -39,7 +39,7 @@ record submitted, merged and released as different states.
 | S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. Independent final review accepts the second frozen S2.10 same-host formal handoff: all 25 cells are valid and five 16-owner ordinary visibility runs pass 50 ms, while both DRAM and SSD isolation fail the frozen per-pair/CI contract. S2.10b lifecycle, low-overhead observation and 14-cell diagnosis are complete. Independent review accepts the diagnostic archive but blocks a production repair: the dominant measured tail is after native return at the Python observer boundary, while no repeatable Manager, metadata-lock, completion-notification or SSD-owner shift is established. The supported envelope stays four owners and all prior formal campaigns remain immutable. Physical cross-host cache/HA, independent etcd failure domains and native GDS are qualification blocked on missing hardware; final serving, RDMA and S3-dependent cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
-| S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.31.0/0.5.21 upgrade passes released callback contracts. Final new-wheel qualification, independent acceptance and public lifecycle/deployment gates remain open. |
+| S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.31.0/0.5.21 final wheel passes ordinary-cache installed/model/lifecycle gates locally. Independent acceptance, public lifecycle implementation and broader deployment qualification remain open. |
 | S6 | Partial: observations/limited choices exist; unified executed decisions remain open. |
 | S7 | Open: consumed retention/checkpoint compiler beyond recovery validation. |
 | S8 | Partial: existing wheel workflow; final images, artifact gates and publication remain open. |
@@ -71,7 +71,7 @@ Cross-host qualification remains open until actual failure-domain evidence exist
 | Compute overlap | Qualified raw single-part layer/group readiness; coarse dependencies where required | SSD/codec pipelines and legal multipart overlap |
 | Distributed discovery | Local `GlobalIndex`, bounded scoped owner streams, explicit coverage and independently accepted same-host live-store correctness; no directory RPCs | 5% isolation and 16-owner performance remediation, plus separate host-failure domains |
 | Remote recovery | Source authorization, TENT READ, release reconciliation, peer DRAM/SSD | Permanent requester loss and transfer/partition fault qualification |
-| Engine support | vLLM 0.30.0 local recovery under qualification; SGLang 0.5.20 unchanged; historical 0.29.0 local recovery and replica-sharing evidence retained | New-release model/topology requalification; multi-instance, container, P/D and TP/PP cells |
+| Engine support | Official vLLM 0.31.0 and SGLang 0.5.21 ordinary-cache installed/model gates pass locally; historical release cohorts remain unchanged | Independent acceptance, public lifecycle contracts, multi-instance, container, P/D and TP/PP cells |
 | Cost decisions | Resource-scoped observations, shadow estimates and guarded experimental peer choices | One consumed planner for complete routes, legal boundaries and P/D authority |
 | Hybrid semantics | Declared recovery contracts and compiled page demands | General read-set/retention IR, checkpoint placement and semantic reclamation |
 | Packaging | Wheel construction and installed-artifact gates already exist | New final artifact requalification, independent service images and publication |
