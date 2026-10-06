@@ -1,7 +1,7 @@
 # Released engine interface audit
 
-The runtime pins are official **vLLM 0.30.0** (`ced6857afa0ea7b2e3f0846a62e1394e90f15607`)
-and **SGLang 0.5.20** (`94602c9c2b7cbdb8efd5c52802dac6a1c180089e`). Package extras
+The runtime pins are official **vLLM 0.31.0** (`db9527a46873454610df6dbedf79a36d6bf1a7f6`)
+and **SGLang 0.5.21** (`e00930c5489053f26d86b179cee0d087f846acbb`). Package extras
 and source submodules agree. The [completion plan](completion-plan.md#s5--released-engine-integration-and-upstream-contributions)
 is the execution queue; this document records consumed contracts and restrictions.
 The earlier reviewed audit is preserved at
@@ -71,7 +71,8 @@ requires released ordering and atomic state visibility plus model/fault gates.
 ## Remaining Hook contracts
 
 SGLang's public Hook registry does not make its string targets stable APIs.
-These are explicitly version-coupled to 0.5.20 and remain subject to GPU gates:
+These string targets are consumed in 0.5.21 and remain subject to GPU gates.
+The older 0.5.20 links below preserve the original interface research:
 
 | Internal target or bridge | What it protects | Official replacement / disposition | Removal gate |
 | --- | --- | --- | --- |

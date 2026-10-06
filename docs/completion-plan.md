@@ -974,7 +974,8 @@ ACK. Keep their dependent profiles closed or experimental. Dynamic LoRA is
 already rejected by both adapters; live-weight invalidation and cross-host TP
 query coordination remain implementation work, not hardware-only gates.
 
-**Historical vLLM 0.30.0 upgrade record; independent review remains open.** Dependency and submodule use the exact release above. Cache and
+**Historical vLLM 0.30.0 upgrade record; independent review remains open.**
+The following preserves the earlier 0.30.0 delivery. Cache and
 P/D workers return native `KVConnectorTransferResults`; failed receive and
 finished receive share one snapshot, replacing `PdWorkerMetadata` and its
 duplicate queue. Best-effort cache publication explicitly returns false for
@@ -1009,7 +1010,7 @@ Evidence: `/root/orbitkv-artifacts/engine-native-lifecycle-20260930/vllm-0.30/`.
 Previous 0.29.0 model, topology and performance measurements remain historical.
 This delivery does not close S5.3/S5.4 or establish a performance advantage.
 
-- Audit vLLM 0.30.0 and SGLang 0.5.20 by exact release commits above, and LMCache
+- Audit vLLM 0.31.0 and SGLang 0.5.21 by exact release commits above, and LMCache
   0.5.5 against those interfaces. Check recipe prerequisites in release source;
   do not assume a documented upstream PR is included in either engine release.
 - Inventory every public callback, internal Hook, monkey patch, local request
@@ -1210,7 +1211,8 @@ continues to use TENT. There is no maintained engine fork runtime.
   cache and native P/D owns incoming writes. Test other cache-selection orders
   separately. Python owns engine callbacks/layout/events, Rust owns cache
   transfers, batching, leases and resource lifetime.
-- Combine accepted S2.8 only; do not absorb unaccepted S2.9. Freeze the new wheel,
+- Integrate the accepted main Manager baseline; keep pending Traex substages
+  separate. Freeze the new wheel,
   run official-engine cold/warm/restart/failure DRAM/SSD and shared-cache gates,
   and verify installed engine files before/after.
 - Require real native P/D output, cancellation, preemption/retraction, restart,
