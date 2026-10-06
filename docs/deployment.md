@@ -210,7 +210,7 @@ Deployment profiles follow LMCache's independent service, P2P sharing and
 The engine, cache tier and request-handoff role are separate choices. An upstream
 mode is a reference topology, not proof that OrbitKV supports its engines,
 parallelism, isolation or failure recovery. Keep those claims tied to the
-qualification table above and the pinned vLLM 0.30.0 / SGLang 0.5.20 contracts.
+qualification table above and the pinned vLLM 0.31.0 / SGLang 0.5.21 contracts.
 Historical 0.29.0 topology evidence requires requalification after the upgrade.
 
 
@@ -218,8 +218,8 @@ P/D moves KV for the same request from prefill to decode. Remote caching finds
 reusable KV from an earlier request. These are independent paths; see
 [P/D and NIXL](pd.md) for the ownership and control-flow distinction.
 
-The [native P/D candidate](pd.md) uses official vLLM 0.30.0 NIXL/MultiConnector
-and official SGLang 0.5.20 disaggregation, with independent OrbitKV caches and
+The [native P/D candidate](pd.md) uses official vLLM 0.31.0 NIXL/MultiConnector
+and official SGLang 0.5.21 disaggregation, with independent OrbitKV caches and
 upstream routers. The [local vLLM launcher](../scripts/run_pd_local.sh) uses
 read/write cache on P and save-only cache on D. Ordinary cache serving does not
 require a P/D transport or router. Lifecycle fault qualification remains separate.

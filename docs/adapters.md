@@ -4,9 +4,9 @@ OrbitKV integrates external cache recovery with engine-owned GPU pages and
 request lifecycles. Start with the [single-node quickstart](single-node.md).
 The [completion plan](completion-plan.md#release-baseline-and-reference-policy)
 records release targets and upgrade gates. The package and source pins are
-vLLM **0.30.0** and SGLang **0.5.20**. The vLLM upgrade has local A100
-DRAM/SSD and eager/graph evidence; independent acceptance and broader deployment
-qualification remain open. Historical 0.29.0 model/topology evidence is not
+vLLM **0.31.0** and SGLang **0.5.21**. Released callback contracts pass on A100;
+final installed-wheel upgrade and independent acceptance remain open. Historical
+0.30.0 eager/graph evidence does not qualify 0.31.0. Historical 0.29.0 model/topology evidence is not
 automatically transferred to the new release.
 
 The [installed-wheel gate](releases.md#validate-before-publishing) checks the
@@ -69,7 +69,7 @@ allocated pages to `WorkerAdapter` in `worker.py`; the worker registers tensors,
 completion through the pinned engine contract. `layout.py` and `metadata.py`
 describe actual groups and intents rather than a second cache scheduler.
 
-All worker roles implement 0.30.0's `get_transfer_results` directly. P/D failure
+All worker roles implement the released engine's `get_transfer_results` directly. P/D failure
 and receive completion are drained together into `KVConnectorTransferResults`;
 the scheduler consumes native `failed_recving`, including through MultiConnector.
 There is no P/D failure-metadata class or duplicate failure queue. Ordinary cache

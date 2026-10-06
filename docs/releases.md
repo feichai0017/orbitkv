@@ -12,7 +12,7 @@ how to validate a candidate without uploading it to PyPI.
 | `orbitkv-llm-cu13` | CUDA 13 | Linux x86_64 and aarch64, CPython 3.10–3.14 |
 
 Install one CUDA variant per environment; both provide the `orbitkv` import and
-`orbitkv-cache-manager` command. Engine extras pin vLLM 0.30.0 or SGLang 0.5.20.
+`orbitkv-cache-manager` command. Engine extras pin vLLM 0.31.0 or SGLang 0.5.21.
 Use separate engine environments. Build-matrix coverage does not establish
 that every engine/GPU combination works on every Python version; serving
 qualification uses Python 3.11 on H20 and A100, with each result tied to its

@@ -26,11 +26,11 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
 - vLLM uses the KV Connector contract; SGLang uses UnifiedRadixCache and the
   external linker. Preserve valid native HBM hits without external synchronous
   lookup. Keep unselected backend imports free of native initialization.
-- vLLM 0.30.0 workers return `KVConnectorTransferResults` directly. P/D failed
+- vLLM 0.31.0 workers return `KVConnectorTransferResults` directly. P/D failed
   receives must also be finished receives in the same poll; do not restore a
   custom worker-metadata failure queue. Ordinary cache delivery is best effort,
   while a P/D producer retains the native reliable-delivery requirement.
-- SGLang 0.5.20 cancellation already reaches the external linker through
+- SGLang 0.5.21 cancellation already reaches the external linker through
   `BasePrefixCache.finish(ABORT)` and `UnifiedRadixCache.release_aborted_request`.
   Keep cancellation/drain in that consumed lifecycle; do not restore a duplicate
   private Scheduler abort Hook. Queue preparation is opt-in; fork P/D observation
@@ -41,12 +41,12 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
 - The candidate profile reads/writes cache on P and only saves on D. Native P/D
   owns incoming destinations; cache retains completed state until its own drain.
   Preserve reliable P/D delivery and release unselected cache query leases.
-- Official vLLM 0.30.0 requires V1 (`VLLM_USE_V2_MODEL_RUNNER=0`) and one attention
+- Official vLLM 0.31.0 requires V1 (`VLLM_USE_V2_MODEL_RUNNER=0`) and one attention
   cache group. Reject V2/recurrent profiles before connection; the runner and
   native-prefix monkey patches are removed. Reopen only after consumed released
   ordering and atomic state hand-off pass GPU/model gates.
 - SGLang native P/D candidate enables released deferred KV release on both P
-  and D, but 0.5.20 still releases on timeout without a full drain ACK. Keep
+  and D, but 0.5.21 still releases on timeout without a full drain ACK. Keep
   transfer cancellation, peer-loss and delayed-ACK page reuse unqualified;
   ordinary linker cancellation is a separate cache-owned contract.
 - Run native model composition and lifetime gates separately. Output/restart
@@ -55,7 +55,7 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
 
 ## Replace internal coupling safely
 
-Audit every remaining Hook against `docs/engine-release-audit.md`. SGLang 0.5.20
+Audit every remaining Hook against `docs/engine-release-audit.md`. SGLang 0.5.21
 captures graphs before the tree-cache factory; preserve pre-capture events until
 a safe released callback exists. Its linker lookup lacks pending tickets, so
 pending-query admission remains a guarded internal Hook; queue preparation is

@@ -12,7 +12,11 @@ import sys
 import sysconfig
 from pathlib import Path
 
-ENGINE_VERSIONS = {"vllm": "0.30.0", "sglang": "0.5.20"}
+ENGINE_VERSIONS = {"vllm": "0.31.0", "sglang": "0.5.21"}
+ENGINE_COMMITS = {
+    "vllm": "db9527a46873454610df6dbedf79a36d6bf1a7f6",
+    "sglang": "e00930c5489053f26d86b179cee0d087f846acbb",
+}
 NATIVE_LIBRARIES = {"libtent_shared.so", "libmooncake_common.so", "libasio.so"}
 
 

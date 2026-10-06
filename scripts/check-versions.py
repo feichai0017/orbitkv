@@ -2,15 +2,67 @@
 """Require one version across Rust, Python, release tooling and an optional tag."""
 
 import argparse
+import ast
 import re
+import subprocess
 from pathlib import Path
+
+
+def check_engine_releases(root: Path) -> None:
+    helper = root / "python/tests/support/installed_artifacts.py"
+    constants = {}
+    for node in ast.parse(helper.read_text()).body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id in {
+                    "ENGINE_VERSIONS",
+                    "ENGINE_COMMITS",
+                }:
+                    constants[target.id] = ast.literal_eval(node.value)
+    versions = constants.get("ENGINE_VERSIONS", {})
+    commits = constants.get("ENGINE_COMMITS", {})
+    if set(versions) != {"vllm", "sglang"} or set(commits) != set(versions):
+        raise SystemExit(
+            "engine release gate must declare versions and commits for both engines"
+        )
+    manifest = (root / "python/pyproject.toml").read_text()
+    for engine, version in versions.items():
+        extra = re.findall(
+            rf'^{engine} = \["{engine}==([^"\]]+)"\]$', manifest, re.MULTILINE
+        )
+        if extra != [version]:
+            raise SystemExit(
+                f"{engine} extra {extra!r} differs from release gate {version!r}"
+            )
+        commit = commits[engine]
+        if re.fullmatch(r"[0-9a-f]{40}", commit) is None:
+            raise SystemExit(f"invalid {engine} release commit: {commit!r}")
+        entry = subprocess.check_output(
+            ["git", "ls-files", "--stage", f"third-party/{engine}"], cwd=root, text=True
+        ).split()
+        if (
+            len(entry) != 4
+            or entry[0] != "160000"
+            or entry[1] != commit
+            or entry[2] != "0"
+        ):
+            raise SystemExit(
+                f"{engine} gitlink differs from release gate {commit}: {entry}"
+            )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tag", help="Release tag, including the v prefix")
+    parser.add_argument(
+        "--engines",
+        action="store_true",
+        help="Check engine extras, release gate and gitlinks",
+    )
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
+    if args.engines:
+        check_engine_releases(root)
     versions = {}
     for path, section in (
         ("Cargo.toml", "workspace.package"),

@@ -7,12 +7,12 @@ the reviewer independently checks its consumed path, tests and evidence.
 
 ## Release baseline and reference policy
 
-Official latest non-prerelease versions were checked on **2026-09-30**:
+Official latest non-prerelease versions were checked on **2026-10-06**:
 
 | Project | Reference release / commit | OrbitKV qualification |
 | --- | --- | --- |
-| [vLLM](https://github.com/vllm-project/vllm/releases/tag/v0.30.0) | `v0.30.0` / `ced6857afa0ea7b2e3f0846a62e1394e90f15607` | Dependency/submodule upgraded. A100 Qwen3-8B DRAM/SSD and eager/graph gates pass locally; independent upgrade acceptance and broader model/topology qualification remain open. |
-| [SGLang](https://github.com/sgl-project/sglang/releases/tag/v0.5.20) | `v0.5.20` / `94602c9c2b7cbdb8efd5c52802dac6a1c180089e` | Current dependency/submodule and recorded serving baseline. |
+| [vLLM](https://github.com/vllm-project/vllm/releases/tag/v0.31.0) | `v0.31.0` / `db9527a46873454610df6dbedf79a36d6bf1a7f6` | Dependency/submodule upgraded after 15 released callback/recovery checks pass. Final installed-wheel and independent acceptance remain open; historical 0.30.0 graphs are not inherited. |
+| [SGLang](https://github.com/sgl-project/sglang/releases/tag/v0.5.21) | `v0.5.21` / `e00930c5489053f26d86b179cee0d087f846acbb` | Dependency/submodule upgraded after 43 released event/recovery checks pass. Final installed-wheel and independent acceptance remain open. |
 | [LMCache](https://github.com/LMCache/LMCache/releases/tag/v0.5.5) | `v0.5.5` / `05a013b29da78cf2321b9b46ec5039dde2fb0bb0` | Integration and matched-comparison reference, not evidence of OrbitKV support. |
 
 At the start of an engine upgrade, recheck official releases, record the selected
@@ -39,7 +39,7 @@ record submitted, merged and released as different states.
 | S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. Independent final review accepts the second frozen S2.10 same-host formal handoff: all 25 cells are valid and five 16-owner ordinary visibility runs pass 50 ms, while both DRAM and SSD isolation fail the frozen per-pair/CI contract. S2.10b lifecycle, low-overhead observation and 14-cell diagnosis are complete. Independent review accepts the diagnostic archive but blocks a production repair: the dominant measured tail is after native return at the Python observer boundary, while no repeatable Manager, metadata-lock, completion-notification or SSD-owner shift is established. The supported envelope stays four owners and all prior formal campaigns remain immutable. Physical cross-host cache/HA, independent etcd failure domains and native GDS are qualification blocked on missing hardware; final serving, RDMA and S3-dependent cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
-| S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.30.0 adapter upgrade consumes native transfer results with local A100 cache/P/D evidence. Independent upgrade acceptance and public lifecycle/deployment gates remain open. |
+| S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.31.0/0.5.21 upgrade passes released callback contracts. Final new-wheel qualification, independent acceptance and public lifecycle/deployment gates remain open. |
 | S6 | Partial: observations/limited choices exist; unified executed decisions remain open. |
 | S7 | Open: consumed retention/checkpoint compiler beyond recovery validation. |
 | S8 | Partial: existing wheel workflow; final images, artifact gates and publication remain open. |
@@ -957,8 +957,24 @@ integration contracts from [the adapter guide](adapters.md#lmcache-and-flexkv-re
 
 ### S5.1 — Release and interface audit
 
-**vLLM 0.30.0 implementation delivered with local qualification; independent
-review open.** Dependency and submodule use the exact release above. Cache and
+**2026-10-06 upgrade: vLLM 0.31.0 / SGLang 0.5.21 implemented; qualification open.**
+Both are official released sources, with aligned dependency and submodule pins.
+The frozen 0.30.0/0.5.20 wheel consumes 15 vLLM and 43 SGLang released callback
+checks in independent official-upgrade environments; those checks do not replace
+new final-wheel serving qualification. Integrate only the accepted main Manager
+lifecycle baseline, rebuild the complete wheel and run dense TP=1/PP=1 eager
+DRAM/io_uring cells with installed RECORD and normal-exit checks. Preserve older
+cohorts; do not transfer their graphs, P/D or hybrid claims to a new release.
+Evidence: `/root/orbitkv-artifacts/s5-release-upgrade-20261006/`.
+
+The new release audit still finds V2 restore after recurrent preprocessing,
+SGLang graph capture before external factory construction, no public pending
+lookup admission ticket and device P/D timeout release without a complete drain
+ACK. Keep their dependent profiles closed or experimental. Dynamic LoRA is
+already rejected by both adapters; live-weight invalidation and cross-host TP
+query coordination remain implementation work, not hardware-only gates.
+
+**Historical vLLM 0.30.0 upgrade record; independent review remains open.** Dependency and submodule use the exact release above. Cache and
 P/D workers return native `KVConnectorTransferResults`; failed receive and
 finished receive share one snapshot, replacing `PdWorkerMetadata` and its
 duplicate queue. Best-effort cache publication explicitly returns false for
@@ -1183,7 +1199,7 @@ Unreleased required fixes keep only their dependent profiles experimental.
 ### S5.4 — Official native P/D and independent cache
 
 **Release-only cutover implemented; qualification and independent acceptance open.**
-Use official vLLM 0.30.0 and SGLang 0.5.20. Live vLLM P/D uses NIXL and
+Use official vLLM 0.31.0 and SGLang 0.5.21. Live vLLM P/D uses NIXL and
 MultiConnector; SGLang uses native disaggregation. Manager shared-cache traffic
 continues to use TENT. There is no maintained engine fork runtime.
 

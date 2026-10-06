@@ -34,7 +34,7 @@ The official vLLM cache profile requires `VLLM_USE_V2_MODEL_RUNNER=0`
 and one attention cache group. Set this environment variable before starting
 vLLM; unsupported V2/recurrent profiles fail at startup.
 
-Pinned engine releases: **vLLM 0.30.0** and **SGLang 0.5.20**. See the
+Pinned engine releases: **vLLM 0.31.0** and **SGLang 0.5.21**. See the
 [upgrade qualification scope](../docs/completion-plan.md#s51--release-and-interface-audit).
 The recorded [engine-local Restore path](../docs/engine-local-restore.md) passes
 single-H20 Qwen3-8B DRAM correctness and engine-restart reuse with vLLM 0.29.0
