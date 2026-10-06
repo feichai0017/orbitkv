@@ -289,6 +289,11 @@ def analyze(inputs: Path, root: Path) -> dict:
             lower, upper = settings["validity"]["paired_pressure_work_ratio"]
             if ratio is None or not lower <= ratio <= upper:
                 errors.append(f"{pair}: pressure {field} ratio={ratio}")
+        phase_difference_ms = abs(
+            b["observer"]["phase"]["actual_ms"] - a["observer"]["phase"]["actual_ms"]
+        )
+        if phase_difference_ms > settings["validity"]["max_paired_phase_difference_ms"]:
+            errors.append(f"{pair}: actual phase difference={phase_difference_ms}ms")
         metrics = {}
         for name in primary_names:
             a_value = a["metrics"][name]["p99"]
@@ -322,12 +327,13 @@ def analyze(inputs: Path, root: Path) -> dict:
     )
     native_comparable = all(
         pair["metrics"][metric]["absolute_difference_ms"] <= criteria["max_native_p99_increase_ms"]
+        or pair["metrics"][metric]["ratio"] <= criteria["max_native_p99_ratio"]
         for pair in pairs.values()
         for metric in (
+            "save_native_channel_ms",
             "query_native_channel_ms",
+            "save_manager_execute_ms",
             "query_manager_execute_ms",
-            "ssd_queue_ms",
-            "ssd_execute_ms",
         )
     )
     supports_interference = bool(
