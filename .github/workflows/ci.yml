@@ -71,7 +71,7 @@ jobs:
       - name: Reject tracked experiment output
         run: python3 scripts/check-experiment-output.py
       - name: Check Rust and Python package versions stay in sync
-        run: python3 scripts/check-versions.py
+        run: python3 scripts/check-versions.py --engines
 
   typos-check:
     name: typos check

@@ -4,10 +4,20 @@ OrbitKV integrates external cache recovery with engine-owned GPU pages and
 request lifecycles. Start with the [single-node quickstart](single-node.md).
 The [completion plan](completion-plan.md#release-baseline-and-reference-policy)
 records release targets and upgrade gates. The package and source pins are
-vLLM **0.30.0** and SGLang **0.5.20**. The vLLM upgrade has local A100
-DRAM/SSD and eager/graph evidence; independent acceptance and broader deployment
-qualification remain open. Historical 0.29.0 model/topology evidence is not
+vLLM **0.31.0** and SGLang **0.5.21**. Released callback contracts pass on A100;
+all four installed-wheel dense eager DRAM/io_uring cells pass locally;
+independent acceptance and broader qualification remain open. Historical
+0.30.0 eager/graph evidence does not qualify 0.31.0. Historical 0.29.0 model/topology evidence is not
 automatically transferred to the new release.
+
+The [installed-wheel gate](releases.md#validate-before-publishing) checks the
+selected official versions with cold/native-HBM/full/partial reuse and
+DRAM/io_uring SSD recovery. It rejects editable/source imports and changed
+installed files. Its dense TP=1/PP=1 eager profile is separate from graph, P/D
+and failure-lifetime qualification; see S5.2 for current acceptance status.
+The [shared-Manager gate](../python/tests/README.md#two-engines-sharing-one-manager)
+also passes locally for two simultaneous official engines and individual graceful
+restarts in DRAM/io_uring SSD; S5.5 records its narrow scope and pending review.
 
 ## Ownership contract
 
@@ -63,7 +73,7 @@ allocated pages to `WorkerAdapter` in `worker.py`; the worker registers tensors,
 completion through the pinned engine contract. `layout.py` and `metadata.py`
 describe actual groups and intents rather than a second cache scheduler.
 
-All worker roles implement 0.30.0's `get_transfer_results` directly. P/D failure
+All worker roles implement the released engine's `get_transfer_results` directly. P/D failure
 and receive completion are drained together into `KVConnectorTransferResults`;
 the scheduler consumes native `failed_recving`, including through MultiConnector.
 There is no P/D failure-metadata class or duplicate failure queue. Ordinary cache
@@ -119,6 +129,16 @@ and pending-query admission. Enqueue preparation adds one Hook only when
 `ORBITKV_PREPARE_REQUESTS=1` or `ORBITKV_QUEUE_WARMUP=1` is set before startup.
 P/D transport factories and fork observation callbacks are removed. Native P/D
 uses the official engine lifecycle and is qualified separately.
+The installed-package ordinary-cache checks pass on A100 for dense eager
+DRAM/io_uring recovery. A calibrated normal-exit diagnosis observes all 72
+OrbitKV export credits return to zero after the released linker close and Manager
+unregister. The earlier nonzero reading came from the shared-memory file header,
+not a tensor counter, and is retained as an invalid measurement. The PyTorch exit
+warning remains in the evidence; it is not a per-counter leak oracle.
+The [S5.2 evidence](completion-plan.md#s52--minimal-official-cache-backends)
+qualifies neither crash reclamation nor cancellation during DMA; independent
+acceptance and S3 lifetime work remain open.
+
 These remaining targets are version-coupled dependencies, not stable public APIs.
 Replace them with consumed factory/lifecycle/component contracts and then delete
 the duplicate logic. Unknown DSA, draft, auxiliary state and unsupported request

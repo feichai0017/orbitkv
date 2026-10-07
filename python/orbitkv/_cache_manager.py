@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Launch the OrbitKV Cache Manager bundled with the wheel."""
 
-import subprocess
+import os
 import sys
 
 from orbitkv._bin_utils import binary_env, find_binary
@@ -16,8 +16,7 @@ def get_cache_manager_binary() -> str:
 def main():
     binary = get_cache_manager_binary()
     try:
-        result = subprocess.run([binary] + sys.argv[1:], check=False, env=binary_env())
-        sys.exit(result.returncode)
+        os.execve(binary, [binary, *sys.argv[1:]], binary_env())
     except FileNotFoundError:
         print(f"Error: {_BINARY} binary not found at {binary}", file=sys.stderr)
         print(
@@ -25,8 +24,6 @@ def main():
             file=sys.stderr,
         )
         sys.exit(1)
-    except KeyboardInterrupt:
-        sys.exit(0)
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ how to validate a candidate without uploading it to PyPI.
 | `orbitkv-llm-cu13` | CUDA 13 | Linux x86_64 and aarch64, CPython 3.10–3.14 |
 
 Install one CUDA variant per environment; both provide the `orbitkv` import and
-`orbitkv-cache-manager` command. Engine extras pin vLLM 0.30.0 or SGLang 0.5.20.
+`orbitkv-cache-manager` command. Engine extras pin vLLM 0.31.0 or SGLang 0.5.21.
 Use separate engine environments. Build-matrix coverage does not establish
 that every engine/GPU combination works on every Python version; serving
 qualification uses Python 3.11 on H20 and A100, with each result tied to its
@@ -75,8 +75,15 @@ Mooncake libraries. `maturin build` alone does not stage the complete runtime.
    then verify a completion and an external restore after engine restart.
    The smoke gate removes external TENT search paths, initializes TENT, and
    checks `/proc/self/maps` to prove that its three primary libraries came from
-   the installed package.
+   the installed package. It verifies pinned versions and installed RECORD hashes,
+   then compares cold, native HBM, full and partial recovery against native
+   controls in DRAM and io_uring SSD cells. The installed console entry executes
+   the Manager directly: SIGTERM must drain and exit 0; forced cleanup fails.
    Run the [release smoke and correctness gates](../python/tests/README.md#release-smoke).
+   Claiming a shared Manager additionally requires the
+   [two-engine gate](../python/tests/README.md#two-engines-sharing-one-manager),
+   matching both installations to the frozen wheel and retaining concurrent
+   output, each engine restart, actual SSD reads and normal drain evidence.
 4. Review the final benchmark summaries and known limits. Publish only after
    these checks pass and the release is approved.
 

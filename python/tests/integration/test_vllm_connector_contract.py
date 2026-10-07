@@ -1,7 +1,7 @@
 """Released vLLM consumers of OrbitKV completion and delivery contracts.
 
 Run when upgrading vLLM or changing connector completion/composition callbacks.
-Requires official vLLM 0.30.0. Model composition uses test_vllm_native_pd_e2e.py.
+Requires official vLLM 0.31.0. Model composition uses test_vllm_native_pd_e2e.py.
 """
 
 from types import SimpleNamespace

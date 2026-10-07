@@ -1,277 +1,173 @@
-"""Release gate: use installed plugins and binaries without source-tree imports."""
+"""Released-engine cache qualification using only an installed, non-editable wheel."""
 
-import contextlib
+import hashlib
 import json
 import os
-import signal
-import subprocess
 import sys
-import textwrap
 import time
 from pathlib import Path
 
 import pytest
 import requests
 
-from tests.support.cache_manager import find_available_port
-from tests.support.metrics import fetch_orbitkv_metrics
+from tests.support.cache_manager import evict_dram_after_ssd_writes, find_available_port
+from tests.support.installed_artifacts import isolated_environment
+from tests.support.installed_serving import (
+    cached_tokens,
+    compare_output,
+    engine_command,
+    manager_command,
+    probe_installation,
+    service,
+    wait_for_drain,
+)
+from tests.support.installed_serving import (
+    complete as generate,
+)
+from tests.support.metrics import fetch_orbitkv_metrics, fetch_vllm_prefix_cache_hits
 
 pytestmark = [pytest.mark.release_smoke, pytest.mark.gpu]
 
 
-@contextlib.contextmanager
-def service(command, url, env, directory, name):
-    log_path = directory / f"{name}.log"
-    with log_path.open("w") as log:
-        process = subprocess.Popen(
-            command,
-            cwd=directory,
-            env=env,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-    try:
-        deadline = time.monotonic() + 240
-        while time.monotonic() < deadline:
-            if process.poll() is not None:
-                pytest.fail(f"{name} exited: {log_path.read_text()[-8000:]}")
-            try:
-                if requests.get(f"{url}/health", timeout=2).ok:
-                    break
-            except requests.RequestException:
-                pass
-            time.sleep(0.5)
-        else:
-            pytest.fail(f"{name} startup timed out: {log_path.read_text()[-8000:]}")
-        yield
-    finally:
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGTERM)
-        try:
-            process.wait(timeout=15)
-        except subprocess.TimeoutExpired:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
-            process.wait(timeout=10)
-
-
 @pytest.mark.parametrize("engine", ["vllm", "sglang"])
-def test_installed_wheel_recovers_after_engine_restart(engine, model, tmp_path):
-    assert Path(model).is_dir(), "release smoke requires --model with a local dense model"
-    env = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith(("PYTHON", "ORBITKV_"))
-    }
-    # Exclude both source-tree and externally staged Mooncake libraries.
-    native_libraries = ("libtent_shared.so", "libmooncake_common.so", "libasio.so")
-    env["LD_LIBRARY_PATH"] = os.pathsep.join(
-        part
-        for part in env.get("LD_LIBRARY_PATH", "").split(os.pathsep)
-        if part
-        and "/.orbitkv/" not in part
-        and not part.endswith("/python/orbitkv")
-        and not any((Path(part) / name).exists() for name in native_libraries)
+@pytest.mark.parametrize("tier", ["dram", "ssd"])
+def test_installed_wheel_recovers_after_engine_restart(
+    engine, tier, model, tmp_path, orbitkv_transfer_backend
+):
+    assert Path(model).is_dir(), "release gate requires --model with a local dense model"
+    env = isolated_environment(dict(os.environ), tmp_path)
+    env["ORBITKV_TRANSFER_BACKEND"] = orbitkv_transfer_backend
+    before = probe_installation(
+        sys.executable, engine, env, tmp_path, "installed-before", native=True
     )
-    env.update(
-        ORBITKV_CACHE_SCOPE=tmp_path.name,
-        MC_FORCE_TCP="1",
-        VLLM_BATCH_INVARIANT="1",
-        TORCHINDUCTOR_CACHE_DIR=str(tmp_path / "inductor"),
-        TRITON_CACHE_DIR=str(tmp_path / "triton"),
-        VLLM_CACHE_ROOT=str(tmp_path / "vllm"),
-    )
-    probe = subprocess.run(
-        [
-            sys.executable,
-            "-I",
-            "-c",
-            textwrap.dedent("""
-                import importlib.metadata as metadata
-                import json
-                import os
-                from pathlib import Path
-                import sysconfig
-                import orbitkv
+    try:
+        run_cache_plan(engine, tier, model, tmp_path, env)
+    finally:
+        after = probe_installation(sys.executable, engine, env, tmp_path, "installed-after")
+        assert before["distributions"] == after["distributions"], (
+            "Installed engine or OrbitKV files changed during qualification"
+        )
 
-                package = Path(orbitkv.__file__).resolve()
-                assert package.is_relative_to(Path(sysconfig.get_path("purelib")).resolve()), package
-                distributions = metadata.packages_distributions()["orbitkv"]
-                assert len(distributions) == 1, distributions
-                distribution = metadata.distribution(distributions[0])
-                assert not json.loads(distribution.read_text("direct_url.json") or "{}").get(
-                    "dir_info", {}
-                ).get("editable", False)
-                assert orbitkv.__version__ == distribution.version
-                transfer = orbitkv.MooncakeTransferEngine(bind_host="127.0.0.1")
-                names = {"libtent_shared.so", "libmooncake_common.so", "libasio.so"}
-                loaded = {
-                    Path(line.split()[-1]).resolve()
-                    for line in Path("/proc/self/maps").read_text().splitlines()
-                    if Path(line.split()[-1]).name in names
-                }
-                assert {path.name for path in loaded} == names, loaded
-                assert all(path.parent == package.parent for path in loaded), loaded
-                print(json.dumps({
-                    "package": str(package), "version": distribution.version,
-                    "native_libraries": sorted(str(path) for path in loaded),
-                    "python_libdir": sysconfig.get_config_var("LIBDIR"),
-                    "pythonhome": os.environ.get("PYTHONHOME"),
-                    "pythonpath": os.environ.get("PYTHONPATH"),
-                    "ld_library_path": os.environ.get("LD_LIBRARY_PATH"),
-                }))
-                """),
-        ],
-        cwd=tmp_path,
-        env=env,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert probe.returncode == 0, probe.stderr
-    manager = str(Path(sys.executable).parent / "orbitkv-cache-manager")
-    subprocess.run([manager, "--help"], cwd=tmp_path, env=env, check=True, capture_output=True)
+
+def run_cache_plan(engine, tier, model, directory, env):
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(model, local_files_only=True, trust_remote_code=True)
+    fragment = tokenizer.encode("An installed cache retains deterministic reusable context. ")
+    tokens = (fragment * (769 // len(fragment) + 1))[:769]
+    suffix = tokenizer.encode(" Fresh unseen context extends the saved prefix. " * 32)[:192]
+    extended = tokens + suffix
     port, http_port, engine_port = (find_available_port() for _ in range(3))
-    env["ORBITKV_PORT"] = str(port)
-    env["ORBITKV_SGLANG_ENDPOINT"] = f"unix:///tmp/orbitkv-{port}.sock"
     manager_url = f"http://127.0.0.1:{http_port}"
     engine_url = f"http://127.0.0.1:{engine_port}"
-    manager_command = [
-        manager,
-        "--addr",
-        f"127.0.0.1:{port}",
-        "--http-addr",
-        f"127.0.0.1:{http_port}",
-        "--pool-size",
-        "1gb",
-    ]
-    if engine == "vllm":
-        command = [
-            sys.executable,
-            "-I",
-            "-m",
-            "vllm.entrypoints.openai.api_server",
-            "--model",
-            model,
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(engine_port),
-            "--max-model-len",
-            "2048",
-            "--max-num-seqs",
-            "4",
-            "--gpu-memory-utilization",
-            "0.4",
-            "--enforce-eager",
-            "--enable-prefix-caching",
-            "--kv-transfer-config",
-            json.dumps(
-                {
-                    "kv_connector": "OrbitKVConnector",
-                    "kv_role": "kv_both",
-                    "kv_connector_module_path": "orbitkv.vllm",
-                }
-            ),
-        ]
-    else:
-        command = [
-            sys.executable,
-            "-I",
-            "-m",
-            "sglang.launch_server",
-            "--model-path",
-            model,
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(engine_port),
-            "--nccl-port",
-            str(find_available_port()),
-            "--context-length",
-            "2048",
-            "--max-total-tokens",
-            "4096",
-            "--mem-fraction-static",
-            "0.4",
-            "--page-size",
-            "64",
-            "--disable-cuda-graph",
-            "--enable-deterministic-inference",
-            "--enable-unified-cache-external-linker",
-            "--radix-cache-backend",
-            "orbitkv",
-        ]
-    prompt = "The cache retains reusable prefixes for later inference requests. " * 64
-    outputs = []
-    with service(manager_command, manager_url, env, tmp_path, "manager"):
-        for incarnation in range(2):
-            with service(command, engine_url, env, tmp_path, f"{engine}-{incarnation}"):
-                requests.get(f"{engine_url}/v1/models", timeout=10).raise_for_status()
-                if engine == "vllm":
-                    response = requests.post(
-                        f"{engine_url}/v1/completions",
-                        json={
-                            "model": model,
-                            "prompt": prompt,
-                            "max_tokens": 8,
-                            "temperature": 0,
-                            "ignore_eos": True,
-                        },
-                        timeout=90,
-                    )
-                else:
-                    response = requests.post(
-                        f"{engine_url}/generate",
-                        json={
-                            "text": prompt,
-                            "sampling_params": {
-                                "temperature": 0,
-                                "max_new_tokens": 8,
-                                "ignore_eos": True,
-                            },
-                        },
-                        timeout=90,
-                    )
-                response.raise_for_status()
-                result = response.json()
-                outputs.append(result["choices"][0]["text"] if engine == "vllm" else result["text"])
-                deadline = time.monotonic() + 10
-                while True:
-                    metrics = fetch_orbitkv_metrics(http_port)
-                    counter = (
-                        "orbitkv_save_bytes_total"
-                        if incarnation == 0
-                        else "orbitkv_load_bytes_total"
-                    )
-                    if metrics.get(counter, 0) > 0:
-                        break
-                    assert time.monotonic() < deadline, metrics
-                    time.sleep(0.1)
-        assert outputs[0] == outputs[1], outputs
-        assert metrics.get("orbitkv_cache_block_hits_total", 0) > 0, metrics
-        assert metrics.get("orbitkv_hll_total_requests", 0) > 0, metrics
-        deadline = time.monotonic() + 10
-        while True:
-            metrics = fetch_orbitkv_metrics(http_port)
-            if not metrics.get("orbitkv_query_reserved_bytes", 0) and not metrics.get(
-                "orbitkv_inflight_bytes", 0
+    env["VLLM_SERVER_DEV_MODE"] = "1"
+    command, cache_options = engine_command(
+        engine, sys.executable, model, engine_port, env["ORBITKV_TRANSFER_BACKEND"]
+    )
+    manager_args = manager_command(sys.executable, port, http_port, tier, directory)
+    phases = {}
+
+    def complete(label, prompt):
+        result = generate(engine, engine_url, model, prompt)
+        phases[label] = result
+        (directory / "responses.json").write_text(json.dumps(phases, indent=2) + "\n")
+        return result
+
+    with service(command, engine_url, env, directory, f"{engine}-native"):
+        baseline_cold = complete("native-cold", tokens)
+        baseline_warm = complete("native-hbm", tokens)
+        baseline_partial = complete("native-partial", extended)
+    env["ORBITKV_PORT"] = str(port)
+    env["ORBITKV_SGLANG_ENDPOINT"] = f"unix:///tmp/orbitkv-{port}.sock"
+    snapshots = {}
+    with service(manager_args, manager_url, env, directory, "manager"):
+        with service(command + cache_options, engine_url, env, directory, f"{engine}-cold"):
+            cold = complete("cache-cold", tokens)
+            compare_output(engine, cold, baseline_cold)
+            assert cached_tokens(engine, cold) == 0, cold
+            snapshots["after_cold"] = wait_for_drain(http_port)
+            assert snapshots["after_cold"].get("orbitkv_save_bytes_total", 0) > 0
+            assert snapshots["after_cold"].get("orbitkv_hll_total_requests", 0) > 0
+            before_native_hits = (
+                fetch_vllm_prefix_cache_hits(engine_port) if engine == "vllm" else 0
+            )
+            native = complete("cache-native-hbm", tokens)
+            compare_output(engine, native, baseline_warm)
+            assert cached_tokens(engine, native) >= 704, native
+            snapshots["after_native_hbm"] = wait_for_drain(http_port)
+            for counter in ("orbitkv_load_bytes_total", "orbitkv_hll_total_requests"):
+                assert snapshots["after_cold"].get(counter, 0) == snapshots["after_native_hbm"].get(
+                    counter, 0
+                ), (f"Native HBM reuse performed external cache work: {counter}", snapshots)
+            if engine == "vllm":
+                assert fetch_vllm_prefix_cache_hits(engine_port) > before_native_hits
+        if tier == "ssd":
+            evict_dram_after_ssd_writes(http_port)
+            assert fetch_orbitkv_metrics(http_port).get("orbitkv_cache_resident_bytes", 0) == 0
+        snapshots["before_restart"] = wait_for_drain(http_port)
+        with service(command + cache_options, engine_url, env, directory, f"{engine}-restart"):
+            full = complete("cache-full-after-restart", tokens)
+            compare_output(engine, full, baseline_warm)
+            assert cached_tokens(engine, full) >= 704, full
+            snapshots["after_full"] = wait_for_drain(http_port)
+            assert snapshots["after_full"].get("orbitkv_load_bytes_total", 0) > snapshots[
+                "before_restart"
+            ].get("orbitkv_load_bytes_total", 0), snapshots
+            reset_path = "/reset_prefix_cache" if engine == "vllm" else "/flush_cache?timeout=30"
+            deadline = time.monotonic() + 30
+            while True:
+                reset = requests.post(f"{engine_url}{reset_path}", timeout=40)
+                reset.raise_for_status()
+                if engine != "vllm" or reset.json()["success"]:
+                    break
+                assert time.monotonic() < deadline, reset.text
+                time.sleep(0.1)
+            wait_for_drain(http_port)
+            if tier == "ssd" and fetch_orbitkv_metrics(http_port).get(
+                "orbitkv_cache_resident_bytes", 0
             ):
-                break
-            assert time.monotonic() < deadline, metrics
-            time.sleep(0.1)
-        (tmp_path / "result.json").write_text(
+                evict_dram_after_ssd_writes(http_port)
+            snapshots["before_partial"] = wait_for_drain(http_port)
+            partial = complete("cache-partial", extended)
+            compare_output(engine, partial, baseline_partial)
+            assert 64 <= cached_tokens(engine, partial) < len(extended) - 64, partial
+            snapshots["after_partial"] = wait_for_drain(http_port)
+            assert snapshots["after_partial"].get("orbitkv_load_bytes_total", 0) > snapshots[
+                "before_partial"
+            ].get("orbitkv_load_bytes_total", 0), snapshots
+        final = wait_for_drain(http_port)
+        assert (
+            f"backend={env['ORBITKV_TRANSFER_BACKEND']}" in (directory / "manager.log").read_text()
+        )
+        assert final.get("orbitkv_load_failures_total", 0) == 0, final
+        if tier == "ssd":
+            assert final.get("orbitkv_ssd_write_bytes_total", 0) > 0, final
+            for start, end in (
+                ("before_restart", "after_full"),
+                ("before_partial", "after_partial"),
+            ):
+                assert snapshots[end].get("orbitkv_ssd_prefetch_bytes_total", 0) > snapshots[
+                    start
+                ].get("orbitkv_ssd_prefetch_bytes_total", 0), snapshots
+                assert snapshots[end].get("orbitkv_ssd_cufile_read_bytes_total", 0) == snapshots[
+                    start
+                ].get("orbitkv_ssd_cufile_read_bytes_total", 0), snapshots
+        (directory / "result.json").write_text(
             json.dumps(
                 {
-                    **json.loads(probe.stdout),
                     "engine": engine,
+                    "tier": tier,
+                    "transfer_backend": env["ORBITKV_TRANSFER_BACKEND"],
                     "model": model,
-                    "save_bytes": metrics["orbitkv_save_bytes_total"],
-                    "load_bytes": metrics["orbitkv_load_bytes_total"],
-                    "final_query_bytes": metrics.get("orbitkv_query_reserved_bytes", 0),
+                    "profile": "dense TP=1 PP=1 eager same-host",
+                    "model_config_sha256": hashlib.sha256(
+                        (Path(model) / "config.json").read_bytes()
+                    ).hexdigest(),
+                    "snapshots": snapshots,
+                    "final": final,
                 },
                 indent=2,
             )
             + "\n"
         )
+    assert not Path(f"/tmp/orbitkv-{port}.sock").exists(), "Manager left its UDS behind"

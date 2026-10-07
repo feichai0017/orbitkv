@@ -58,6 +58,9 @@ cd python
 uv run --group test pytest
 ```
 
+The test group includes `tomli` on Python 3.10 for the TOML-based engine pin
+checker; Python 3.11+ uses the standard-library parser.
+
 This command must not start vLLM, `orbitkv-cache-manager`, or any GPU runtime. It still
 imports every test module during pytest collection, so any top-level import used
 by deselected heavy tests must be present in the `test` dependency group or moved behind a
@@ -146,8 +149,8 @@ run GPU gates sequentially on the same host.
 
 ## vLLM Correctness E2E Gate
 
-Use the vLLM `0.29.0` release environment described in
-[`python/README.md`](../README.md). The SGLang `0.5.20` environment is separate.
+Use the vLLM `0.31.0` release environment described in
+[`python/README.md`](../README.md). The SGLang `0.5.21` environment is separate.
 The default `uv run --group test` environment intentionally has no GPU framework.
 
 ```bash
@@ -158,6 +161,20 @@ cd python
   --pipeline-parallel-size 1 \
   --max-model-len 4096
 ```
+
+For release upgrades, use a new external cache directory for each run and
+record it with the command:
+
+```bash
+export ORBITKV_E2E_CACHE_ROOT=/var/tmp/orbitkv-e2e/run-001/cache
+export TORCHINDUCTOR_CACHE_DIR="$ORBITKV_E2E_CACHE_ROOT/inductor"
+export TRITON_CACHE_DIR="$ORBITKV_E2E_CACHE_ROOT/triton"
+export VLLM_CACHE_ROOT="$ORBITKV_E2E_CACHE_ROOT/vllm"
+```
+
+Preserve shared-cache failures before retrying with these isolated directories.
+A successful isolated run does not repair or qualify an older compiler cache.
+The installed-wheel gate already assigns independent cache paths per cell.
 
 This is the main correctness E2E. It runs the same ordered prompt plan with
 vLLM native prefix caching and with OrbitKV, then requires exact completion
@@ -255,6 +272,7 @@ Release smoke validates the final installed package, not the source checkout. It
 After installing the candidate wheel in the pinned engine environment, run:
 
 ```bash
+mkdir -p /var/tmp/orbitkv-bench
 .venv/vllm-release/bin/python -m pytest -m release_smoke \
   python/tests/release/test_installed_wheel.py -k vllm \
   --model /workspace/models/qwen3-8b \
@@ -264,11 +282,82 @@ After installing the candidate wheel in the pinned engine environment, run:
 Run from the repository root; substitute the SGLang environment and `-k sglang`
 for the other adapter, with its own `--basetemp` directory. The test starts
 subprocesses outside the source package, rejects editable/source imports,
-initializes TENT and proves its primary libraries came from the installed wheel,
-uses installed plugin metadata and the bundled console script, and verifies
-exact output plus positive GPU-load bytes after engine restart. It also checks
-final query/I/O drain. Run the engines sequentially on one GPU. See
+checks the pinned engine version, verifies installed engine and OrbitKV files
+against the wheel RECORD manifests before and after execution, rejects unrecorded
+package data/code and conflicting plugin metadata, and proves TENT libraries load from the
+installed wheel. Only generated `__pycache__/*.pyc` files are exempt from the
+unrecorded-file check. Each engine runs DRAM and forced io_uring SSD cells. Use
+`-k "vllm and dram"` to select a single cell.
+
+Each cell compares cold, native HBM, full external recovery after engine restart,
+and partial recovery against an engine-native control. HBM hits must increase
+native reuse without external query or H2D work. The partial case first resets
+HBM and requires positive external GPU-load bytes; SSD cases also require
+positive io_uring reads after DRAM eviction. Output text/tokens, final query/I/O
+ownership, process exit status and installed-file integrity are checked.
+`responses.json`, metrics, before/after manifests and per-service cleanup records
+stay under the selected external `--basetemp`. A forced cleanup fails the cell;
+Manager SIGTERM must drain and exit 0 through the installed console entry.
+Run the engines sequentially on one GPU. This dense TP=1/PP=1 eager gate does
+not qualify CUDA graphs, P/D, multi-GPU or cancellation during transfer. See
 [release preparation](../../docs/releases.md) for the wheel build matrix.
+
+### Two engines sharing one Manager
+
+This gate includes overlapping external restores after both engine processes
+restart, and a separate normal Manager restart after both engines have drained.
+The replacement Manager rebuilds cold; the test does not claim persistence or
+crash reclamation. For kernel qualification, add
+`--orbitkv-transfer-backend kernel` with the newly frozen complete wheel. Each
+engine's worker backend is checked in the Manager log, alongside exact model
+outputs, real restore bytes and normal process/resource drain.
+
+Run the installed-package gate below when changing Manager multi-client lifetime,
+engine restart, registration isolation or shared DRAM/SSD ownership. Keep vLLM
+and SGLang in separate non-editable environments with the same complete OrbitKV
+wheel. Run it on an otherwise idle GPU with enough memory for two model copies;
+the fixed dense profile uses TP=1/PP=1, eager execution and 0.4 GPU-memory fraction
+per engine.
+
+```bash
+.venv/vllm-release/bin/python -m pytest -m release_smoke \
+  python/tests/release/test_shared_manager.py \
+  --vllm-release-python "$PWD/.venv/vllm-release/bin/python" \
+  --sglang-release-python "$PWD/.venv/sglang-release/bin/python" \
+  --model /workspace/models/qwen3-8b \
+  --basetemp=/var/tmp/orbitkv-bench/shared-manager-001
+```
+
+Both DRAM and io_uring SSD cells use a separate native output control for each
+engine. The gate requires overlapping HTTP requests, zero external work for
+native HBM reuse, and positive restore bytes after each engine restarts while
+the other engine keeps serving through the same Manager PID. The SSD cell
+clears Manager DRAM before each recovery and requires physical io_uring reads.
+It checks both installed environments before/after, compares the packaged
+Manager and TENT hashes, requires normal exits, zero resource ownership and no
+remaining UDS. The run controller must match installed package members to the
+frozen wheel contract as well as RECORD; RECORD alone does not identify a wheel.
+
+The selected external `--basetemp` retains response timing/output, metrics,
+package probes and process-cleanup records. These are two instances sharing a
+service and budget, not interchangeable cross-engine KV bytes. This gate does
+not qualify crash reclamation, concurrent-load fairness, capacity pressure,
+P/D, containers, CUDA graphs or cross-host operation. A new immutable artifact
+cohort must retain any failure; do not reuse `--basetemp` to overwrite it.
+
+For a targeted SGLang normal-exit IPC diagnosis, replace `python -I -m
+sglang.launch_server` with `python -I /absolute/path/to/python/tests/support/trace_sglang_ipc.py`
+and retain the same engine arguments and installed wheel. Set
+`ORBITKV_CLOSE_TRACE_DIRECTORY` to a new external directory before startup.
+The test helper wraps only OrbitKV export/close in memory; it does not edit
+installed files and is separate from the ordinary installed-package gate.
+Read the `linker_close_return` and `python_atexit` rows: require nonempty exports,
+no read errors and zero credits after normal unregister. A missing slot or file
+must not be counted as zero. Calibrate the 64-byte counter payload offset against
+the installed PyTorch revision using a known live and then drained IPC export;
+keep the revision and calibration with the trace. The file header and PyTorch
+exit warning cannot substitute for those credits. This does not prove crash or
+in-flight cancellation safety.
 
 Minimum checks:
 - `orbitkv-cache-manager --help`
