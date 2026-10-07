@@ -465,6 +465,19 @@ acceptance. Keep the old 51.72 ms serial-barrier and all/scoped isolation failur
 as historical failures. Supported capacity remains four owners until replacement
 profile evidence and its independent review pass.
 
+| Remaining S2 obligation | Current state | Next independently reviewed evidence |
+| --- | --- | --- |
+| Same-host live-store correctness and scoped stream oracle | PASS at the retained accepted revisions | Inherit unless a production owner affecting these contracts changes |
+| 16-owner ordinary visibility | PASS for five 4.281–4.309 ms runs, but capacity support remains UNQUALIFIED | Replacement isolation must also pass before expanding the four-owner boundary |
+| DRAM/SSD isolation | FAIL in the immutable 25-cell cohort | Installed-runtime readiness, observer A/B diagnosis, reviewed harness correction if supported, then one new 25-cell qualification cohort |
+| Observer diagnostic launcher | IMPLEMENTATION OPEN after task-003 fail-stop | Tests-only projection, real tensor register/save/query/SSD restore readiness, and two valid tool smokes |
+| Three-host direct network | READY: six directed IPv6 TCP edges pass | Exact etcd client/peer listeners, then OrbitKV-consumed leader/quorum/process-fault campaign |
+| Independent host/power/network failure domains | QUALIFICATION BLOCKED | Infrastructure ownership/topology evidence and authorized host/network fault controls |
+| H20/A100 physical cache data plane | QUALIFICATION BLOCKED | H20 CUDA compute/IPC readiness plus bidirectional native TENT IPv6 byte transfer |
+| Final serving profile | QUALIFICATION OPEN | Consume an independently accepted S2 runtime and existing accepted release profiles; do not inherit unreviewed S5 artifacts |
+| Permanent requester loss/inflight DMA reclamation | S3 DEPENDENCY OPEN | Native termination and generation-safe lifetime proof; lease/TTL is not drain |
+| RDMA/native GDS | QUALIFICATION BLOCKED | Real NIC/transport counters and supported NVMe/filesystem/nvidia-fs/cuFile device access |
+
 - Report historical serial barrier verification separately from bounded
   concurrent verification, ordinary asynchronous publication-to-install latency,
   and save-start-to-discovery latency. HTTP completion is not an observer install

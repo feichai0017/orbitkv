@@ -232,6 +232,7 @@ def run(
         raise ValueError("diagnostic timeline requires --diagnostic-timeline-limit")
     import torch
 
+    import orbitkv
     import orbitkv.orbitkv as native
     from orbitkv import CacheManagerClient
     from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
@@ -241,8 +242,14 @@ def run(
     pages, block_bytes = 8, 4096
     payload_bytes = pages * block_bytes
     identity = f"s2.10:isolation:{medium}:{seed}"
+    installed_python_path = str(Path(native.__file__).resolve().parents[1])
+    manager_python_paths = (installed_python_path,)
     local_namespace, pressure_namespace = _discover_storage_namespaces(
-        output, [identity, "s2.10:isolation:metadata-only-pressure:v1"], pages, block_bytes
+        output,
+        [identity, "s2.10:isolation:metadata-only-pressure:v1"],
+        pages,
+        block_bytes,
+        manager_python_paths=manager_python_paths,
     )
     assert local_namespace != pressure_namespace
     pressure_rounds = math.ceil((warmup_rounds + samples + 1) * cadence_ms / pressure_cadence_ms)
@@ -299,6 +306,11 @@ def run(
             "same-host A100, one full foreground Manager plus one test-owned "
             "production inventory-stream source and a fixed-location observer, forced TCP"
         ),
+        "python_runtime": {
+            "client_package": str(Path(orbitkv.__file__).resolve()),
+            "client_extension": str(Path(native.__file__).resolve()),
+            "manager_python_paths": list(manager_python_paths),
+        },
         "diagnostic": {
             "enabled": bool(diagnostic_timeline_limit),
             "timeline_limit": diagnostic_timeline_limit,
@@ -354,6 +366,7 @@ def run(
                 "2",
                 *(() if ssd_enabled else ("--enable-prometheus",)),
             ),
+            runtime_python_paths=manager_python_paths,
         )
         stack.callback(manager.stop)
         assert manager.start(), manager.read_logs()

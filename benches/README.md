@@ -143,6 +143,18 @@ and complete raw cells; its paired bootstrap unit is the independent A/B pair.
 A positive result can justify a benchmark-harness change only and cannot
 reclassify the failed isolation qualification.
 
+Installed-artifact qualification runs the harness from a tests-only projection:
+copy `benches/` to the projection root, copy `python/tests/` as `tests/`, and
+retain the relevant pytest configuration without copying `python/orbitkv/`.
+Put the installed wheel's site-packages before that projection in the driver
+`PYTHONPATH`. `live_store_isolation` passes that installed site-packages path
+explicitly to every Manager, including the namespace probe, so embedded Python
+can import `orbitkv.client.gpu` from the wheel while the driver still imports
+test support from the projection. A source checkout remains the default for
+normal integration tests; installed qualification must record the client,
+extension, Manager and helper paths and reject a source package that shadows the
+wheel.
+
 ## CPU codec benchmark
 
 `cpu_codec.rs` measures the production CPU E4M3FN encode/decode paths for BF16
