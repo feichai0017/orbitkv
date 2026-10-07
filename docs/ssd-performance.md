@@ -84,6 +84,56 @@ functional gates use `direct`, dense Qwen3-8B TP=1/PP=1 eager, with cache files
 on the `/workspace` overlay; they do not measure NVMe throughput or close
 sustained contention, graphs, H20, native P/D faults or S3 crash reclamation.
 
+## Shared-Manager mixed-pressure qualification
+
+`benches.shared_manager_pressure` runs installed official vLLM 0.31.0 and
+SGLang 0.5.21 against one Manager. The fixed workload interleaves reused prefixes
+with deterministic fresh prefixes, fixes each engine to 4,096 native GPU tokens
+and caps client admission separately for each engine, compares every output and token count to its own native engine, and
+finishes every admitted request before shutdown. A separate lightweight process
+samples Manager resources once per second without loading Torch, CUDA or OrbitKV.
+The gate requires a completion gap below 30 seconds while each engine has
+admitted work, positive physical read/write and save/load bytes, final ownership
+drain and normal cleanup. Configure
+and report global and per-instance query limits separately; only global/pool
+reservation peaks are currently observable. No timed cache flush, restart,
+cache-policy change or Python state coordinator is introduced.
+
+Two short untraced direct cells pass 44 and 43 requests, physical io_uring reads
+and writes, sampled bounds, final drain and unchanged installed files. They are
+smoke/diagnostic evidence with descriptive tails. The sustained two-cell cohort
+is **invalid at direct startup**, before any timed request: SGLang reports an
+iceoryx2 discovery `DoesNotExist`. Its kernel cell is not started. A traced
+kernel profile supplies actual save fragment sizes but cannot certify performance;
+the intermittent discovery cause remains unresolved. Do not declare sustained
+fairness, tail isolation, per-instance peak qualification or a kernel advantage.
+All failures and diagnostics are retained outside Git at
+`/root/orbitkv-artifacts/s5-shared-pressure-kda-20261007/`.
+
+Reproduce only with a fresh output/data directory and an idle GPU. Record the
+startup outcome before interpreting any latency sample:
+
+```bash
+/path/to/vllm-release/python -m benches.shared_manager_pressure \
+  --vllm-python /path/to/vllm-release/python \
+  --sglang-python /path/to/sglang-release/python \
+  --model /path/to/immutable-model --transfer-backend direct \
+  --duration-seconds 900 --seed sustained-01 \
+  --ssd-path /mnt/nvme/orbitkv-bench/shared-pressure-001 \
+  --output /var/tmp/orbitkv-ssd/shared-pressure-001
+```
+
+The defaults use 512 MiB Manager DRAM, 8 GiB io_uring SSD, 384 MiB global and
+192 MiB configured per-instance query limits, 16 prefixes of 768 tokens per
+engine, eight output tokens and one admitted request per engine. Every eighth
+input is fresh. TTFT is client time to first nonempty streamed text; a debug `--profile` run
+reports consumed descriptors separately from performance qualification. Keep
+workload, budgets and order fixed in matched runs, retain
+every sample, and report p99 as descriptive below 1,000 requests per engine.
+Independent run pairs are required for a comparative performance claim. A failed
+startup or correctness/drain/provenance guard stops its cohort; a revision needs
+a new freeze rather than a replacement cell.
+
 ## Next SSD work and native GDS boundary
 
 [LMCache's local disk design](https://docs.lmcache.ai/kv_cache/storage_backends/local_storage.html)
@@ -272,42 +322,3 @@ The old SGLang integration's 0/15 result predates readiness-aware admission.
 See the [immutable experiment and its controls](https://github.com/feichai0017/orbitkv/blob/4712f780c900120719f178b2ea36c9e0ac7c135f/docs/ssd-performance.md).
 These serial forced-eviction numbers must not be mixed with the concurrent
 natural-pressure measurements above.
-
-## Sustained shared-Manager pressure
-
-`benches.shared_manager_pressure` owns two installed official engine processes and
-one Manager. It fixes each engine to 4,096 native GPU tokens and cycles through
-16 independent 768-token prefixes, alternating every eighth request with a fresh
-input. Both engines keep their own admission quota and native output controls.
-Warm-prefix controls precede the cache run; fresh-input controls follow completed
-requests and normal cache-engine shutdown, outside timing. Every measured output
-and input/output token count must match its own engine's control.
-
-```bash
-python -m benches.shared_manager_pressure \
-  --vllm-python /path/to/vllm-release/bin/python \
-  --sglang-python /path/to/sglang-release/bin/python \
-  --model /path/to/immutable-model --transfer-backend direct \
-  --duration-seconds 300 --seed pair-01 \
-  --host-mib 512 --query-mib 384 --instance-query-mib 192 --ssd-gib 8 \
-  --ssd-path /fresh/nvme/cache-01 --output /external/s5-pressure/direct-01
-```
-
-Each destination must be fresh and outside the checkout. Use the same seed and
-budgets for each direct/kernel pair; reverse order across at least three pairs.
-A separate isolated Python process samples Manager resources once per second and
-must not import Torch, OrbitKV or either engine. Global query and pool peaks are
-sampled evidence; the per-instance query limit is configured, but the current
-exporter does not expose its instantaneous peak. The gate requires positive
-physical io_uring reads/writes and save/load bytes during the window, complete
-requests, a completion gap below 30 seconds for each admitted instance and
-zero final ownership gauges. It forbids timed cache flushes and forced cleanup.
-
-Raw requests, native controls, resource samples, installed RECORD snapshots,
-commands and cleanup records stay in the external output. SSD cache data remains
-in the separately declared data directory until the experiment owner removes it
-after the Manager exits. A debug `--profile` run describes consumed descriptor
-shapes and is separate from timing qualification. TTFT is client time to first
-nonempty streamed text; p99 below 1,000 samples is descriptive. This gate does
-not qualify abrupt death, containers, cross-host traffic, native GDS, rank
-combinations, throughput isolation or a new scheduling policy.

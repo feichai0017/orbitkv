@@ -1,8 +1,11 @@
 """Shared deployment evidence must preserve each instance's work and ownership."""
 
 import copy
+import json
+import os
 import threading
 import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from types import SimpleNamespace
 
 import pytest
@@ -49,7 +52,17 @@ def test_two_instance_quotas_and_all_admitted_requests_drain(monkeypatch):
         }
 
     monkeypatch.setattr(pressure, "generate", generate)
-    prefixes = {engine: [{"tokens": [1] * 64, "text": "native"}] * 2 for engine in pressure.ENGINES}
+    prefixes = {
+        engine: [
+            {
+                "tokens": [1] * 64,
+                "text": "native",
+                "usage": {"prompt_tokens": 64, "completion_tokens": 2},
+            }
+        ]
+        * 2
+        for engine in pressure.ENGINES
+    }
     emitted = []
     rows, window = pressure.run_window(
         args(), dict.fromkeys(pressure.ENGINES, "url"), [1, 2], prefixes, emitted.append
@@ -184,7 +197,17 @@ def test_failure_stops_admission_but_preserves_other_instance_completion(monkeyp
         }
 
     monkeypatch.setattr(pressure, "generate", generate)
-    prefixes = {engine: [{"tokens": [1] * 64, "text": "native"}] * 2 for engine in pressure.ENGINES}
+    prefixes = {
+        engine: [
+            {
+                "tokens": [1] * 64,
+                "text": "native",
+                "usage": {"prompt_tokens": 64, "completion_tokens": 2},
+            }
+        ]
+        * 2
+        for engine in pressure.ENGINES
+    }
     emitted = []
     rows, window = pressure.run_window(
         args(), dict.fromkeys(pressure.ENGINES, "url"), [1], prefixes, emitted.append
@@ -195,3 +218,64 @@ def test_failure_stops_admission_but_preserves_other_instance_completion(monkeyp
     assert rows[0]["engine"] == "sglang"
     with pytest.raises(ValueError, match="Pressure request failed"):
         pressure.validate_window(args(), rows, window)
+
+
+@pytest.mark.parametrize("field", ["text", "prompt_tokens", "completion_tokens"])
+def test_native_oracle_requires_matching_text_and_both_token_counts(field):
+    result = {"text": "native", "usage": {"prompt_tokens": 64, "completion_tokens": 2}}
+    assert pressure.matches_native(result, copy.deepcopy(result))
+    reference = copy.deepcopy(result)
+    if field == "text":
+        reference["text"] = "different"
+    else:
+        reference["usage"][field] += 1
+    assert not pressure.matches_native(result, reference)
+
+
+@pytest.mark.parametrize("foreground_failure", [False, True])
+def test_real_sampler_failure_is_strict_and_preserves_foreground_error(
+    tmp_path, foreground_failure
+):
+    class UnavailableMetrics(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(503)
+            self.end_headers()
+
+        def log_message(self, format, *values):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), UnavailableMetrics)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    options = args()
+    options.output = tmp_path
+    options.sample_interval = 0.01
+    expected = ValueError if foreground_failure else RuntimeError
+    try:
+        with (
+            pytest.raises(expected, match="foreground failed" if foreground_failure else "sampler"),
+            pressure.resource_sampler(
+                options, f"http://127.0.0.1:{server.server_port}", dict(os.environ)
+            ),
+        ):
+            deadline = time.monotonic() + 10
+            while not (tmp_path / "resources.summary.json").exists():
+                assert time.monotonic() < deadline, "Sampler did not finish its failed scrape"
+                time.sleep(0.01)
+            if foreground_failure:
+                raise ValueError("foreground failed")
+        cleanup = json.loads((tmp_path / "sampler-cleanup.json").read_text())
+        assert cleanup["exit_code"] == 1 and not cleanup["forced_kill"]
+        assert json.loads((tmp_path / "resources.summary.json").read_text())["errors"]
+        if foreground_failure:
+            assert cleanup["primary_failure"] == {
+                "type": "ValueError",
+                "message": "foreground failed",
+            }
+        else:
+            assert cleanup["primary_failure"] is None
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+        assert not thread.is_alive()

@@ -39,7 +39,7 @@ record submitted, merged and released as different states.
 | S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. Independent final review accepts the second frozen S2.10 same-host formal handoff: all 25 cells are valid and five 16-owner ordinary visibility runs pass 50 ms, while both DRAM and SSD isolation fail the frozen per-pair/CI contract. S2.10b lifecycle, low-overhead observation and 14-cell diagnosis are complete. Independent review accepts the diagnostic archive but blocks a production repair: the dominant measured tail is after native return at the Python observer boundary, while no repeatable Manager, metadata-lock, completion-notification or SSD-owner shift is established. The supported envelope stays four owners and all prior formal campaigns remain immutable. Physical cross-host cache/HA, independent etcd failure domains and native GDS are qualification blocked on missing hardware; final serving, RDMA and S3-dependent cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
-| S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.31.0/0.5.21 final wheel passes ordinary-cache installed/model/lifecycle gates and the S5.5 same-host dual-engine shared-Manager DRAM/io_uring cells (including overlapping restore and drained Manager cold restart) and bounded native P/D model gates locally. Independent acceptance, public lifecycle implementation and broader deployment qualification remain open. |
+| S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.31.0/0.5.21 final wheel passes ordinary-cache installed/model/lifecycle gates, same-host dual-engine shared-Manager DRAM/io_uring restart/overlap gates and bounded native P/D model gates locally. Bounded SSD host restore batching and the mixed-pressure harness are implemented; short pressure gates pass, but sustained qualification is blocked by intermittent SGLang IPC startup discovery. Independent acceptance, public lifecycle implementation and broader deployment qualification remain open. |
 | S6 | Partial: observations/limited choices exist; unified executed decisions remain open. |
 | S7 | Open: consumed retention/checkpoint compiler beyond recovery validation. |
 | S8 | Partial: existing wheel workflow; final images, artifact gates and publication remain open. |
@@ -1348,14 +1348,31 @@ raw cohort and all surviving controls are archived at
 `/workspace/orbitkv-s5-ssd-host-batching-20261007/`. Independent review and
 sustained mixed save/restore tail/fairness qualification remain open.
 
-The next bounded S5.5 delivery adds `benches.shared_manager_pressure`: two
-installed official engines, bounded per-instance admission, 512 MiB shared DRAM,
-8 GiB io_uring SSD, 384 MiB global/192 MiB configured per-instance query budgets,
-fresh/reused inputs, native controls for every output and a separate resource
-sampler. CPU harness contracts pass; hardware smoke, sustained pressure and KDA
-consumed direct/kernel comparisons are pending. The frozen task and plan are at
-`/root/orbitkv-artifacts/s5-shared-pressure-kda-20261007/`; this is the existing
-S4/S5.5 execution item, not a separate completion queue.
+The bounded S5.5 pressure harness is implemented at `7deb9769`, with strict
+primary-error preservation at `36433e55`. `benches.shared_manager_pressure`
+uses two installed official engines, per-instance request quotas, 512 MiB shared
+DRAM, 8 GiB io_uring SSD, 384 MiB global/192 MiB configured per-instance query
+budgets, fresh/reused inputs, native controls for every output and an independent
+resource sampler. CPU benchmark contracts pass (246 tests); the default
+source-only Python gate passes 273 tests with one skip. The initial 15-second
+direct smoke passes 44 requests, physical SSD reads/writes, sampled global/pool
+budgets, unchanged installed files and eight normal zero exits. A fresh untraced
+file-lifetime diagnostic also passes 43 requests; its short tails are descriptive.
+Per-instance reservation peaks are not exported or measured by this harness.
+
+**Sustained qualification blocked:** two untraced launches fail in the SGLang
+client's iceoryx2 `DoesNotExist` discovery before observer start and foreground
+round zero. The 900-second direct cell is invalid; its kernel cell is not started.
+A complete traced kernel profile passes 85 requests and supplies the actual save
+fragment histogram, while idle and registered-GPU delayed joins also pass. These
+diagnostics do not establish a cause or a production repair. The SGLang-only
+trace wrapper requires forced cleanup and is retained as an invalid diagnostic.
+Do not inherit a sustained tail/fairness or backend-advantage claim from any of
+these short cells. The frozen task, KDA rejected candidate and complete failure
+archive are at `/root/orbitkv-artifacts/s5-shared-pressure-kda-20261007/`, mirrored
+under the matching `/workspace/` directory on A100. The next S5.5 action is to
+reproduce and fix startup discovery, independently review it, then freeze a new
+sustained cohort. Existing S3/public-lifecycle dependencies remain unchanged.
 
 This delivers one same-host deployment profile, not all of S5.5. Independent review,
 sustained restore pressure/fairness, isolated containers,

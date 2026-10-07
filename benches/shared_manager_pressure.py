@@ -56,6 +56,13 @@ def identity(seed: str, engine: str, index: int, working_set: int, cold_every: i
     }
 
 
+def matches_native(result: dict, reference: dict) -> bool:
+    return result["text"] == reference["text"] and all(
+        result["usage"].get(name) == reference["usage"].get(name)
+        for name in ("prompt_tokens", "completion_tokens")
+    )
+
+
 def run_window(args, urls, vocabulary, prefixes, emit):
     started = time.monotonic()
     deadline = started + args.duration_seconds
@@ -76,7 +83,7 @@ def run_window(args, urls, vocabulary, prefixes, emit):
             "tokens": tokens,
             "started_seconds": begun,
             "finished_seconds": time.monotonic() - started,
-            "matches_reference_output": result["text"] == reference["text"]
+            "matches_reference_output": matches_native(result, reference)
             if reference is not None
             else None,
         }
@@ -294,6 +301,7 @@ def resource_sampler(args, url, env):
     with (args.output / "sampler.log").open("x") as log:
         process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=log, text=True)
         forced = False
+        primary_error = None
         try:
             with selectors.DefaultSelector() as selector:
                 selector.register(process.stdout, selectors.EVENT_READ)
@@ -304,8 +312,11 @@ def resource_sampler(args, url, env):
             if not ready["ready"] or ready["forbidden_modules"]:
                 raise RuntimeError(f"Sampler loaded inference/native modules: {ready}")
             yield
+        except BaseException as error:
+            primary_error = error
+            raise
         finally:
-            if process.poll() is None:
+            if process.poll() is None and not path.with_suffix(".summary.json").exists():
                 process.send_signal(signal.SIGTERM)
             try:
                 process.wait(timeout=15)
@@ -320,9 +331,15 @@ def resource_sampler(args, url, env):
                     "pid": process.pid,
                     "exit_code": process.returncode,
                     "forced_kill": forced,
+                    "primary_failure": {
+                        "type": type(primary_error).__name__,
+                        "message": str(primary_error),
+                    }
+                    if primary_error is not None
+                    else None,
                 },
             )
-            if forced or process.returncode != 0:
+            if (forced or process.returncode != 0) and primary_error is None:
                 raise RuntimeError("Resource sampler failed or required forced cleanup")
 
 
@@ -482,7 +499,7 @@ def run(args):
                                 prefix["tokens"],
                                 args.output_tokens,
                             )
-                            if result["text"] != prefix["text"]:
+                            if not matches_native(result, prefix):
                                 raise RuntimeError(f"{engine} warm-up differed from native control")
                     before = wait_for_drain(http_port)
                     write_json(args.output / "metrics-before.json", before)
@@ -523,7 +540,7 @@ def run(args):
                             if row["kind"] == "cold"
                             else prefixes[engine][row["prefix_index"]]
                         )
-                        row["matches_reference_output"] = row["text"] == reference["text"]
+                        row["matches_reference_output"] = matches_native(row, reference)
                         oracles.write(
                             json.dumps(
                                 {

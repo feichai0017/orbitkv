@@ -91,6 +91,28 @@ reads after DRAM eviction, and overlapping two-engine restore loads exactly
 prove persistent index recovery or abrupt-death reclamation. Installed files
 remain unchanged and all 28 services exit normally without forced cleanup.
 
+A follow-up debug profile of the unchanged installed wheel `8acd6a06…` records
+actual full-save shapes: vLLM has 432 descriptors of 256 KiB; SGLang has 864 of
+128 KiB, with partial saves of 72 descriptors. A native KDA candidate caps the
+existing grid at the existing SM-times-four budget. Its first matched pair passes
+all byte controls across 42 case/direction rows per executable, but two small
+H2D cases regress 5.37% and 8.23%, exceeding the frozen 5% median guard. The
+observed large SGLang shape improves only about 1%–2%, below the declared 3%
+benefit target. The candidate is rejected; later pairs are not run and production
+CUDA/Rust code, installed wheel and backend defaults are unchanged. The native
+addresses are synthetic fragmented fixtures with measured descriptor sizes and
+counts, not a replay of engine pointers or a captured restore histogram.
+
+The profile passes 85 native-output comparisons with normal cleanup, but tracing
+invalidates a performance comparison. Two untraced SGLang startups fail discovery
+before the pressure window; the fresh sustained cohort stops at its first cell.
+Idle/registered delayed joins and a short untraced file-lifetime diagnostic pass,
+without proving the intermittent failure repaired. Nsight Compute/System are
+unavailable on this A100; timings do not establish a hardware-counter cause.
+Contracts, sources, failed cells and the rejected candidate remain at
+`/root/orbitkv-artifacts/s5-shared-pressure-kda-20261007/`, mirrored at
+`/workspace/orbitkv-s5-shared-pressure-kda-20261007/`.
+
 Independent reproduction, sustained inference contention, CUDA graph execution,
 H20, native transfer faults and S3-dependent reclamation remain unqualified.
 These results do not close S4 or establish TTFT/ITL, throughput or NIC isolation.
