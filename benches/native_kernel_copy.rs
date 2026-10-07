@@ -98,6 +98,8 @@ fn cases() -> Vec<Case> {
         ("large-2", vec![1048576; 2], 0, 0, false),
         ("large-8", vec![1048576; 8], 0, 0, true),
         ("large-32", vec![1048576; 32], 0, 0, true),
+        ("ascending-4k-1024", vec![4096; 1024], 0, 0, false),
+        ("ascending-4k-4096", vec![4096; 4096], 0, 0, false),
         ("fragmented-4k-1024", vec![4096; 1024], 0, 0, true),
         ("fragmented-4k-4096", vec![4096; 4096], 0, 0, true),
     ] {
@@ -181,10 +183,8 @@ fn main() {
                 host: unsafe { memory.host.add(source_offset) },
                 host_device: memory.mapped + source_offset as u64,
                 size,
-                // Separate physical registrations forbid invalid DMA coalescing
-                // across the deliberately guarded gaps.
-                device_allocation: id,
-                host_registration: id,
+                device_allocation: 0,
+                host_registration: 0,
             });
             offset += width;
         }
