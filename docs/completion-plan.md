@@ -7,12 +7,12 @@ the reviewer independently checks its consumed path, tests and evidence.
 
 ## Release baseline and reference policy
 
-Official latest non-prerelease versions were checked on **2026-09-30**:
+Official latest non-prerelease versions were checked on **2026-10-06**:
 
 | Project | Reference release / commit | OrbitKV qualification |
 | --- | --- | --- |
-| [vLLM](https://github.com/vllm-project/vllm/releases/tag/v0.30.0) | `v0.30.0` / `ced6857afa0ea7b2e3f0846a62e1394e90f15607` | Dependency/submodule upgraded. A100 Qwen3-8B DRAM/SSD and eager/graph gates pass locally; independent upgrade acceptance and broader model/topology qualification remain open. |
-| [SGLang](https://github.com/sgl-project/sglang/releases/tag/v0.5.20) | `v0.5.20` / `94602c9c2b7cbdb8efd5c52802dac6a1c180089e` | Current dependency/submodule and recorded serving baseline. |
+| [vLLM](https://github.com/vllm-project/vllm/releases/tag/v0.31.0) | `v0.31.0` / `db9527a46873454610df6dbedf79a36d6bf1a7f6` | Aligned official release pins; final installed-wheel DRAM/io_uring and model gates pass locally, including 15 released callback/recovery checks. Independent acceptance and broader profiles remain open; historical 0.30.0 graphs are not inherited. |
+| [SGLang](https://github.com/sgl-project/sglang/releases/tag/v0.5.21) | `v0.5.21` / `e00930c5489053f26d86b179cee0d087f846acbb` | Aligned official release pins; final installed-wheel DRAM/io_uring, direct GPU restart and 43 released event/recovery checks pass locally. Independent acceptance and public lifecycle/deployment gates remain open. |
 | [LMCache](https://github.com/LMCache/LMCache/releases/tag/v0.5.5) | `v0.5.5` / `05a013b29da78cf2321b9b46ec5039dde2fb0bb0` | Integration and matched-comparison reference, not evidence of OrbitKV support. |
 
 At the start of an engine upgrade, recheck official releases, record the selected
@@ -39,7 +39,7 @@ record submitted, merged and released as different states.
 | S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. Independent final review accepts the second frozen S2.10 same-host formal handoff: all 25 cells are valid and five 16-owner ordinary visibility runs pass 50 ms, while both DRAM and SSD isolation fail the frozen per-pair/CI contract. S2.10b lifecycle, low-overhead observation and 14-cell diagnosis are complete. Independent review accepts the diagnostic archive but blocks a production repair: the dominant measured tail is after native return at the Python observer boundary, while no repeatable Manager, metadata-lock, completion-notification or SSD-owner shift is established. The supported envelope stays four owners and all prior formal campaigns remain immutable. Physical cross-host cache/HA, independent etcd failure domains and native GDS are qualification blocked on missing hardware; final serving, RDMA and S3-dependent cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
-| S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.30.0 adapter upgrade consumes native transfer results with local A100 cache/P/D evidence. Independent upgrade acceptance and public lifecycle/deployment gates remain open. |
+| S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.31.0/0.5.21 final wheel passes ordinary-cache installed/model/lifecycle gates and the S5.5 same-host dual-engine shared-Manager DRAM/io_uring cells locally. Independent acceptance, public lifecycle implementation and broader deployment qualification remain open. |
 | S6 | Partial: observations/limited choices exist; unified executed decisions remain open. |
 | S7 | Open: consumed retention/checkpoint compiler beyond recovery validation. |
 | S8 | Partial: existing wheel workflow; final images, artifact gates and publication remain open. |
@@ -71,7 +71,7 @@ Cross-host qualification remains open until actual failure-domain evidence exist
 | Compute overlap | Qualified raw single-part layer/group readiness; coarse dependencies where required | SSD/codec pipelines and legal multipart overlap |
 | Distributed discovery | Local `GlobalIndex`, bounded scoped owner streams, explicit coverage and independently accepted same-host live-store correctness; no directory RPCs | 5% isolation and 16-owner performance remediation, plus separate host-failure domains |
 | Remote recovery | Source authorization, TENT READ, release reconciliation, peer DRAM/SSD | Permanent requester loss and transfer/partition fault qualification |
-| Engine support | vLLM 0.30.0 local recovery under qualification; SGLang 0.5.20 unchanged; historical 0.29.0 local recovery and replica-sharing evidence retained | New-release model/topology requalification; multi-instance, container, P/D and TP/PP cells |
+| Engine support | Official vLLM 0.31.0 and SGLang 0.5.21 ordinary-cache installed/model gates pass locally; historical release cohorts remain unchanged | Independent acceptance, public lifecycle contracts, multi-instance, container, P/D and TP/PP cells |
 | Cost decisions | Resource-scoped observations, shadow estimates and guarded experimental peer choices | One consumed planner for complete routes, legal boundaries and P/D authority |
 | Hybrid semantics | Declared recovery contracts and compiled page demands | General read-set/retention IR, checkpoint placement and semantic reclamation |
 | Packaging | Wheel construction and installed-artifact gates already exist | New final artifact requalification, independent service images and publication |
@@ -960,8 +960,36 @@ integration contracts from [the adapter guide](adapters.md#lmcache-and-flexkv-re
 
 ### S5.1 — Release and interface audit
 
-**vLLM 0.30.0 implementation delivered with local qualification; independent
-review open.** Dependency and submodule use the exact release above. Cache and
+**2026-10-06 upgrade: vLLM 0.31.0 / SGLang 0.5.21 implemented; independent acceptance open.**
+Both are official released sources, with aligned dependency, probe and submodule
+pins checked by CI. The complete CUDA 13 wheel integrates only the accepted main
+Manager baseline `3af8022e`. Its 27 packaged Python source/stub files match the
+checkout. On A100, all four Qwen3-8B installed-wheel dense TP=1/PP=1 eager
+DRAM/io_uring cells pass cold/native-HBM/full/partial reuse, RECORD integrity and
+normal-exit gates. Each full and partial restore loads 113,246,208 bytes; all 16
+service processes exit zero without forced cleanup. Both SSD cells prove actual
+io_uring reads after DRAM eviction. The same final wheel passes the standard
+vLLM model gate (six tests and one dense-model recurrent skip), SGLang direct
+GPU restart recovery (two tests), and released lifecycle selections (15 vLLM,
+43 SGLang). The model gate uses the release's default graph selection; this is
+not a full-graph-specific, pressure or hybrid qualification. A first native
+baseline failed in shared-cache Triton compilation with `Unknown key: 'cubin'`;
+the same command passes with new per-run compiler caches. The failure remains
+preserved and the former shared cache is not certified. Final GPU use is zero
+and the owned-process postflight is empty.
+Preserve older cohorts; do not transfer their P/D, hybrid or topology claims to
+a new release. Independent review and broader S5 qualification remain open.
+Evidence: `/root/orbitkv-artifacts/s5-release-upgrade-20261006/`.
+
+The new release audit still finds V2 restore after recurrent preprocessing,
+SGLang graph capture before external factory construction, no public pending
+lookup admission ticket and device P/D timeout release without a complete drain
+ACK. Keep their dependent profiles closed or experimental. Dynamic LoRA is
+already rejected by both adapters; live-weight invalidation and cross-host TP
+query coordination remain implementation work, not hardware-only gates.
+
+**Historical vLLM 0.30.0 upgrade record; independent review remains open.**
+The following preserves the earlier 0.30.0 delivery. Cache and
 P/D workers return native `KVConnectorTransferResults`; failed receive and
 finished receive share one snapshot, replacing `PdWorkerMetadata` and its
 duplicate queue. Best-effort cache publication explicitly returns false for
@@ -996,7 +1024,7 @@ Evidence: `/root/orbitkv-artifacts/engine-native-lifecycle-20260930/vllm-0.30/`.
 Previous 0.29.0 model, topology and performance measurements remain historical.
 This delivery does not close S5.3/S5.4 or establish a performance advantage.
 
-- Audit vLLM 0.30.0 and SGLang 0.5.20 by exact release commits above, and LMCache
+- Audit vLLM 0.31.0 and SGLang 0.5.21 by exact release commits above, and LMCache
   0.5.5 against those interfaces. Check recipe prerequisites in release source;
   do not assume a documented upstream PR is included in either engine release.
 - Inventory every public callback, internal Hook, monkey patch, local request
@@ -1072,7 +1100,50 @@ Follow-up evidence: `/root/orbitkv-artifacts/adapter-cleanup-20260930/pd-followu
 
 Overall S5.2 acceptance, engine upgrades, upstream registration, and additional
 multi-GPU/P/D qualification remain open.
+
+The installed-wheel ordinary-cache gate now defines four pinned-release cells:
+vLLM/SGLang × DRAM/io_uring SSD, dense TP=1/PP=1 eager. It compares native
+controls, cold/native-HBM/full/partial reuse, strict Manager SIGTERM drain and
+installed engine/OrbitKV RECORD integrity. Source-injected E2E remains a separate
+development gate. Implementation and qualification are recorded separately; this
+addition alone does not close S5.2, public-Hook or native P/D lifecycle work.
 Evidence: `/root/orbitkv-artifacts/adapter-cleanup-20260930/`.
+
+On 2026-10-06, the frozen CUDA 13 wheel passes all four installed-package
+cells on A100 with Qwen3-8B. Native HBM hits add no external query or H2D copy;
+full and partial restores each load 113,246,208 bytes. SSD cells prove io_uring
+reads after DRAM eviction. All 16 service processes exit zero with no forced
+cleanup; installed engine and OrbitKV RECORD hashes are unchanged. The broader
+vLLM correctness gate passes six tests with one dense-model hybrid skip;
+released-engine lifecycle selections pass 15 vLLM and 43 SGLang tests. These
+controlled lifecycle tests do not qualify native P/D faults or hybrid serving.
+The installed console now executes the Manager directly, preserving its PID,
+signals and exit code. Raw RECORD validation also passes the Python 3.13 CI
+missing-file and missing-directory controls.
+
+**Local ordinary-cache checks pass; independent acceptance remains open.**
+The first SGLang exit-counter diagnosis is an **invalid measurement**: it read
+`offset * 8` from the shared-memory file, including the 64-byte MapInfo header,
+instead of `64 + offset * 8` from its counter payload. Its reported remaining
+value was the file reference count, not a tensor export credit. The failed
+interpretation and original trace remain immutable.
+
+The calibrated follow-up on the same installed wheel checks independent tensors
+and shared-storage views with 3 and 72 exports: every credit returns to zero while
+the consumer remains alive. Official SGLang normal close similarly returns all
+72 OrbitKV credits to zero after successful Manager unregister and at Python
+exit; both service exits are zero and GPU postflight is empty. The PyTorch exit
+warning remains: its producer bookkeeping is not a per-counter leak oracle.
+The counter reader has first/last-live and truncated-slot regression controls.
+This is local normal-exit evidence, pending independent review; it does not
+qualify crash reclamation, cancellation during DMA, pressure, graphs, multi-GPU,
+cross-host cache or native P/D composition. S5/S3 broader lifetime work remains
+open. Follow-up evidence: `/root/orbitkv-artifacts/s5-ipc-release-20261006/`;
+A100 raw root: `/workspace/orbitkv-s5-ipc-release-20261006/`.
+Frozen inputs, failures, cleanup and diagnosis:
+`/root/orbitkv-artifacts/s5-installed-cache-20261006/candidate-1b3d4c22/`;
+A100 raw mirror:
+`/workspace/orbitkv-s5-installed-cache-20261006/candidate-1b3d4c22/`.
 
 - vLLM: retain `OrbitKVConnector` and distinct scheduler/worker responsibilities.
   Implement released lookup/allocation, registration, load/save and terminal
@@ -1143,7 +1214,7 @@ Unreleased required fixes keep only their dependent profiles experimental.
 ### S5.4 — Official native P/D and independent cache
 
 **Release-only cutover implemented; qualification and independent acceptance open.**
-Use official vLLM 0.30.0 and SGLang 0.5.20. Live vLLM P/D uses NIXL and
+Use official vLLM 0.31.0 and SGLang 0.5.21. Live vLLM P/D uses NIXL and
 MultiConnector; SGLang uses native disaggregation. Manager shared-cache traffic
 continues to use TENT. There is no maintained engine fork runtime.
 
@@ -1154,7 +1225,8 @@ continues to use TENT. There is no maintained engine fork runtime.
   cache and native P/D owns incoming writes. Test other cache-selection orders
   separately. Python owns engine callbacks/layout/events, Rust owns cache
   transfers, batching, leases and resource lifetime.
-- Combine accepted S2.8 only; do not absorb unaccepted S2.9. Freeze the new wheel,
+- Integrate the accepted main Manager baseline; keep pending Traex substages
+  separate. Freeze the new wheel,
   run official-engine cold/warm/restart/failure DRAM/SSD and shared-cache gates,
   and verify installed engine files before/after.
 - Require real native P/D output, cancellation, preemption/retraction, restart,
@@ -1172,6 +1244,37 @@ wheel gates. Open profiles only with proven ownership and fault handling; no
 fork-only factory, callback, default configuration or CI dependency may remain.
 
 ### S5.5 — Deployment matrix and upstream maintenance
+
+**Local gates passed; independent review open (2026-10-07):** test commit
+`06d00d53` adds a reproducible two-engine shared-Manager gate for official
+vLLM 0.31.0/SGLang 0.5.21. One A100 runs dense Qwen3-8B, TP=1/PP=1 eager,
+a 1 GiB Manager pool and optional 2 GiB io_uring SSD. Each framework has its
+own native output control and installed environment. Both media pass concurrent
+cold/HBM requests and each engine's graceful exit/restart while the survivor
+continues serving through the same Manager PID. Each restarted engine loads
+113,246,208 bytes; SSD recovery has zero Manager DRAM beforehand and the same
+positive physical io_uring byte delta. All 14 services across these two cells
+exit zero without forced cleanup. Installed engine/OrbitKV hashes stay unchanged.
+
+The production wheel remains the S5.2 freeze `9d14998d…`; no Manager, engine,
+cache strategy or transport code changes. The test helper is shared with the
+ordinary full/partial installed-wheel gate. RECORD validation now covers all
+package data/code, with only generated Python bytecode exempt; the engine pin
+checker parses `project.optional-dependencies` as TOML, including Python 3.10.
+The first SSD attempt stopped at a test-only positive-eviction assertion when a
+second cleanup was unnecessary; its logs and complete frozen cohort remain
+archived. The corrected gate records every metrics boundary and accepts an
+already-empty DRAM only while still requiring positive SSD reads. External
+source, commands, raw runs and handoff:
+`/root/orbitkv-artifacts/s5-shared-manager-20261007/`, mirrored under
+`/workspace/orbitkv-s5-shared-manager-20261007/` on A100. Use
+[the maintained reproduction](../python/tests/README.md#two-engines-sharing-one-manager).
+
+This delivers one same-host deployment profile, not all of S5.5. Independent review,
+concurrent restore pressure/fairness, Manager restart, isolated containers,
+physical cross-host/rank combinations, native P/D faults and S3-dependent
+reclamation remain open. Shared capacity does not establish interchangeable
+cross-engine KV bytes or a latency/throughput advantage.
 
 - Track each engine separately: single instance; independent replicas; multiple
   instances sharing a Manager; dense/hybrid; P/D; attention DP, TP, PP, MoE EP and

@@ -59,6 +59,16 @@ def orbitkv_pool_size(request) -> str:
 def pytest_addoption(parser):
     """Add custom command line options for E2E tests."""
     parser.addoption(
+        "--vllm-release-python",
+        default=None,
+        help="Installed official vLLM interpreter for the shared-Manager release gate",
+    )
+    parser.addoption(
+        "--sglang-release-python",
+        default=None,
+        help="Installed official SGLang interpreter for the shared-Manager release gate",
+    )
+    parser.addoption(
         "--vllm-multi-connector",
         action="store_true",
         default=False,

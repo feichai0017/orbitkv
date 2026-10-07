@@ -1,11 +1,48 @@
 # Released engine interface audit
 
-The runtime pins are official **vLLM 0.30.0** (`ced6857afa0ea7b2e3f0846a62e1394e90f15607`)
-and **SGLang 0.5.20** (`94602c9c2b7cbdb8efd5c52802dac6a1c180089e`). Package extras
+The runtime pins are official **vLLM 0.31.0** (`db9527a46873454610df6dbedf79a36d6bf1a7f6`)
+and **SGLang 0.5.21** (`e00930c5489053f26d86b179cee0d087f846acbb`). Package extras
 and source submodules agree. The [completion plan](completion-plan.md#s5--released-engine-integration-and-upstream-contributions)
 is the execution queue; this document records consumed contracts and restrictions.
 The earlier reviewed audit is preserved at
 [commit 9aee895e](https://github.com/feichai0017/orbitkv/blob/9aee895ebe0ae2fb97279a477f00452b32025480/docs/engine-release-audit.md).
+
+## 2026-10-06 official release recheck
+
+The current upgrade freezes official vLLM
+[0.31.0 / db9527a4](https://github.com/vllm-project/vllm/tree/db9527a46873454610df6dbedf79a36d6bf1a7f6)
+and SGLang
+[0.5.21 / e00930c5](https://github.com/sgl-project/sglang/tree/e00930c5489053f26d86b179cee0d087f846acbb).
+The rebuilt complete wheel passes all four A100 dense eager installed-package
+DRAM/io_uring cells, 15 vLLM and 43 SGLang released callback/recovery tests,
+the standard vLLM model gate and two SGLang GPU restart gates. Independent
+acceptance remains open; historical P/D, hybrid and topology claims are not
+inherited. See S5.1 for the preserved compiler-cache failure and exact scope.
+
+The remaining interface gaps still exist in these exact release sources:
+
+- vLLM `v1/worker/gpu/model_runner.py` calls recurrent `preprocess_state` before
+  `kv_connector.pre_forward`; `gpu/kv_connector.py` performs load and preemption
+  handling in `pre_forward`. Keep V2/recurrent profiles rejected. V1 remains the
+  single-attention-group candidate; no runner patch is installed.
+- SGLang `mem_cache/registry.py` still selects only Mooncake/Mori external
+  factories, and constructs the cache after graph capture. Public radix backend
+  registration works, but does not replace OrbitKV's pre-capture event Hook.
+- SGLang's `UnifiedCacheLinker.lookup` still returns ready boundaries rather than
+  pending tickets. Preserve admission and native abort/drain ownership until an
+  engine callback actually consumes its replacement.
+- SGLang `disaggregation/decode.py:resolve_deferred_releases` retains host-staged
+  destinations without a drain ACK, but still releases device destinations after
+  timeout. That host fix does not qualify the current device P/D fault profile.
+- SGLang weight updates can skip `flush_cache`; a namespace change only in
+  `linker.reset` cannot safely invalidate every live update. Both adapters reject
+  dynamic LoRA. Live-weight invalidation and immutable per-adapter reuse need a
+  consumed engine contract; do not add a silent runtime patch.
+
+LMCache 0.5.5 remains the latest released reference checked on this date. The
+older interface inventory below records its 0.30.0/0.5.20 research inputs, not
+new-release qualification. The complete delivery status lives in S5 of the
+completion plan.
 
 ## Released integration boundaries
 
@@ -36,7 +73,8 @@ requires released ordering and atomic state visibility plus model/fault gates.
 ## Remaining Hook contracts
 
 SGLang's public Hook registry does not make its string targets stable APIs.
-These are explicitly version-coupled to 0.5.20 and remain subject to GPU gates:
+These string targets are consumed in 0.5.21 and remain subject to GPU gates.
+The older 0.5.20 links below preserve the original interface research:
 
 | Internal target or bridge | What it protects | Official replacement / disposition | Removal gate |
 | --- | --- | --- | --- |

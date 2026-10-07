@@ -28,7 +28,7 @@ Run an independent Cache Manager per host and connect the engines on that host
 to its shared cache. Engines own GPU memory and scheduling; OrbitKV manages
 external replicas and transfers. See [deployment patterns](docs/deployment.md)
 for shared-instance budgets and container qualification limits.
-The pinned engine baselines are **vLLM 0.30.0** and **SGLang 0.5.20**;
+The pinned engine baselines are **vLLM 0.31.0** and **SGLang 0.5.21**;
 see the [upgrade qualification scope](docs/completion-plan.md#s51--release-and-interface-audit).
 The recorded [engine-local raw Restore cutover](docs/engine-local-restore.md) passes
 single-H20 Qwen3-8B DRAM serving correctness and restart reuse with vLLM 0.29.0

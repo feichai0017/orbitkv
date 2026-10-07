@@ -16,6 +16,7 @@ import pytest
 import requests
 
 from tests.support.cache_manager import find_available_port
+from tests.support.installed_serving import process_group_members
 from tests.support.metrics import fetch_orbitkv_metrics
 from tests.support.paths import PYTHON_ROOT
 
@@ -90,7 +91,7 @@ def test_sglang_native_pd_and_external_cache_match_monolithic(channel_server, re
         "--enable-cache-report",
         "--disable-cuda-graph",
         "--mem-fraction-static",
-        "0.8",
+        "0.8" if decode_device else "0.4",
     ]
 
     def launch(
@@ -126,16 +127,38 @@ def test_sglang_native_pd_and_external_cache_match_monolithic(channel_server, re
         pytest.fail(f"{name} startup timed out:\n{logs[name].read_text()[-8000:]}")
 
     def stop_all() -> None:
+        failures = []
         while processes:
             process = processes.pop()
             with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGTERM)
-            try:
-                process.wait(timeout=15)
-            except subprocess.TimeoutExpired:
+                process.send_signal(signal.SIGTERM)
+            deadline = time.monotonic() + 90
+            while time.monotonic() < deadline:
+                process.poll()
+                if not process_group_members(process.pid):
+                    break
+                time.sleep(0.1)
+            remaining = process_group_members(process.pid)
+            if remaining:
                 with contextlib.suppress(ProcessLookupError):
                     os.killpg(process.pid, signal.SIGKILL)
-                process.wait(timeout=5)
+            process.wait(timeout=10)
+            cleanup = {
+                "pid": process.pid,
+                "exit_code": process.returncode,
+                "forced_kill": bool(remaining),
+                "remaining_processes": process_group_members(process.pid),
+            }
+            (tmp_path / f"native-cleanup-{process.pid}.json").write_text(
+                json.dumps(cleanup, indent=2) + "\n"
+            )
+            if (
+                remaining
+                or cleanup["remaining_processes"]
+                or process.returncode not in {0, -signal.SIGTERM}
+            ):
+                failures.append(cleanup)
+        assert not failures, failures
 
     def start_pd() -> int:
         prefill_port = find_available_port()

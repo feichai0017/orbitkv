@@ -9,8 +9,8 @@ No Catalog or peer gRPC listener is needed for this deployment.
 
 | Adapter | Validated release | Single-node path | Current limit |
 | --- | --- | --- | --- |
-| vLLM `OrbitKVConnector` | `0.30.0` local upgrade gates; independent acceptance open | KV connector callbacks, CUDA IPC, UDS/iceoryx2 | Implemented Full/MLA, Full + SWA and aligned recurrent groups require equal logical block sizes; historical model/topology cells need release-specific requalification; cross-host TP remains unsupported |
-| SGLang `OrbitKVLinker` | `0.5.20` | RadixCache external linker, CUDA IPC, UDS/iceoryx2 | Full MHA/MLA, Full + SWA, Full + recurrent/conv, and their combination; ordinary contiguous pools; multi-rank serving remains unqualified |
+| vLLM `OrbitKVConnector` | `0.31.0` upgrade; independent acceptance open | KV connector callbacks, CUDA IPC, UDS/iceoryx2 | Implemented Full/MLA, Full + SWA and aligned recurrent groups require equal logical block sizes; historical model/topology cells need release-specific requalification; cross-host TP remains unsupported |
+| SGLang `OrbitKVLinker` | `0.5.21` upgrade; independent acceptance open | RadixCache external linker, CUDA IPC, UDS/iceoryx2 | Full MHA/MLA, Full + SWA, Full + recurrent/conv, and their combination; ordinary contiguous pools; multi-rank serving remains unqualified |
 
 Start with a single-rank model and one Manager. Check
 [model qualification](models.md) and the
@@ -91,7 +91,7 @@ Install the validated vLLM release and the wheel in one environment:
 
 ```bash
 uv venv .venv/vllm-release --python 3.11
-uv pip install --python .venv/vllm-release/bin/python 'vllm==0.30.0' --torch-backend=cu130
+uv pip install --python .venv/vllm-release/bin/python 'vllm==0.31.0' --torch-backend=cu130
 uv pip install --python .venv/vllm-release/bin/python --reinstall "$WHEEL"
 ```
 
@@ -133,7 +133,7 @@ environment:
 
 ```bash
 uv venv .venv/sglang-release --python 3.11
-uv pip install --python .venv/sglang-release/bin/python 'sglang==0.5.20' --torch-backend=cu130
+uv pip install --python .venv/sglang-release/bin/python 'sglang==0.5.21' --torch-backend=cu130
 uv pip install --python .venv/sglang-release/bin/python --reinstall "$WHEEL"
 ```
 
