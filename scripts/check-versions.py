@@ -5,6 +5,7 @@ import argparse
 import ast
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -25,12 +26,16 @@ def check_engine_releases(root: Path) -> None:
         raise SystemExit(
             "engine release gate must declare versions and commits for both engines"
         )
-    manifest = (root / "python/pyproject.toml").read_text()
+    if sys.version_info >= (3, 11):
+        import tomllib
+    else:
+        import tomli as tomllib
+
+    manifest = tomllib.loads((root / "python/pyproject.toml").read_text())
+    extras = manifest.get("project", {}).get("optional-dependencies", {})
     for engine, version in versions.items():
-        extra = re.findall(
-            rf'^{engine} = \["{engine}==([^"\]]+)"\]$', manifest, re.MULTILINE
-        )
-        if extra != [version]:
+        extra = extras.get(engine)
+        if extra != [f"{engine}=={version}"]:
             raise SystemExit(
                 f"{engine} extra {extra!r} differs from release gate {version!r}"
             )

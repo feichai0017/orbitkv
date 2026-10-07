@@ -48,6 +48,7 @@ test = [
     "pytest-xdist>=3.0",
     "numpy>=1.24",
     "requests>=2.26.0",
+    "tomli>=2.0; python_version < '3.11'",
 ]
 dev = [
     { include-group = "test" },

@@ -82,7 +82,9 @@ def distribution_snapshot(distribution, package: str) -> dict:
     unrecorded = [
         str(path)
         for path in package_root.rglob("*")
-        if path.is_file() and path.suffix in {".py", ".so"} and path.resolve() not in recorded
+        if path.is_file()
+        and path.resolve() not in recorded
+        and not (path.suffix == ".pyc" and "__pycache__" in path.relative_to(package_root).parts)
     ]
     assert not unrecorded, f"Unrecorded runtime files: {unrecorded}"
     return {

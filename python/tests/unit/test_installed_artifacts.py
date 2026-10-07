@@ -40,6 +40,9 @@ def installed_distribution(tmp_path):
         "modified",
         "missing",
         "added",
+        "added_data",
+        "generated_bytecode",
+        "cache_payload",
         "editable",
         "unhashed",
         "unhashed_data",
@@ -57,6 +60,13 @@ def test_installed_record_integrity(installed_distribution, change):
         (package / "__init__.py").unlink()
     elif change == "added":
         (package / "runtime_patch.py").write_text("patched = True\n")
+    elif change == "added_data":
+        (package / "runtime_config.json").write_text("unrecorded configuration")
+    elif change in {"generated_bytecode", "cache_payload"}:
+        cache = package / "__pycache__"
+        cache.mkdir()
+        filename = "__init__.cpython-311.pyc" if change == "generated_bytecode" else "config.json"
+        (cache / filename).write_bytes(b"generated cache")
     elif change == "editable":
         installed_distribution.locate_file("sample-1.0.dist-info/direct_url.json").write_text(
             json.dumps({"dir_info": {"editable": True}})
@@ -77,7 +87,7 @@ def test_installed_record_integrity(installed_distribution, change):
         installed_distribution.locate_file("sample-1.0.dist-info/RECORD").unlink()
     elif change == "missing_directory":
         (package / "empty").rmdir()
-    if change == "unchanged":
+    if change in {"unchanged", "generated_bytecode"}:
         assert distribution_snapshot(installed_distribution, "sample") == expected
     else:
         with pytest.raises(AssertionError):
