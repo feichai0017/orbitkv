@@ -18,40 +18,6 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-# Preserve the production descriptor ABI. Extra CTAs divide each fragment's
-# vector and tail loops without sharing writable state or changing stream order.
-CANDIDATE = r"""
-extern "C" __global__ void transfer_blocks(const unsigned long long* __restrict__ desc,
-                                           int n, int ctas) {
-    const int tid = threadIdx.x;
-    const long long work_count = (long long)n * ctas;
-    for (long long work = blockIdx.x; work < work_count; work += gridDim.x) {
-        const int i = work / ctas;
-        const int shard = work % ctas;
-        char* dst = (char*)desc[3 * i];
-        const char* src = (const char*)desc[3 * i + 1];
-        const unsigned long long size = desc[3 * i + 2];
-        const unsigned long long start = (unsigned long long)shard * blockDim.x + tid;
-        const unsigned long long stride = (unsigned long long)blockDim.x * ctas;
-        if ((((unsigned long long)dst | (unsigned long long)src) & 15ULL) == 0) {
-            int4* dst4 = (int4*)dst;
-            const int4* src4 = (const int4*)src;
-            const unsigned long long n4 = size / 16;
-            for (unsigned long long j = start; j < n4; j += stride) {
-                dst4[j] = src4[j];
-            }
-            for (unsigned long long j = n4 * 16 + start; j < size; j += stride) {
-                dst[j] = src[j];
-            }
-        } else {
-            for (unsigned long long j = start; j < size; j += stride) {
-                dst[j] = src[j];
-            }
-        }
-    }
-}
-"""
-
 
 @dataclass(frozen=True)
 class Case:
@@ -302,12 +268,10 @@ def main() -> None:
     # Materialize the runtime primary context before loading driver modules.
     _context_guard = torch.empty(1, dtype=torch.uint8, device="cuda")
     properties = torch.cuda.get_device_properties(0)
-    source_path = source_root / "crates/orbitkv-core/src/transfer/kernel.rs"
-    rust_source = source_path.read_text()
-    match = re.search(r'const KERNEL_SRC: &str = r#"(.*?)"#;', rust_source, flags=re.DOTALL)
-    if match is None:
-        raise ValueError("cannot extract the consumed NVRTC baseline")
-    baseline = match[1]
+    source_path = source_root / "crates/orbitkv-core/src/transfer/kernel.cu"
+    candidate_path = source_root / "benches/kernels/fragmented_copy.cu"
+    baseline = source_path.read_text()
+    candidate = candidate_path.read_text()
     architecture = f"--gpu-architecture=compute_{properties.major}{properties.minor}"
     inputs = {
         "gpu": properties.name,
@@ -318,9 +282,10 @@ def main() -> None:
         "cuda": torch.version.cuda,
         "nvrtc_library": str(Path(args.nvrtc).resolve()),
         "source": str(source_path),
-        "source_sha256": hashlib.sha256(rust_source.encode()).hexdigest(),
+        "source_sha256": hashlib.sha256(source_path.read_bytes()).hexdigest(),
         "baseline_sha256": hashlib.sha256(baseline.encode()).hexdigest(),
-        "candidate_sha256": hashlib.sha256(CANDIDATE.encode()).hexdigest(),
+        "candidate_source": str(candidate_path),
+        "candidate_sha256": hashlib.sha256(candidate_path.read_bytes()).hexdigest(),
         "driver_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "seed": args.seed,
         "warmup": 0 if args.validate_only else 5,
@@ -332,7 +297,7 @@ def main() -> None:
     kernels = {}
     completed = []
     try:
-        for name, source in (("baseline", baseline), ("candidate", CANDIDATE)):
+        for name, source in (("baseline", baseline), ("candidate", candidate)):
             kernels[name] = CudaKernel(source, architecture, args.nvrtc)
             (output / f"{name}.compile.log").write_text(kernels[name].compile_log)
         selected = cases()

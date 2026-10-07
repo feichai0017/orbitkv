@@ -13,9 +13,14 @@ its stream and descriptor scratch until physical completion. The direct DMA
 backend already combines adjacent ranges; a new kernel must improve the actual
 fragmented path rather than a deliberately uncoalesced DMA comparison.
 
-`benches/kernel_copy.py` compiles the existing Rust NVRTC source verbatim as its
-baseline. Its first **benchmark-only** candidate assigns multiple CTAs to large
-fragments in small batches. The production backend is unchanged. The driver
+CUDA device code lives in separate `.cu` files. The production backend embeds
+`crates/orbitkv-core/src/transfer/kernel.cu` with Rust's `include_str!` and compiles
+it through NVRTC; installed binaries do not need a source-file lookup.
+`benches/kernel_copy.py` reads that same file as its baseline and
+`benches/kernels/fragmented_copy.cu` as its **benchmark-only** candidate. The
+candidate assigns multiple CTAs to large fragments in small batches. Moving
+these sources preserves the previously measured CUDA bytes and production
+launch behavior. The driver
 checks both copy directions, empty and zero-size batches, independent address
 misalignment, scalar tails, reordered ranges, source preservation, guard bytes
 and batches exceeding the grid limit before collecting timing samples.
