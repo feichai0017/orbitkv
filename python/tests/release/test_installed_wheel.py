@@ -136,6 +136,9 @@ def run_cache_plan(engine, tier, model, directory, env):
                 "before_partial"
             ].get("orbitkv_load_bytes_total", 0), snapshots
         final = wait_for_drain(http_port)
+        assert (
+            f"backend={env['ORBITKV_TRANSFER_BACKEND']}" in (directory / "manager.log").read_text()
+        )
         assert final.get("orbitkv_load_failures_total", 0) == 0, final
         if tier == "ssd":
             assert final.get("orbitkv_ssd_write_bytes_total", 0) > 0, final

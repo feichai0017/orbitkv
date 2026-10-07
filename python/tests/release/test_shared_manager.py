@@ -307,6 +307,8 @@ def test_official_engines_share_manager(tier, model, tmp_path, request, orbitkv_
             snapshot("manager_restart_final")
             assert snapshots["manager_restart_final"].get("orbitkv_load_failures_total", 0) == 0
         assert not Path(f"/tmp/orbitkv-{port}.sock").exists(), "replacement left its UDS behind"
+        for name in ("manager", "manager-restart"):
+            assert f"backend={orbitkv_transfer_backend}" in (tmp_path / f"{name}.log").read_text()
         (tmp_path / "result.json").write_text(
             json.dumps(
                 {
