@@ -89,6 +89,12 @@ def test_official_engines_share_manager(tier, model, tmp_path, request):
     concurrent = {}
     baseline = {}
 
+    def snapshot(name):
+        observed = wait_for_drain(http_port)
+        snapshots[name] = observed
+        (tmp_path / f"{name}-metrics.json").write_text(json.dumps(observed, indent=2) + "\n")
+        return observed
+
     def generate(engine, phase):
         started = time.monotonic_ns()
         response = complete(engine, urls[engine], model, tokens)
@@ -149,13 +155,13 @@ def test_official_engines_share_manager(tier, model, tmp_path, request):
                 for engine in ENGINES:
                     compare_output(engine, responses["parallel_cold"][engine], baseline[engine])
                     assert cached_tokens(engine, responses["parallel_cold"][engine]) == 0
-                snapshots["after_cold"] = wait_for_drain(http_port)
+                snapshot("after_cold")
                 assert snapshots["after_cold"].get("orbitkv_save_bytes_total", 0) > 0
                 responses["parallel_hbm"] = generate_pair("parallel-hbm")
                 for engine in ENGINES:
                     compare_output(engine, responses["parallel_hbm"][engine], baseline[engine])
                     assert cached_tokens(engine, responses["parallel_hbm"][engine]) >= 704
-                snapshots["after_hbm"] = wait_for_drain(http_port)
+                snapshot("after_hbm")
                 for counter in ("orbitkv_load_bytes_total", "orbitkv_hll_total_requests"):
                     assert snapshots["after_cold"].get(counter, 0) == snapshots["after_hbm"].get(
                         counter, 0
@@ -166,22 +172,23 @@ def test_official_engines_share_manager(tier, model, tmp_path, request):
                     owners[engine].close()
                     assert processes[engine].poll() is not None
                     assert manager.poll() is None and processes[other].poll() is None
-                    snapshots[f"{engine}_stopped"] = wait_for_drain(http_port)
+                    snapshot(f"{engine}_stopped")
                     survivor, _ = generate(other, f"while-{engine}-stopped")
                     compare_output(other, survivor, baseline[other])
                     assert cached_tokens(other, survivor) >= 704
-                    snapshots[f"{engine}_survivor"] = wait_for_drain(http_port)
+                    snapshot(f"{engine}_survivor")
                     for counter in ("orbitkv_load_bytes_total", "orbitkv_hll_total_requests"):
                         assert snapshots[f"{engine}_stopped"].get(counter, 0) == snapshots[
                             f"{engine}_survivor"
                         ].get(counter, 0), (counter, snapshots)
                     if tier == "ssd":
-                        evict_dram_after_ssd_writes(http_port)
-                        assert (
-                            fetch_orbitkv_metrics(http_port).get("orbitkv_cache_resident_bytes", 0)
-                            == 0
-                        )
-                    snapshots[f"{engine}_before_restart"] = wait_for_drain(http_port)
+                        resident = snapshot(f"{engine}_before_eviction")[
+                            "orbitkv_cache_resident_bytes"
+                        ]
+                        if resident:
+                            evict_dram_after_ssd_writes(http_port)
+                        assert fetch_orbitkv_metrics(http_port)["orbitkv_cache_resident_bytes"] == 0
+                    snapshot(f"{engine}_before_restart")
                     owners[engine] = stack.enter_context(contextlib.ExitStack())
                     processes[engine] = owners[engine].enter_context(
                         service(
@@ -195,7 +202,7 @@ def test_official_engines_share_manager(tier, model, tmp_path, request):
                     restored, _ = generate(engine, "after-restart")
                     compare_output(engine, restored, baseline[engine])
                     assert cached_tokens(engine, restored) >= 704
-                    snapshots[f"{engine}_after_restart"] = wait_for_drain(http_port)
+                    snapshot(f"{engine}_after_restart")
                     start, end = (
                         snapshots[f"{engine}_before_restart"],
                         snapshots[f"{engine}_after_restart"],
@@ -218,7 +225,7 @@ def test_official_engines_share_manager(tier, model, tmp_path, request):
                         engine, responses["parallel_after_restart"][engine], baseline[engine]
                     )
                     assert cached_tokens(engine, responses["parallel_after_restart"][engine]) >= 704
-            snapshots["final"] = wait_for_drain(http_port)
+            snapshot("final")
             assert snapshots["final"].get("orbitkv_load_failures_total", 0) == 0, snapshots
             (tmp_path / "result.json").write_text(
                 json.dumps(
