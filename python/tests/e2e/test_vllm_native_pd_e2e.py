@@ -205,14 +205,23 @@ def test_native_pd_nixl_matches_monolithic(model, tmp_path, channel_server, cach
                     command, stdout=log, stderr=subprocess.STDOUT, env=os.environ.copy()
                 )
 
-            def stop_router(process=router):
+            def stop_router(process=router, directory=tmp_path):
+                forced = False
                 if process.poll() is None:
                     process.terminate()
                     try:
                         process.wait(timeout=15)
                     except subprocess.TimeoutExpired:
+                        forced = True
                         process.kill()
                         process.wait(timeout=5)
+                cleanup = {
+                    "pid": process.pid,
+                    "exit_code": process.returncode,
+                    "forced_kill": forced,
+                }
+                (directory / "router-cleanup.json").write_text(json.dumps(cleanup, indent=2))
+                assert not forced and process.returncode in {0, -15}, cleanup
 
             stack.callback(stop_router)
             router_url = f"http://127.0.0.1:{router_port}"
