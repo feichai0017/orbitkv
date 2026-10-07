@@ -117,11 +117,16 @@ fixes are not assumed present.
 
 ## Qualification and reproduction
 
-Run from `python/` with a frozen installed wheel and clean official engines:
+Use a new external runner containing only `python/tests/` and
+`python/pyproject.toml`, with a frozen installed wheel and clean official engines.
+Run from that runner's `python/` directory. Do not add the source `python/orbitkv`
+package to `PYTHONPATH`: it can shadow the verified native wheel. Set
+`ORBITKV_CACHE_MANAGER_BINARY` to the Manager executable in the selected installed
+wheel and create the parent of each `--basetemp` before running:
 
 ```bash
 python -m pytest -m integration tests/integration/test_vllm_connector_contract.py
-python -m pytest -m e2e tests/e2e/test_vllm_native_pd_e2e.py \
+python -m pytest -m e2e tests/e2e/test_vllm_native_pd_e2e.py -k save-only \
   --model /path/to/dense-model --basetemp /var/tmp/orbitkv-native-pd/vllm-001
 python -m pytest -m e2e tests/e2e/test_sglang_pd_e2e.py \
   --model /path/to/dense-model --basetemp /var/tmp/orbitkv-native-pd/sglang-001
@@ -134,10 +139,17 @@ fault gates. A successful output test alone does not qualify those failures.
 No cross-host HA, GPUDirect RDMA, heterogeneous rank/GPU, hybrid P/D or native
 GDS claim follows from same-host dense-model evidence.
 
-Current evidence is retained outside the checkout at
-`/root/orbitkv-artifacts/release-native-pd-20261001/`; the final handoff records
-exact engine/wheel hashes, failed attempts, test coverage and remaining limits.
-Engine installed-file hashes are checked before and after qualification.
+The 2026-10-07 A100 same-GPU model gates locally pass the vLLM save-only-D
+profile and SGLang native Mooncake/TCP profile, including engine restart and
+cancellation after decode starts; SGLang also observes retraction. Cache uses
+`direct`; installed files remain unchanged. The SGLang test selects BF16 and
+starts P before D readiness to avoid overlapping startup memory profiles.
+Raw passing/failed attempts, runtime pins and hashes remain at
+`/root/orbitkv-artifacts/s5-native-pd-20261007/` and its A100 mirror
+`/workspace/orbitkv-s5-native-pd-20261007/`. Earlier qualification evidence stays
+at `/root/orbitkv-artifacts/release-native-pd-20261001/`. Independent acceptance,
+in-flight transfer faults, other connector orders and broader deployment cells
+remain open; these results do not change the candidate status.
 
 ## Preserved upstream contribution material
 
