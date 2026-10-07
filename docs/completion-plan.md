@@ -1260,8 +1260,18 @@ source, commands, raw runs and handoff:
 `/workspace/orbitkv-s5-shared-manager-20261007/` on A100. Use
 [the maintained reproduction](../python/tests/README.md#two-engines-sharing-one-manager).
 
+A follow-up at `9ee74c90` passes overlapping external restores in both media:
+226,492,416 bytes in each pair, with exactly matching physical SSD reads after
+DRAM eviction. Both engines drain before a normal Manager restart; a fresh
+Manager PID performs cold reconstruction and both engines continue to match their
+native controls. All 24 services exit zero, with no forced cleanup or owned/GPU
+processes left. This does not claim persistent SSD-index recovery, abrupt
+Manager death or native DMA termination. The wheel is unchanged (`9d14998d…`).
+Evidence: `/root/orbitkv-artifacts/s5-concurrent-recovery-20261007/`;
+A100 mirror: `/workspace/orbitkv-s5-concurrent-recovery-20261007/`.
+
 This delivers one same-host deployment profile, not all of S5.5. Independent review,
-concurrent restore pressure/fairness, Manager restart, isolated containers,
+sustained restore pressure/fairness, isolated containers,
 physical cross-host/rank combinations, native P/D faults and S3-dependent
 reclamation remain open. Shared capacity does not establish interchangeable
 cross-engine KV bytes or a latency/throughput advantage.

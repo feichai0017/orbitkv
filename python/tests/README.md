@@ -304,6 +304,14 @@ not qualify CUDA graphs, P/D, multi-GPU or cancellation during transfer. See
 
 ### Two engines sharing one Manager
 
+This gate includes overlapping external restores after both engine processes
+restart, and a separate normal Manager restart after both engines have drained.
+The replacement Manager rebuilds cold; the test does not claim persistence or
+crash reclamation. For kernel qualification, add
+`--orbitkv-transfer-backend kernel` with the newly frozen complete wheel. Each
+engine's worker backend is checked in the Manager log, alongside exact model
+outputs, real restore bytes and normal process/resource drain.
+
 Run the installed-package gate below when changing Manager multi-client lifetime,
 engine restart, registration isolation or shared DRAM/SSD ownership. Keep vLLM
 and SGLang in separate non-editable environments with the same complete OrbitKV
