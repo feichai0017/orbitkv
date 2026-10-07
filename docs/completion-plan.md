@@ -448,14 +448,12 @@ frozen 5% DRAM/SSD isolation gates fail. Depends on:** accepted protocol impleme
 scoped claims. This carries forward S2's remaining performance, capacity, serving
 and cross-host obligations; it does not replace missing evidence with a new name.
 
-**Current next delivery:** independently review the task-003 runtime-readiness
-fail-stop described below. Its corrected dependency closure passes preflight,
-but the first new A100 smoke remains invalid before observer/foreground start;
-the B smoke and eight-cell formal matrix remain unstarted. Any corrected launch
-requires another explicit task and a tensor-registration-capable preflight. The
-completed diagnosis does not authorize a production repair, cannot replace the
-accepted failed cohort and cannot start another formal qualification
-automatically.
+**Current next delivery:** independently review the task-004 installed-runtime
+readiness, two valid A100 tool smokes and the still-disabled eight-cell observer
+launch inputs described below. No formal cell starts until that exact freeze and
+launch contract are accepted. The completed diagnosis does not authorize a
+production repair, cannot replace the accepted failed cohort and cannot start
+another formal qualification automatically.
 Physical cross-host cache/HA, independent etcd failure domains and native GDS stay
 qualification blocked on the hardware listed below. The bounded
 fixture pacing/invalid-run cleanup repair has independent acceptance. Merged-artifact
@@ -470,7 +468,7 @@ profile evidence and its independent review pass.
 | Same-host live-store correctness and scoped stream oracle | PASS at the retained accepted revisions | Inherit unless a production owner affecting these contracts changes |
 | 16-owner ordinary visibility | PASS for five 4.281–4.309 ms runs, but capacity support remains UNQUALIFIED | Replacement isolation must also pass before expanding the four-owner boundary |
 | DRAM/SSD isolation | FAIL in the immutable 25-cell cohort | Installed-runtime readiness, observer A/B diagnosis, reviewed harness correction if supported, then one new 25-cell qualification cohort |
-| Observer diagnostic launcher | IMPLEMENTATION OPEN after task-003 fail-stop | Tests-only projection, real tensor register/save/query/SSD restore readiness, and two valid tool smokes |
+| Observer diagnostic launcher | TOOL SMOKES PASS, INDEPENDENT REVIEW OPEN | Review the task-004 tests-only projection, real tensor/SSD readiness, A/B protocol and disabled formal launch inputs |
 | Three-host direct network | READY: six directed IPv6 TCP edges pass | Exact etcd client/peer listeners, then OrbitKV-consumed leader/quorum/process-fault campaign |
 | Independent host/power/network failure domains | QUALIFICATION BLOCKED | Infrastructure ownership/topology evidence and authorized host/network fault controls |
 | H20/A100 physical cache data plane | QUALIFICATION BLOCKED | H20 CUDA compute/IPC readiness plus bidirectional native TENT IPv6 byte transfer |
@@ -807,6 +805,40 @@ fail-stop rule, B is not launched, no cell is replaced and the formal matrix
 remains unstarted. A later task must correct the controlled Manager Python path
 and extend readiness through real tensor registration before authorizing another
 fresh two-smoke attempt; the metadata-only Manager preflight was insufficient.
+
+Task-004 implements that explicit installed-runtime boundary at `441bdcc3` and
+updates the website audit lock at `a6e4efba`. `CacheManagerProcess` retains its
+source-first default for normal tests, but an installed-runtime caller supplies
+an exact site-packages list that ignores inherited source paths. The isolation
+harness applies it to both namespace-probe and foreground Managers and records
+client, extension, Manager and helper Python-path evidence. A tests-only
+projection contains `benches/`, `tests/` and pytest configuration but no
+`python/orbitkv` package. CI run `37568176894` passes all 13 jobs, including both
+CUDA cargo checks, both Python 3.14 wheels and Clippy; a bounded cache probe can
+fall back to direct rustc without masking compiler failure. The earlier sccache
+503 and CUDA repository mirror-sync failures remain archived.
+
+The first task-004 freeze remains `INVALID_READINESS`: real namespace-probe GPU
+tensor registration succeeds, then the selected task-001 server-tests executable
+runs zero pressure tests because it lacks the named fixture. No observer smoke
+starts and cleanup is normal. The second and final authorized freeze changes only
+that fixture to the independently reviewed `0dd472d3` binary. Eight real
+SSD/io_uring readiness rounds then pass installed tensor registration,
+save/query/cleared-destination restore, 262,144 SSD-read bytes, 96 linked native
+events, byte oracles, unregister and drain. A and B each pass 10 warm-up plus 20
+measured rounds, 1,240 exact polls and 1,824 pressure rounds. Their payload/key
+oracles, 466,944 mutations, 1,205 stream frames and 31,813,205 stream bytes match;
+actual phases are 12.584346/12.603977 ms and the B helper imports no GPU/native
+module. All Manager/source/helper exits are zero, no forced cleanup occurs and
+the A100 final state is empty. These cells establish tool validity only, not
+performance or causality.
+
+The separately frozen formal inputs remain `formal_launch_authorized=false`.
+Their manifest is `806a52df`; they preserve A1 B1 B2 A2 B3 A3 A4 B4, four
+independent pairs, 50 warm-up plus 1,000 measured rounds, the original workload,
+42,040 polls/cell, 61,824 pressure rounds/cell, 1,500-second cell watchdog and
+13,000-second global bound. Independent review of task-004 is required before a
+new launch task may execute any of those eight cells.
 
 The pilot review and formal diagnostic matrix are complete. Any follow-up must
 again use independent runs, at least 1,000 measured operations per p99 run,
