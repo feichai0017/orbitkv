@@ -107,7 +107,7 @@ def wait_for_drain(http_port: int) -> dict[str, float]:
         time.sleep(0.1)
 
 
-def engine_command(engine, python, model, port):
+def engine_command(engine, python, model, port, transfer_backend="direct"):
     if engine == "vllm":
         command = [
             str(python),
@@ -143,6 +143,7 @@ def engine_command(engine, python, model, port):
                     "kv_connector": "OrbitKVConnector",
                     "kv_role": "kv_both",
                     "kv_connector_module_path": "orbitkv.vllm",
+                    "kv_connector_extra_config": {"orbitkv.transfer_backend": transfer_backend},
                 }
             ),
         ]

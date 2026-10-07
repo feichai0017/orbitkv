@@ -31,9 +31,12 @@ pytestmark = [pytest.mark.release_smoke, pytest.mark.gpu]
 
 @pytest.mark.parametrize("engine", ["vllm", "sglang"])
 @pytest.mark.parametrize("tier", ["dram", "ssd"])
-def test_installed_wheel_recovers_after_engine_restart(engine, tier, model, tmp_path):
+def test_installed_wheel_recovers_after_engine_restart(
+    engine, tier, model, tmp_path, orbitkv_transfer_backend
+):
     assert Path(model).is_dir(), "release gate requires --model with a local dense model"
     env = isolated_environment(dict(os.environ), tmp_path)
+    env["ORBITKV_TRANSFER_BACKEND"] = orbitkv_transfer_backend
     before = probe_installation(
         sys.executable, engine, env, tmp_path, "installed-before", native=True
     )
@@ -58,7 +61,9 @@ def run_cache_plan(engine, tier, model, directory, env):
     manager_url = f"http://127.0.0.1:{http_port}"
     engine_url = f"http://127.0.0.1:{engine_port}"
     env["VLLM_SERVER_DEV_MODE"] = "1"
-    command, cache_options = engine_command(engine, sys.executable, model, engine_port)
+    command, cache_options = engine_command(
+        engine, sys.executable, model, engine_port, env["ORBITKV_TRANSFER_BACKEND"]
+    )
     manager_args = manager_command(sys.executable, port, http_port, tier, directory)
     phases = {}
 
@@ -149,6 +154,7 @@ def run_cache_plan(engine, tier, model, directory, env):
                 {
                     "engine": engine,
                     "tier": tier,
+                    "transfer_backend": env["ORBITKV_TRANSFER_BACKEND"],
                     "model": model,
                     "profile": "dense TP=1 PP=1 eager same-host",
                     "model_config_sha256": hashlib.sha256(

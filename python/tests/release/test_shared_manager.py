@@ -30,7 +30,7 @@ ENGINES = ("vllm", "sglang")
 
 
 @pytest.mark.parametrize("tier", ["dram", "ssd"])
-def test_official_engines_share_manager(tier, model, tmp_path, request):
+def test_official_engines_share_manager(tier, model, tmp_path, request, orbitkv_transfer_backend):
     from transformers import AutoTokenizer
 
     assert Path(model).is_dir(), "shared-Manager gate requires a local dense --model"
@@ -48,6 +48,7 @@ def test_official_engines_share_manager(tier, model, tmp_path, request):
         directories[engine].mkdir()
         env = isolated_environment(dict(os.environ), directories[engine])
         env["ORBITKV_CACHE_SCOPE"] = tmp_path.name
+        env["ORBITKV_TRANSFER_BACKEND"] = orbitkv_transfer_backend
         env["VLLM_SERVER_DEV_MODE"] = "1"
         environments[engine] = env
         before[engine] = probe_installation(
@@ -82,7 +83,7 @@ def test_official_engines_share_manager(tier, model, tmp_path, request):
         engine_port = find_available_port()
         urls[engine] = f"http://127.0.0.1:{engine_port}"
         commands[engine], options[engine] = engine_command(
-            engine, interpreters[engine], model, engine_port
+            engine, interpreters[engine], model, engine_port, orbitkv_transfer_backend
         )
     snapshots = {}
     responses = {}
@@ -310,6 +311,7 @@ def test_official_engines_share_manager(tier, model, tmp_path, request):
             json.dumps(
                 {
                     "tier": tier,
+                    "transfer_backend": orbitkv_transfer_backend,
                     "model": model,
                     "profile": "one A100; dense TP=1 PP=1 eager; two official engines; one installed Manager",
                     "model_config_sha256": hashlib.sha256(
