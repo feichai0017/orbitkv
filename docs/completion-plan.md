@@ -39,7 +39,7 @@ record submitted, merged and released as different states.
 | S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. Independent final review accepts the second frozen S2.10 same-host formal handoff: all 25 cells are valid and five 16-owner ordinary visibility runs pass 50 ms, while both DRAM and SSD isolation fail the frozen per-pair/CI contract. S2.10b lifecycle, low-overhead observation and 14-cell diagnosis are complete. Independent review accepts the diagnostic archive but blocks a production repair: the dominant measured tail is after native return at the Python observer boundary, while no repeatable Manager, metadata-lock, completion-notification or SSD-owner shift is established. The supported envelope stays four owners and all prior formal campaigns remain immutable. Physical cross-host cache/HA, independent etcd failure domains and native GDS are qualification blocked on missing hardware; final serving, RDMA and S3-dependent cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
-| S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.31.0/0.5.21 final wheel passes ordinary-cache installed/model/lifecycle gates and the S5.5 same-host dual-engine shared-Manager DRAM/io_uring cells locally. Independent acceptance, public lifecycle implementation and broader deployment qualification remain open. |
+| S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.31.0/0.5.21 final wheel passes ordinary-cache installed/model/lifecycle gates and the S5.5 same-host dual-engine shared-Manager DRAM/io_uring cells (including overlapping restore and drained Manager cold restart) and bounded native P/D model gates locally. Independent acceptance, public lifecycle implementation and broader deployment qualification remain open. |
 | S6 | Partial: observations/limited choices exist; unified executed decisions remain open. |
 | S7 | Open: consumed retention/checkpoint compiler beyond recovery validation. |
 | S8 | Partial: existing wheel workflow; final images, artifact gates and publication remain open. |
@@ -1203,10 +1203,27 @@ Unreleased required fixes keep only their dependent profiles experimental.
 
 ### S5.4 — Official native P/D and independent cache
 
-**Release-only cutover implemented; qualification and independent acceptance open.**
+**Release-only cutover implemented; bounded same-host model gates locally pass;
+independent acceptance and native fault qualification remain open.**
 Use official vLLM 0.31.0 and SGLang 0.5.21. Live vLLM P/D uses NIXL and
 MultiConnector; SGLang uses native disaggregation. Manager shared-cache traffic
 continues to use TENT. There is no maintained engine fork runtime.
+
+On 2026-10-07 the frozen installed CUDA 13 wheel `485d0f8c…` passes the
+vLLM save-only-D NIXL/MultiConnector gate and the SGLang native Mooncake/TCP
+gate on one A100, dense Qwen3-8B, TP=1/PP=1 eager, with independent ordinary
+cache on `direct`. Each gate compares exact monolithic output, reuses real
+cache bytes after normal engine restart and cancels an already-running decode
+request; SGLang additionally observes native retraction and a restored boundary
+including completed decode tokens. Installed engine/OrbitKV files are unchanged,
+with no GPU compute processes left. The SGLang test explicitly uses BF16 and
+starts P through readiness before D: concurrent loading otherwise contaminates
+the released engine's device-global memory estimate. Failed setup/startup and
+busy-GPU preflight attempts remain immutable beside the passing cells at
+`/root/orbitkv-artifacts/s5-native-pd-20261007/`, mirrored under
+`/workspace/orbitkv-s5-native-pd-20261007/`. These local gates do not prove
+cancellation during transfer, partial-submit, delayed ACK or safe page reuse
+without the S3 lifetime contract.
 
 - Preserve retirement of custom connectors, handshake/proxy and partial-tail
   cache extensions, plus unselected query-lease release and valid save ranges.
@@ -1225,8 +1242,9 @@ continues to use TENT. There is no maintained engine fork runtime.
 - Preserve fork patches/tests at immutable commit `9aee895e` and prior evidence
   under `/root/orbitkv-artifacts/native-pd-cutover-20260930/HANDOFF.md` as upstream
   material. They do not establish official release support.
-- Current reproduction and limits: [P/D setup](pd.md). New evidence belongs under
-  `/root/orbitkv-artifacts/release-native-pd-20261001/`. Cross-host fault domains,
+- Current reproduction and limits: [P/D setup](pd.md). Historical evidence remains under
+  `/root/orbitkv-artifacts/release-native-pd-20261001/`; the 2026-10-07 gates
+  use the separate archive above. Cross-host fault domains,
   RDMA, hybrid/rank combinations and native GDS remain unqualified.
 
 **Acceptance:** independently reproduce the claimed released-engine and frozen
