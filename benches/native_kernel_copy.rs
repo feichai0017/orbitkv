@@ -139,7 +139,7 @@ fn main() {
                     .next()
                     .expect("samples")
                     .parse()
-                    .expect("numeric samples")
+                    .expect("numeric samples");
             }
             "--bench" => {}
             _ => panic!("unknown argument {arg}"),
@@ -162,7 +162,7 @@ fn main() {
         let widths: Vec<_> = case
             .sizes
             .iter()
-            .map(|n| (n + 15) / 16 * 16 + 2 * GUARD)
+            .map(|n| n.div_ceil(16) * 16 + 2 * GUARD)
             .collect();
         let total: usize = widths.iter().sum::<usize>() + 2 * GUARD + 16;
         let mut memory = Memory::new(total);

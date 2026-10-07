@@ -268,7 +268,7 @@ def main() -> None:
     # Materialize the runtime primary context before loading driver modules.
     _context_guard = torch.empty(1, dtype=torch.uint8, device="cuda")
     properties = torch.cuda.get_device_properties(0)
-    source_path = source_root / "crates/orbitkv-core/src/transfer/kernel.cu"
+    source_path = source_root / "benches/kernels/batch_copy_baseline.cu"
     candidate_path = source_root / "benches/kernels/fragmented_copy.cu"
     baseline = source_path.read_text()
     candidate = candidate_path.read_text()
@@ -282,6 +282,9 @@ def main() -> None:
         "cuda": torch.version.cuda,
         "nvrtc_library": str(Path(args.nvrtc).resolve()),
         "source": str(source_path),
+        "production_source_sha256": hashlib.sha256(
+            (source_root / "crates/orbitkv-core/src/transfer/kernel.cu").read_bytes()
+        ).hexdigest(),
         "source_sha256": hashlib.sha256(source_path.read_bytes()).hexdigest(),
         "baseline_sha256": hashlib.sha256(baseline.encode()).hexdigest(),
         "candidate_source": str(candidate_path),
