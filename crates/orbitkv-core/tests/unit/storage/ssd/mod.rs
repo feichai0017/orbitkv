@@ -151,7 +151,12 @@ async fn neutral_leases_read_raw_and_encoded_generations_through_uring() {
         }
         let generation = lease.entry.begin;
         let readers = Arc::clone(&lease.entry.readers);
-        let restored = lease.read_host().await.unwrap();
+        let restored = store
+            .read_host_batch(vec![Arc::clone(&lease)])
+            .await
+            .unwrap()
+            .remove(0)
+            .1;
         let slot = restored.get_slot(0).unwrap();
         // SAFETY: the successful read initialized the owned segment above.
         let bytes = unsafe {
@@ -744,7 +749,7 @@ async fn cancelled_host_read_keeps_the_same_generation_owned_by_its_queue() {
         .unwrap();
     let readers = Arc::clone(&lease.entry.readers);
     let source = Arc::downgrade(&lease);
-    let mut read = Box::pin(lease.read_host());
+    let mut read = Box::pin(store.read_host_batch(vec![Arc::clone(&lease)]));
     assert!(futures::poll!(read.as_mut()).is_pending());
     drop(read);
     drop(lease);
@@ -767,7 +772,12 @@ async fn cancelled_host_read_keeps_the_same_generation_owned_by_its_queue() {
         .collect::<Vec<_>>()
         .pop()
         .unwrap();
-    assert!(lease.read_host().await.is_err());
+    assert!(
+        store
+            .read_host_batch(vec![Arc::clone(&lease)])
+            .await
+            .is_err()
+    );
     assert_eq!(readers.load(Ordering::Acquire), 1);
     drop(lease);
     assert_eq!(readers.load(Ordering::Acquire), 0);

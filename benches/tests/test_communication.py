@@ -318,3 +318,44 @@ def test_manager_python_imports_follow_the_selected_external_artifact(monkeypatc
     assert paths[0] == str(snapshot)
     assert paths.count(str(snapshot)) == 1
     assert str(Path(__file__).resolve().parents[2] / "python") not in paths
+
+
+def test_ssd_requires_direct_io_alignment(tmp_path):
+    import pytest
+
+    from benches.communication import arguments
+
+    with pytest.raises(SystemExit):
+        arguments(
+            [
+                "--manager",
+                "/bin/true",
+                "--label",
+                "alignment",
+                "--output",
+                str(tmp_path / "bad"),
+                "--tier",
+                "ssd",
+                "--block-bytes",
+                "513",
+                "--payload-bytes",
+                "513",
+            ]
+        )
+    selected = arguments(
+        [
+            "--manager",
+            "/bin/true",
+            "--label",
+            "aligned",
+            "--output",
+            str(tmp_path / "good"),
+            "--tier",
+            "ssd",
+            "--layout",
+            "split",
+            "--block-bytes",
+            "4096",
+        ]
+    )
+    assert selected.tier == "ssd"

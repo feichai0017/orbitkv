@@ -917,6 +917,17 @@ layer hooks. The current contracts live in [transport](transport.md) and
   `/root/orbitkv-artifacts/kda-native-copy-20261007/`; see
   [kernel optimization](kernel-optimization.md). Codec/checksum fusion requires
   a separately measured, consumed bottleneck.
+- **SSD host restore batching implemented; qualification in progress (2026-10-07):**
+  `transfer/worker/restore.rs` now submits at most 16 unique SSD generations per
+  existing reader batch and storage owner. Repeated layer references remain
+  deduplicated; same-key generations are separated and every batch drains before
+  an error is returned or GPU sources are replaced. No physical I/O coalescing,
+  new early readiness or cache admission policy is implied. The native
+  `benches.communication --tier ssd` gate forces io_uring, empties DRAM, zeros
+  destinations and checks exact GPU bytes and physical reads. Matched timings and
+  official installed-wheel SSD/shared-Manager gates remain pending. Evidence and
+  the frozen task contract are outside the checkout at
+  `/tmp/orbitkv-s5-ssd-20261007/`.
 - Extend readiness to legal multipart and SSD/codec pipelines where it can
   shorten the engine critical path. Retain the parent source/destination fence
   and final drain; a ready layer does not retire the whole operation.
