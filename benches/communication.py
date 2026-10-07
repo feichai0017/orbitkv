@@ -39,6 +39,11 @@ def arguments(argv: list[str] | None = None) -> argparse.Namespace:
         help="ssd measures forced io_uring restores only, with physical-read and GPU-byte controls",
     )
     parser.add_argument("--output", type=external_path, required=True)
+    parser.add_argument(
+        "--ssd-cache-path",
+        type=external_path,
+        help="fresh SSD data path on the tested mount, independent of retained output",
+    )
     parser.add_argument("--iterations", type=int, default=100)
     parser.add_argument("--warmup", type=int, default=20)
     parser.add_argument("--repeats", type=int, default=3)
@@ -101,6 +106,11 @@ def arguments(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("payload-bytes and idle-ms must not contain duplicates")
     if args.tier == "ssd" and args.block_bytes // (2 if args.layout == "split" else 1) % 512:
         parser.error("SSD segment bytes must be multiples of 512 for O_DIRECT")
+    if args.ssd_cache_path is not None:
+        if args.tier != "ssd":
+            parser.error("ssd-cache-path requires --tier ssd")
+        if args.ssd_cache_path.exists():
+            parser.error("ssd-cache-path must be fresh; existing data will not be overwritten")
     args.manager = args.manager.resolve()
     return args
 
@@ -427,6 +437,7 @@ def main(argv: list[str] | None = None) -> None:
         str(budget),
     ]
     args.output.mkdir(parents=True, exist_ok=False)
+    cache_path = args.ssd_cache_path or args.output / "cache.bin"
     if args.tier == "ssd":
         command += [
             "--ssd-backend",
@@ -434,7 +445,7 @@ def main(argv: list[str] | None = None) -> None:
             "--ssd-read-path",
             "uring",
             "--ssd-cache-path",
-            str(args.output / "cache.bin"),
+            str(cache_path),
             "--ssd-cache-capacity",
             str(max(64 * 1024**2, max(args.payload_bytes) * args.layers * 2)),
         ]
@@ -476,7 +487,7 @@ def main(argv: list[str] | None = None) -> None:
         "percentiles": "linear interpolation at (n - 1) * q; computed independently per cohort",
         "scope": {
             "query": "submit through QueryReady, including native polling; release is outside latency",
-            "restore": "one start_restore through native wait_restore ready; equal, nonoverlapping query leases partition the unchanged total payload; hash views and target chunks are precomputed, all lease acquisition is outside latency; SSD mode forces io_uring with zero DRAM before each sample, zeroes destinations and checks GPU bytes after every sample; physical reads include allocation, validation and the selected H2D backend",
+            "restore": "one start_restore through native wait_restore ready; equal, nonoverlapping query leases partition the unchanged total payload; hash views and target chunks are precomputed, all lease acquisition is outside latency; SSD mode forces io_uring with zero DRAM before each sample, fills destinations with a sentinel and checks GPU bytes after every sample; the client timer includes Python/native call overhead, allocation, validation and the selected H2D backend",
             "publish": "save acknowledgement including metadata chunking and actual D2H of fresh keys; sealing synchronization and cache eviction are outside sample latency",
             "cpu": "sample CPU is caller thread/process; Manager cohort CPU includes preparation queries, releases, Publish sealing/cleanup HTTP, Python loop gaps and prescribed idle intervals, excludes warmup and byte validation; /proc tick-quantized totals are not precise per-RPC CPU measurements",
             "payload": "raw uint8 layers with contiguous or split K/V GPU storage, 4 KiB logical blocks by default; split K/V each holds half of block-bytes, preserving total payload; --payload-bytes is per layer, output payload_bytes is total across layers; Query reports logical payload and 32-byte hash count, not transported KV bytes",
@@ -497,7 +508,7 @@ def main(argv: list[str] | None = None) -> None:
             command, env, f"http://127.0.0.1:{http}", args.output / "manager.log"
         ) as manager:
             if args.tier == "ssd":
-                manifest["storage"] = storage_manifest(manager.pid, args.output / "cache.bin")
+                manifest["storage"] = storage_manifest(manager.pid, cache_path)
             manifest["manager_pid"] = manager.pid
             manifest["manager_cpu_affinity"] = sorted(os.sched_getaffinity(manager.pid))
             write_json(args.output / "manifest.json", manifest)

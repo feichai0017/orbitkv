@@ -388,3 +388,36 @@ def test_ssd_cleanup_waits_for_physical_write_and_query_owners(monkeypatch):
     monkeypatch.setattr("benches.communication.time.sleep", lambda _: events.append("wait"))
     cleanup_published("http://manager", 1, wait_for_ssd=True)
     assert events == ["sync", "observe", "wait", "observe", "wait", "observe", "cleanup"]
+
+
+@pytest.mark.parametrize(
+    ("tier", "existing", "valid"),
+    [("ssd", False, True), ("ssd", True, False), ("dram", False, False)],
+)
+def test_ssd_data_mount_is_separate_from_retained_output_and_never_overwritten(
+    tmp_path, tier, existing, valid
+):
+    cache = tmp_path / "nvme-data"
+    if existing:
+        cache.write_bytes(b"existing data")
+    argv = [
+        "--manager",
+        "/bin/true",
+        "--label",
+        "separate-mount",
+        "--output",
+        str(tmp_path / "retained"),
+        "--tier",
+        tier,
+        "--ssd-cache-path",
+        str(cache),
+    ]
+    if valid:
+        selected = arguments(argv)
+        assert selected.ssd_cache_path == cache
+        assert selected.output == tmp_path / "retained"
+    else:
+        with pytest.raises(SystemExit):
+            arguments(argv)
+    if existing:
+        assert cache.read_bytes() == b"existing data"
