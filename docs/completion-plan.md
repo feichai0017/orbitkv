@@ -1348,6 +1348,15 @@ raw cohort and all surviving controls are archived at
 `/workspace/orbitkv-s5-ssd-host-batching-20261007/`. Independent review and
 sustained mixed save/restore tail/fairness qualification remain open.
 
+The next bounded S5.5 delivery adds `benches.shared_manager_pressure`: two
+installed official engines, bounded per-instance admission, 512 MiB shared DRAM,
+8 GiB io_uring SSD, 384 MiB global/192 MiB configured per-instance query budgets,
+fresh/reused inputs, native controls for every output and a separate resource
+sampler. CPU harness contracts pass; hardware smoke, sustained pressure and KDA
+consumed direct/kernel comparisons are pending. The frozen task and plan are at
+`/root/orbitkv-artifacts/s5-shared-pressure-kda-20261007/`; this is the existing
+S4/S5.5 execution item, not a separate completion queue.
+
 This delivers one same-host deployment profile, not all of S5.5. Independent review,
 sustained restore pressure/fairness, isolated containers,
 physical cross-host/rank combinations, native P/D faults and S3-dependent

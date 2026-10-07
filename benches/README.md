@@ -18,6 +18,7 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | `summarize_live_store_isolation.py` | Independent-run-pair ratios, absolute deltas and paired-run confidence intervals |
 | `summarize_live_store_diagnostics.py` | Same-host channel/Manager/insert/SSD stage decomposition for bounded S2.10a runs |
 | `single_node.py` | Fixed-capacity cold, HBM-hit, and post-pressure experiment |
+| `shared_manager_pressure.py` | Two installed official engines sharing one SSD Manager: bounded sustained mixed traffic, native output controls, per-instance progress and an isolated sampler |
 | `shared_cache.py` | Independent-replica serving requests with remote-byte, GPU-copy, output and reservation-drain evidence |
 | `launch.py` | Engine/backend commands and matched memory budgets |
 | `runtime.py` | Owned process groups, readiness, teardown, and launch manifest |

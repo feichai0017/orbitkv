@@ -272,3 +272,42 @@ The old SGLang integration's 0/15 result predates readiness-aware admission.
 See the [immutable experiment and its controls](https://github.com/feichai0017/orbitkv/blob/4712f780c900120719f178b2ea36c9e0ac7c135f/docs/ssd-performance.md).
 These serial forced-eviction numbers must not be mixed with the concurrent
 natural-pressure measurements above.
+
+## Sustained shared-Manager pressure
+
+`benches.shared_manager_pressure` owns two installed official engine processes and
+one Manager. It fixes each engine to 4,096 native GPU tokens and cycles through
+16 independent 768-token prefixes, alternating every eighth request with a fresh
+input. Both engines keep their own admission quota and native output controls.
+Warm-prefix controls precede the cache run; fresh-input controls follow completed
+requests and normal cache-engine shutdown, outside timing. Every measured output
+and input/output token count must match its own engine's control.
+
+```bash
+python -m benches.shared_manager_pressure \
+  --vllm-python /path/to/vllm-release/bin/python \
+  --sglang-python /path/to/sglang-release/bin/python \
+  --model /path/to/immutable-model --transfer-backend direct \
+  --duration-seconds 300 --seed pair-01 \
+  --host-mib 512 --query-mib 384 --instance-query-mib 192 --ssd-gib 8 \
+  --ssd-path /fresh/nvme/cache-01 --output /external/s5-pressure/direct-01
+```
+
+Each destination must be fresh and outside the checkout. Use the same seed and
+budgets for each direct/kernel pair; reverse order across at least three pairs.
+A separate isolated Python process samples Manager resources once per second and
+must not import Torch, OrbitKV or either engine. Global query and pool peaks are
+sampled evidence; the per-instance query limit is configured, but the current
+exporter does not expose its instantaneous peak. The gate requires positive
+physical io_uring reads/writes and save/load bytes during the window, complete
+requests, a completion gap below 30 seconds for each admitted instance and
+zero final ownership gauges. It forbids timed cache flushes and forced cleanup.
+
+Raw requests, native controls, resource samples, installed RECORD snapshots,
+commands and cleanup records stay in the external output. SSD cache data remains
+in the separately declared data directory until the experiment owner removes it
+after the Manager exits. A debug `--profile` run describes consumed descriptor
+shapes and is separate from timing qualification. TTFT is client time to first
+nonempty streamed text; p99 below 1,000 samples is descriptive. This gate does
+not qualify abrupt death, containers, cross-host traffic, native GDS, rank
+combinations, throughput isolation or a new scheduling policy.
