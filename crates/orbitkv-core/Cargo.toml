@@ -76,6 +76,11 @@ harness = false
 name = "transfer_h2d"
 harness = false
 
+[[bench]]
+name = "native_kernel_copy"
+path = "../../benches/native_kernel_copy.rs"
+harness = false
+
 [[example]]
 name = "pinned_alloc"
 

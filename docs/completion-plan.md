@@ -905,6 +905,9 @@ layer hooks. The current contracts live in [transport](transport.md) and
 - **KDA task implemented / qualification open:** validate and measure fragmented
   mapped-host copies with the consumed NVRTC baseline and a benchmark-only
   multi-CTA candidate. See [kernel optimization](kernel-optimization.md).
+  Native promotion continues with actual Rust descriptor submission, matched
+  DMA comparison, 4 KiB regression controls and installed-kernel model gates.
+  Keep default DMA unchanged and independent acceptance separate.
   Preserve byte format, descriptor ABI and physical-drain ownership; promote
   only after independent copy and consumed inference gates. Generated evidence
   belongs outside the checkout. Codec/checksum fusion follows only if profiling
