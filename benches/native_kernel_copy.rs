@@ -130,6 +130,8 @@ fn main() {
     let mut output: Option<PathBuf> = None;
     let mut seed = 20261007;
     let mut samples: usize = 30;
+    let mut fragment_bytes: Option<usize> = None;
+    let mut blocks: Option<usize> = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--output" => output = Some(args.next().expect("output path").into()),
@@ -140,6 +142,22 @@ fn main() {
                     .expect("samples")
                     .parse()
                     .expect("numeric samples");
+            }
+            "--fragment-bytes" => {
+                fragment_bytes = Some(
+                    args.next()
+                        .expect("fragment bytes")
+                        .parse()
+                        .expect("numeric fragment bytes"),
+                );
+            }
+            "--blocks" => {
+                blocks = Some(
+                    args.next()
+                        .expect("blocks")
+                        .parse()
+                        .expect("numeric blocks"),
+                );
             }
             "--bench" => {}
             _ => panic!("unknown argument {arg}"),
@@ -156,7 +174,23 @@ fn main() {
     let kernel = KernelBackend::new(&context).expect("native kernel");
     let dma = MemcpyBackend::new(&context).expect("native DMA");
     let backends: [&dyn TransferBackend; 2] = [&kernel, &dma];
-    let mut selected = cases();
+    let mut selected = match (fragment_bytes, blocks) {
+        (None, None) => cases(),
+        (Some(size), Some(count)) => {
+            assert!(size > 0 && count > 0);
+            size.checked_add(2 * GUARD + 16)
+                .and_then(|width| width.checked_mul(count))
+                .expect("custom fragment allocation overflow");
+            vec![Case {
+                name: "custom-fragments",
+                sizes: vec![size; count],
+                host_offset: 0,
+                device_offset: 0,
+                reverse: true,
+            }]
+        }
+        _ => panic!("--fragment-bytes and --blocks must be specified together"),
+    };
     selected.shuffle(&mut rand::rngs::StdRng::seed_from_u64(seed));
     for case in selected {
         let widths: Vec<_> = case
