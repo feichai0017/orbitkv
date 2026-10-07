@@ -240,24 +240,40 @@ class VLLMServer:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Stop the vLLM server and all child processes."""
-        if self.process:
-            server_label = self.server_label or (
-                "OrbitKV" if self.use_orbitkv or self.kv_transfer_config is not None else "Baseline"
-            )
-            print(f"\n[{server_label}] Stopping vLLM server...")
-            with suppress(ProcessLookupError):
-                os.killpg(self.process.pid, signal.SIGTERM)
-            try:
-                self.process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                with suppress(ProcessLookupError):
-                    os.killpg(self.process.pid, signal.SIGKILL)
-                self.process.wait(timeout=5)
-            self.process = None
-            print("Server stopped.\n")
+        """Stop the API owner and require its engine workers to drain."""
+        from tests.support.installed_serving import process_group_members
 
-        if self.log_handle:
+        if self.process:
+            process = self.process
+            with suppress(ProcessLookupError):
+                process.send_signal(signal.SIGTERM)
+            deadline = time.monotonic() + 90
+            while time.monotonic() < deadline:
+                process.poll()
+                if not process_group_members(process.pid):
+                    break
+                time.sleep(0.1)
+            remaining = process_group_members(process.pid)
+            if remaining:
+                with suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=10)
+            cleanup = {
+                "pid": process.pid,
+                "exit_code": process.returncode,
+                "forced_kill": bool(remaining),
+                "remaining_processes": process_group_members(process.pid),
+            }
+            if self.log_file:
+                Path(str(self.log_file) + ".cleanup.json").write_text(
+                    json.dumps(cleanup, indent=2) + "\n"
+                )
+            self.process = None
+            if self.log_handle:
+                self.log_handle.close()
+            assert not remaining and not cleanup["remaining_processes"], cleanup
+            assert process.returncode in {0, -signal.SIGTERM}, cleanup
+        elif self.log_handle:
             self.log_handle.close()
 
     def _wait_for_ready(self, timeout: int = 180):
