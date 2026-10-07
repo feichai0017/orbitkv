@@ -910,24 +910,42 @@ layer hooks. The current contracts live in [transport](transport.md) and
   and five installed-kernel model gates pass on A100 SM80. The largest paired
   4 KiB median regression is 1.11%, below the frozen 5% guard. A 12-run follow-up
   on representative 128 KiB model-sized fragments remains near old-kernel parity;
-  it does not establish an inference speedup. Default DMA, descriptor bytes and
-  physical-drain ownership are unchanged. Independent reproduction, contention,
+  it does not establish an inference speedup. Existing backend selection,
+  descriptor bytes and physical-drain ownership are unchanged. Independent reproduction, contention,
   graphs, H20 and S3-dependent faults remain open. Sources, raw samples, native
   comparisons, final wheel and failed builds remain outside the checkout at
   `/root/orbitkv-artifacts/kda-native-copy-20261007/`; see
   [kernel optimization](kernel-optimization.md). Codec/checksum fusion requires
   a separately measured, consumed bottleneck.
-- **SSD host restore batching implemented; qualification in progress (2026-10-07):**
-  `transfer/worker/restore.rs` now submits at most 16 unique SSD generations per
-  existing reader batch and storage owner. Repeated layer references remain
-  deduplicated; same-key generations are separated and every batch drains before
-  an error is returned or GPU sources are replaced. No physical I/O coalescing,
-  new early readiness or cache admission policy is implied. The native
-  `benches.communication --tier ssd` gate forces io_uring, empties DRAM, zeros
-  destinations and checks exact GPU bytes and physical reads. Matched timings and
-  official installed-wheel SSD/shared-Manager gates remain pending. Evidence and
-  the frozen task contract are outside the checkout at
-  `/tmp/orbitkv-s5-ssd-20261007/`.
+- **SSD host restore batching implemented; native gates pass (2026-10-07),
+  installed gates pass; independent acceptance open:** production `50c6d58d` submits at
+  most 16 unique SSD generations per existing reader batch and storage owner.
+  Repeated layer references remain deduplicated; same-key generations are
+  separated and every batch drains before an error returns or GPU sources change.
+  No physical I/O coalescing, new early readiness or cache policy is implied.
+  The frozen 12-cell A100/ext4-NVMe io_uring cohort passes exact bytes, physical
+  reads and all 15 paired median guards (largest ratio 1.0154). Twelve 4 KiB
+  blocks become one reader batch, with geometric mean median ratio 0.645;
+  the 108 MiB interval crosses parity. Python/native call overhead is included;
+  p99 is descriptive and one small 34-block pair rises 0.738 → 2.486 ms. Fourteen
+  real SSD native tests pass without environment skips. The unchanged complete
+  wheel `8acd6a06…` passes all three official-engine SSD/shared-Manager gates
+  in a fresh durable cohort, with 20 normal zero exits and unchanged installed
+  files. The original passing cohort has incomplete provenance after temporary
+  cleanup; its surviving records are preserved separately and no old cell is
+  reused. The final native cohort retains all 3,000 samples in `/workspace`,
+  with SSD data on the same NVMe mount. Sources, frozen contracts, failed runs and the
+  final handoff stay outside Git at
+  `/root/orbitkv-artifacts/s5-ssd-host-batching-20261007/`; see
+  [SSD performance](ssd-performance.md).
+- Profile actual descriptor shapes and inference contention before further
+  mapped-host copy changes. Consider SSD-staging scatter or encoding/checksum
+  fusion only after their consumed route exposes a material dispatch/HBM cost.
+  Keep device code in the existing `.cu` files and Rust ownership through final
+  drain. Native GDS eligibility, lossy codec quality and physical I/O merging
+  are separate gates; [kernel requirements](kernel-optimization.md) specifies
+  the controls. Next S5.5 qualification is sustained shared-Manager SSD mixed
+  save/restore, per-instance progress and bounded cleanup, not a new scheduler.
 - Extend readiness to legal multipart and SSD/codec pipelines where it can
   shorten the engine critical path. Retain the parent source/destination fence
   and final drain; a ready layer does not retire the whole operation.
@@ -1313,6 +1331,22 @@ processes left. This does not claim persistent SSD-index recovery, abrupt
 Manager death or native DMA termination. The wheel is unchanged (`9d14998d…`).
 Evidence: `/root/orbitkv-artifacts/s5-concurrent-recovery-20261007/`;
 A100 mirror: `/workspace/orbitkv-s5-concurrent-recovery-20261007/`.
+
+The SSD host-batching follow-up (`50c6d58d`, frozen wheel `8acd6a06…`) passes
+three fresh installed gates: each official engine's ordinary SSD full/partial
+restore, plus shared-Manager SSD serving. Both engines use `direct`; each full
+or partial restart loads 113,246,208 bytes from SSD after DRAM eviction. Their
+overlapping external restores load 226,492,416 bytes, with matching io_uring
+reads and four reader batches. All 20 services exit zero without forced cleanup;
+all installed package/engine files stay unchanged and GPU postflight is empty.
+Normal Manager restart remains a cold rebuild. Functional release-gate files
+are on the `/workspace` overlay; the separate 12-cell native comparison uses
+ext4/NVMe and demonstrates median improvement, with descriptive p99 regressions
+retained. The first aggregate cohort has incomplete provenance; the new complete
+raw cohort and all surviving controls are archived at
+`/root/orbitkv-artifacts/s5-ssd-host-batching-20261007/`, mirrored at
+`/workspace/orbitkv-s5-ssd-host-batching-20261007/`. Independent review and
+sustained mixed save/restore tail/fairness qualification remain open.
 
 This delivers one same-host deployment profile, not all of S5.5. Independent review,
 sustained restore pressure/fairness, isolated containers,

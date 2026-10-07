@@ -13,7 +13,11 @@ additional service or an inference-engine option.
 Calling cuFile does **not** prove native GPUDirect Storage: its compatibility
 mode performs host staging internally. Native-mode probes in this H20 container
 have failed driver initialization (5001) or file registration (5027); automatic
-selection falls back to io_uring. Native GDS throughput remains unqualified.
+selection falls back to io_uring. An A100 native-only initialization probe on
+2026-10-07 also returned driver error 5001 on its `/tmp` ext4 NVMe mount; `auto`
+selected io_uring and the Manager exited normally. Its surviving capability
+record is retained in the SSD host-batching archive, separate from native I/O
+qualification. Native GDS throughput remains unqualified.
 
 ## Automatic selection
 
@@ -69,8 +73,13 @@ route; a compatible peer source can still satisfy ordinary remote recovery.
 The explicit io_uring route carries the same extent lease through the bounded
 host-reader queue. A separate SSD host-restore lane waits for these reads, then
 uses existing copy/codec completion before releasing engine destinations. It
-does not block the ordinary DRAM worker or reacquire a potentially different
-generation by key. Both routes share the SSD store and extent ownership;
+deduplicates repeated layer references and submits at most 16 unique state keys
+per existing SSD-store reader batch; same-key physical generations stay in
+separate batches. All batches drain and all requested results are validated
+before GPU sources change or an error returns. This reduces submission/completion
+work, without merging physical I/O or adding earlier readiness. It does not block
+the ordinary DRAM worker or reacquire a potentially different generation by key.
+Both routes share the SSD store and extent ownership;
 separate queues do not imply separate hardware bandwidth.
 
 Opt-in cost observations compare enqueue-to-GPU-terminal route totals in shadow,

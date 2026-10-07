@@ -19,8 +19,11 @@ with Rust's `include_str!` and compiled through NVRTC. Installed binaries need n
 source-file lookup. The original one-CTA baseline is retained in
 `benches/kernels/batch_copy_baseline.cu`; `benches/kernels/fragmented_copy.cu`
 retains the component candidate. The direct DMA backend still coalesces legal
-adjacent/strided ranges and remains the default. Select the experimental kernel
-explicitly with `transfer_backend="kernel"` in the engine cache configuration.
+adjacent/strided ranges and remains the ordinary dense-attention default. vLLM's
+existing MLA resolver selects the kernel when no override is supplied; the
+measurements below do not qualify MLA serving. Select the kernel explicitly with
+vLLM's `kv_connector_extra_config["orbitkv.transfer_backend"]="kernel"` or SGLang's
+`ORBITKV_TRANSFER_BACKEND=kernel`. This task changes neither resolver.
 
 The component driver checks H2D and D2H, empty/zero-size batches, independent
 address misalignment, tails, reordered ranges, source preservation, guard bytes
@@ -92,15 +95,23 @@ Independent reproduction, sustained inference contention, CUDA graph execution,
 H20, native transfer faults and S3-dependent reclamation remain unqualified.
 These results do not close S4 or establish TTFT/ITL, throughput or NIC isolation.
 
-## Other candidate requirements
+## Consumed follow-up requirements
 
-- Encoding/checksum fusion needs a measured extra HBM pass, unchanged stored byte
-  format and IEEE CRC32, and corrupt-input rejection before GPU destination writes.
-  Measure encoding, checksum, D2H and SSD/peer I/O together.
-- FP8/TurboQuant need architecture-specific conversion controls and declared model
-  quality tolerances. A100 and H20 profiles are separate; recurrent state stays exact.
+The next changes remain in S4 of the completion plan. Use the engine's actual
+fragment histogram and inference load before selecting a candidate. Device code
+belongs in the existing transfer/codec `.cu` files, with Rust retaining resource
+ownership; Python supplies engine layout and readiness.
+
+| Candidate | Required measurement and correctness boundary |
+| --- | --- |
+| Fragmented mapped-host copy and reusable descriptor upload | Measure native packing/upload/submit-to-drain under actual fragment sizes, mixed tails and concurrent model compute. Compare coalescing DMA; the current large-fragment gain does not justify a general kernel default. |
+| SSD GPU-staging scatter | First establish that per-range D2D dispatch in the consumed staged cuFile route is material. A batched scatter must retain every source extent, staging slot and engine destination until physical completion. Native GDS eligibility is a separate gate. |
+| Encoding/checksum fusion | Establish an extra HBM pass worth removing; preserve stored byte format and IEEE CRC32. Corrupt input must be rejected before engine-page writes, so unverified decode/scatter directly into destination pages is ineligible. Measure encoding, checksum, D2H and SSD/peer I/O together. |
+| ANS and FP8/TurboQuant codec kernels | Prioritize exact ANS only if the full encode/read/decode route improves. Lossy formats require declared model-quality controls; historical TurboQuant failures stay visible and recurrent state stays exact. A100 and H20 qualification are separate. |
 
 Supply actual block sizes, tensor strides, fragmentation, inference load and
 storage/transport budgets. Use Nsight Compute counters when device permissions
-permit; timing alone cannot identify a hardware bottleneck. These follow-up tasks
-remain in the completion plan rather than a separate kernel roadmap.
+permit; timing alone cannot identify a hardware bottleneck. KDA component byte
+controls and matched native measurements precede final-wheel engine gates. SSD
+host reader batching is a Rust submission optimization, described in
+[SSD performance](ssd-performance.md); it adds no CUDA kernel.
