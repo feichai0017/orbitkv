@@ -1,7 +1,7 @@
 //! Single-launch transfer backend.
 //!
 //! Instead of one `cuMemcpyAsync` per fragment, a single grid-strided kernel
-//! copies the whole batch: one threadblock per descriptor reads from the source
+//! copies the whole batch: bounded threadblocks per descriptor read from the source
 //! address and writes to the destination address. For host<->device copies the
 //! host side is mapped pinned memory, which the kernel dereferences directly
 //! (zero-copy over PCIe). This collapses N driver submissions into one small
@@ -12,7 +12,7 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use cudarc::driver::{
-    CudaContext, CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg,
+    CudaContext, CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg, sys,
 };
 use cudarc::nvrtc::compile_ptx;
 
@@ -22,28 +22,7 @@ use super::{CopyDesc, TransferBackend};
 /// `[dst, src, size, dst, src, size, ...]`. A flat array sidesteps any host/
 /// device struct-layout mismatch. The 16-byte vectorized path is taken only
 /// when both addresses are 16-byte aligned, otherwise a scalar loop is used.
-const KERNEL_SRC: &str = r#"
-extern "C" __global__ void orbitkv_batch_copy(const unsigned long long* __restrict__ descs, int n) {
-    for (int i = blockIdx.x; i < n; i += gridDim.x) {
-        char* dst = (char*)descs[3 * i + 0];
-        const char* src = (const char*)descs[3 * i + 1];
-        unsigned long long size = descs[3 * i + 2];
-        if (((((unsigned long long)dst) | ((unsigned long long)src)) & 15ULL) == 0ULL) {
-            unsigned long long n16 = size >> 4;
-            for (unsigned long long j = threadIdx.x; j < n16; j += blockDim.x) {
-                ((int4*)dst)[j] = ((const int4*)src)[j];
-            }
-            for (unsigned long long j = (n16 << 4) + threadIdx.x; j < size; j += blockDim.x) {
-                dst[j] = src[j];
-            }
-        } else {
-            for (unsigned long long j = threadIdx.x; j < size; j += blockDim.x) {
-                dst[j] = src[j];
-            }
-        }
-    }
-}
-"#;
+const KERNEL_SRC: &str = include_str!("kernel.cu");
 
 const BLOCK_DIM: u32 = 256;
 const MAX_GRID: u32 = 65535;
@@ -52,6 +31,7 @@ const MAX_GRID: u32 = 65535;
 /// scratch buffer is reused across calls.
 pub struct KernelBackend {
     func: CudaFunction,
+    cta_budget: usize,
     /// Device-side descriptor buffer, grow-only and reused. The owning worker
     /// processes tasks serially and synchronizes after each, so the previous
     /// task's kernel has consumed the buffer before the next call overwrites it.
@@ -68,8 +48,17 @@ impl KernelBackend {
         let func = module
             .load_function("orbitkv_batch_copy")
             .map_err(|e| format!("load_function failed: {e:?}"))?;
+        let multiprocessors = ctx
+            .attribute(sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT)
+            .map_err(|e| format!("multiprocessor count failed: {e:?}"))?;
+        let cta_budget = usize::try_from(multiprocessors)
+            .ok()
+            .filter(|count| *count > 0)
+            .ok_or("invalid multiprocessor count")?
+            .saturating_mul(4);
         Ok(Self {
             func,
+            cta_budget,
             scratch: RefCell::new(None),
         })
     }
@@ -87,7 +76,10 @@ impl KernelBackend {
         }
 
         let n = copies.len();
-        let mut descs = Vec::with_capacity(n * 3);
+        let n_arg = i32::try_from(n).map_err(|_| "copy descriptor count exceeds i32")?;
+        let capacity = n.checked_mul(3).ok_or("copy descriptor size overflow")?;
+        let mut max_bytes = 0;
+        let mut descs = Vec::with_capacity(capacity);
         for c in copies {
             let (dst, src) = if host_is_src {
                 (c.device, c.host_device)
@@ -97,6 +89,7 @@ impl KernelBackend {
             descs.push(dst);
             descs.push(src);
             descs.push(c.size as u64);
+            max_bytes = max_bytes.max(c.size);
         }
 
         let mut guard = self.scratch.borrow_mut();
@@ -108,7 +101,9 @@ impl KernelBackend {
                     .map_err(|e| format!("scratch alloc failed: {e:?}"))?,
             );
         }
-        let scratch = guard.as_mut().expect("scratch initialized above");
+        let scratch = guard
+            .as_mut()
+            .ok_or("copy descriptor scratch is unavailable")?;
 
         // Async H2D of the descriptor array. The source is pageable, so the
         // driver consumes it before returning — the local `descs` is safe to
@@ -118,15 +113,18 @@ impl KernelBackend {
             .memcpy_htod(&descs, scratch)
             .map_err(|e| format!("descriptor upload failed: {e:?}"))?;
 
-        let grid = (n as u32).clamp(1, MAX_GRID);
+        let ctas = (self.cta_budget / n)
+            .clamp(1, 16)
+            .min(max_bytes.div_ceil(65536).clamp(1, 16));
+        let grid = (n as u64 * ctas as u64).min(u64::from(MAX_GRID)) as u32;
         let cfg = LaunchConfig {
             grid_dim: (grid, 1, 1),
             block_dim: (BLOCK_DIM, 1, 1),
             shared_mem_bytes: 0,
         };
-        let n_arg = n as i32;
+        let ctas_arg = ctas as i32;
         let mut builder = stream.launch_builder(&self.func);
-        builder.arg(&*scratch).arg(&n_arg);
+        builder.arg(&*scratch).arg(&n_arg).arg(&ctas_arg);
         // SAFETY: the kernel reads exactly `n` descriptors from `scratch` (len
         // >= 3*n) and copies `size` bytes between the device and mapped pinned
         // host addresses, all kept valid by the caller until it synchronizes.

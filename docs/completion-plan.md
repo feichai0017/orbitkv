@@ -902,6 +902,21 @@ layer hooks. The current contracts live in [transport](transport.md) and
 - Profile adapter hashing/conversions, repeated destination checks, fragmented
   descriptors, dispatch, allocation/scratch work and duplicate shared-prefix H2D.
   Remove measured redundant work one bottleneck at a time.
+- **KDA mapped-host copy implemented; local qualification passed (2026-10-07),
+  independent acceptance open:** the existing optional `KernelBackend` now uses
+  bounded multi-CTA copies for large fragments in small batches. CUDA sources
+  are separate `.cu` files. Thirty component byte controls, six matched native
+  runs (34 case/direction rows each, actual Rust submission and coalescing DMA),
+  and five installed-kernel model gates pass on A100 SM80. The largest paired
+  4 KiB median regression is 1.11%, below the frozen 5% guard. A 12-run follow-up
+  on representative 128 KiB model-sized fragments remains near old-kernel parity;
+  it does not establish an inference speedup. Default DMA, descriptor bytes and
+  physical-drain ownership are unchanged. Independent reproduction, contention,
+  graphs, H20 and S3-dependent faults remain open. Sources, raw samples, native
+  comparisons, final wheel and failed builds remain outside the checkout at
+  `/root/orbitkv-artifacts/kda-native-copy-20261007/`; see
+  [kernel optimization](kernel-optimization.md). Codec/checksum fusion requires
+  a separately measured, consumed bottleneck.
 - Extend readiness to legal multipart and SSD/codec pipelines where it can
   shorten the engine critical path. Retain the parent source/destination fence
   and final drain; a ready layer does not retire the whole operation.
