@@ -252,75 +252,81 @@ class ObserverSession:
     def launch(self, timeout_seconds: float = 30) -> dict:
         if self.mode not in {"in-process", "helper-process"}:
             raise ValueError(f"unsupported observer mode: {self.mode}")
-        if self.mode == "in-process":
+        try:
+            if self.mode == "in-process":
 
-            def target() -> None:
+                def target() -> None:
+                    try:
+                        _run_observer(
+                            endpoint=self.endpoint,
+                            incarnation=self.incarnation,
+                            expected_view=self.expected_view,
+                            output=self.output,
+                            mode=self.mode,
+                            expected_cadence_ns=self.cadence_ns,
+                            max_polls=self.poll_count,
+                            start_timeout_seconds=timeout_seconds,
+                            stop_timeout_seconds=timeout_seconds,
+                        )
+                    except BaseException as error:
+                        self.thread_errors.append(error)
+                        _record_error(self.output, self.mode, error)
+
+                self.thread = threading.Thread(
+                    target=target,
+                    name="inventory-observer-sampler",
+                    daemon=True,
+                )
+                self.thread.start()
+            else:
+                log = (self.output / "observer-helper.log").open("xb")
+                command = [
+                    sys.executable,
+                    "-m",
+                    "benches.observer_polling",
+                    "--helper",
+                    "--endpoint",
+                    self.endpoint,
+                    "--incarnation",
+                    self.incarnation,
+                    "--expected-view",
+                    self.expected_view,
+                    "--output",
+                    str(self.output),
+                    "--cadence-ns",
+                    str(self.cadence_ns),
+                    "--max-polls",
+                    str(self.poll_count),
+                    "--start-timeout-seconds",
+                    str(timeout_seconds),
+                    "--stop-timeout-seconds",
+                    str(timeout_seconds),
+                ]
                 try:
-                    _run_observer(
-                        endpoint=self.endpoint,
-                        incarnation=self.incarnation,
-                        expected_view=self.expected_view,
-                        output=self.output,
-                        mode=self.mode,
-                        expected_cadence_ns=self.cadence_ns,
-                        max_polls=self.poll_count,
-                        start_timeout_seconds=timeout_seconds,
-                        stop_timeout_seconds=timeout_seconds,
+                    self.process = subprocess.Popen(
+                        command,
+                        cwd=Path(__file__).resolve().parents[1],
+                        stdin=subprocess.DEVNULL,
+                        stdout=log,
+                        stderr=subprocess.STDOUT,
                     )
-                except BaseException as error:
-                    self.thread_errors.append(error)
-                    _record_error(self.output, self.mode, error)
-
-            self.thread = threading.Thread(
-                target=target,
-                name="inventory-observer-sampler",
-                daemon=True,
-            )
-            self.thread.start()
-        else:
-            log = (self.output / "observer-helper.log").open("xb")
-            command = [
-                sys.executable,
-                "-m",
-                "benches.observer_polling",
-                "--helper",
-                "--endpoint",
-                self.endpoint,
-                "--incarnation",
-                self.incarnation,
-                "--expected-view",
-                self.expected_view,
-                "--output",
-                str(self.output),
-                "--cadence-ns",
-                str(self.cadence_ns),
-                "--max-polls",
-                str(self.poll_count),
-                "--start-timeout-seconds",
-                str(timeout_seconds),
-                "--stop-timeout-seconds",
-                str(timeout_seconds),
-            ]
-            self.process = subprocess.Popen(
-                command,
-                cwd=Path(__file__).resolve().parents[1],
-                stdin=subprocess.DEVNULL,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-            )
-            log.close()
-        deadline = time.monotonic() + timeout_seconds
-        while not self._path("ready").exists():
-            self.check()
-            if time.monotonic() >= deadline:
-                raise TimeoutError("observer did not become ready")
-            time.sleep(PROTOCOL_POLL_SECONDS)
-        ready = _read_json(self._path("ready"))
-        if ready["contract"] != OBSERVER_PROTOCOL or ready["mode"] != self.mode:
-            raise RuntimeError(f"invalid observer ready record: {ready}")
-        if self.mode == "helper-process" and ready["gpu_or_native_modules_loaded"]:
-            raise RuntimeError(f"helper imported forbidden modules: {ready}")
-        return ready
+                finally:
+                    log.close()
+            deadline = time.monotonic() + timeout_seconds
+            while not self._path("ready").exists():
+                self.check()
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("observer did not become ready")
+                time.sleep(PROTOCOL_POLL_SECONDS)
+            ready = _read_json(self._path("ready"))
+            if ready["contract"] != OBSERVER_PROTOCOL or ready["mode"] != self.mode:
+                raise RuntimeError(f"invalid observer ready record: {ready}")
+            if self.mode == "helper-process" and ready["gpu_or_native_modules_loaded"]:
+                raise RuntimeError(f"helper imported forbidden modules: {ready}")
+            return ready
+        except BaseException:
+            self.abort()
+            raise
 
     def start(
         self,

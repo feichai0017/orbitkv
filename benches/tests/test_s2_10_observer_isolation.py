@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
 
+from benches import observer_polling as polling
 from benches.analyze_observer_isolation import _bootstrap_geomean, _overlaps
 from benches.observer_polling import (
     MISSED_DEADLINE_POLICY,
@@ -78,6 +81,86 @@ def _run_session(tmp_path, endpoint, mode):
     )
     result = session.finish(timeout_seconds=5)
     return output, ready, start, result
+
+
+def assert_failed_launch_reaped(session, output):
+    assert session.process is not None
+    pid = session.process.pid
+    assert session.process.poll() == 0
+    assert not Path(f"/proc/{pid}").exists()
+    stop = json.loads((output / "observer-stop.json").read_text())
+    assert stop["reason"] == "cell_cleanup"
+    exited = json.loads((output / "observer-exit.json").read_text())
+    assert exited == {
+        "contract": OBSERVER_PROTOCOL,
+        "mode": "helper-process",
+        "pid": pid,
+        "samples": 0,
+        "status": "stopped_before_start",
+    }
+    assert not (output / "observer-error.json").exists()
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
+def test_helper_invalid_ready_is_stopped_and_reaped_before_error_propagates(tmp_path, monkeypatch):
+    output = tmp_path / "invalid-ready"
+    output.mkdir()
+    session = ObserverSession(
+        mode="helper-process",
+        endpoint="http://127.0.0.1:1",
+        incarnation="owner-1",
+        expected_view="view-1",
+        output=output,
+        cadence_ns=25_000_000,
+        poll_count=2,
+    )
+    read_json = polling._read_json
+
+    def invalid_ready(path):
+        record = read_json(path)
+        return (
+            {**record, "contract": "invalid-contract"}
+            if path.name == "observer-ready.json"
+            else record
+        )
+
+    monkeypatch.setattr(polling, "_read_json", invalid_ready)
+    try:
+        with pytest.raises(RuntimeError, match="invalid observer ready record"):
+            session.launch(timeout_seconds=2)
+        assert_failed_launch_reaped(session, output)
+    finally:
+        if session.process is not None and session.process.poll() is None:
+            session.abort()
+
+
+def test_helper_ready_timeout_is_stopped_and_reaped_before_error_propagates(tmp_path, monkeypatch):
+    output = tmp_path / "ready-timeout"
+    output.mkdir()
+    session = ObserverSession(
+        mode="helper-process",
+        endpoint="http://127.0.0.1:1",
+        incarnation="owner-1",
+        expected_view="view-1",
+        output=output,
+        cadence_ns=25_000_000,
+        poll_count=2,
+    )
+    real_path = session._path
+    monkeypatch.setattr(
+        session,
+        "_path",
+        lambda name: (output / "parent-never-ready.json" if name == "ready" else real_path(name)),
+    )
+    try:
+        with pytest.raises(TimeoutError, match="observer did not become ready"):
+            session.launch(timeout_seconds=2)
+        assert (output / "observer-ready.json").is_file()
+        assert_failed_launch_reaped(session, output)
+    finally:
+        if session.process is not None and session.process.poll() is None:
+            session.abort()
 
 
 def test_in_process_and_helper_use_identical_bounded_schedule_and_sample_schema(tmp_path):

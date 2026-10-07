@@ -444,8 +444,8 @@ def run(
             cadence_ns=observer_sample_ms * 1_000_000,
             poll_count=observer_poll_count,
         )
-        observer_ready = observer.launch()
         stack.callback(observer.abort)
+        observer_ready = observer.launch()
         result["observer_ready"] = observer_ready
         observed_pids = [os.getpid(), manager.process.pid, pressure.pid]
         if observer.pid is not None:
