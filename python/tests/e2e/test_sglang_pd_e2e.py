@@ -73,6 +73,8 @@ def test_sglang_native_pd_and_external_cache_match_monolithic(channel_server, re
         "--model-path",
         str(model),
         "--trust-remote-code",
+        "--dtype",
+        "bfloat16",
         "--load-format",
         request.config.getoption("--sglang-load-format"),
         "--host",
