@@ -225,26 +225,105 @@ def test_official_engines_share_manager(tier, model, tmp_path, request):
                         engine, responses["parallel_after_restart"][engine], baseline[engine]
                     )
                     assert cached_tokens(engine, responses["parallel_after_restart"][engine]) >= 704
+                for engine in ENGINES:
+                    owners[engine].close()
+                    assert processes[engine].poll() is not None
+                snapshot("parallel_stopped")
+                if tier == "ssd":
+                    if snapshots["parallel_stopped"]["orbitkv_cache_resident_bytes"]:
+                        evict_dram_after_ssd_writes(http_port)
+                    assert fetch_orbitkv_metrics(http_port)["orbitkv_cache_resident_bytes"] == 0
+                snapshot("parallel_before_restore")
+                for engine in ENGINES:
+                    owners[engine] = stack.enter_context(contextlib.ExitStack())
+                    processes[engine] = owners[engine].enter_context(
+                        service(
+                            commands[engine] + options[engine],
+                            urls[engine],
+                            environments[engine],
+                            tmp_path,
+                            f"{engine}-parallel-restore",
+                        )
+                    )
+                restored = generate_pair("parallel-external-restore")
+                for engine in ENGINES:
+                    compare_output(engine, restored[engine], baseline[engine])
+                    assert cached_tokens(engine, restored[engine]) >= 704
+                end = snapshot("parallel_after_restore")
+                start = snapshots["parallel_before_restore"]
+                expected_bytes = sum(
+                    snapshots[f"{engine}_after_restart"]["orbitkv_load_bytes_total"]
+                    - snapshots[f"{engine}_before_restart"].get("orbitkv_load_bytes_total", 0)
+                    for engine in ENGINES
+                )
+                assert (
+                    end["orbitkv_load_bytes_total"] - start.get("orbitkv_load_bytes_total", 0)
+                    == expected_bytes
+                    > 0
+                ), snapshots
+                if tier == "ssd":
+                    assert (
+                        end["orbitkv_ssd_prefetch_bytes_total"]
+                        - start.get("orbitkv_ssd_prefetch_bytes_total", 0)
+                        == expected_bytes
+                    ), snapshots
+                    assert end.get("orbitkv_ssd_cufile_read_bytes_total", 0) == start.get(
+                        "orbitkv_ssd_cufile_read_bytes_total", 0
+                    ), snapshots
             snapshot("final")
             assert snapshots["final"].get("orbitkv_load_failures_total", 0) == 0, snapshots
-            (tmp_path / "result.json").write_text(
-                json.dumps(
-                    {
-                        "tier": tier,
-                        "model": model,
-                        "profile": "one A100; dense TP=1 PP=1 eager; two official engines; one installed Manager",
-                        "model_config_sha256": hashlib.sha256(
-                            (Path(model) / "config.json").read_bytes()
-                        ).hexdigest(),
-                        "manager_pid": manager.pid,
-                        "concurrent": concurrent,
-                        "snapshots": snapshots,
-                    },
-                    indent=2,
-                )
-                + "\n"
-            )
         assert not Path(f"/tmp/orbitkv-{port}.sock").exists(), "Manager left its UDS behind"
+        old_pid = manager.pid
+        # Stop engine owners before restarting their Manager; a process restart
+        # does not establish native drain for an outstanding transfer.
+        with service(
+            manager_args, manager_url, environments["vllm"], tmp_path, "manager-restart"
+        ) as replacement:
+            assert replacement.pid != old_pid
+            snapshot("manager_restarted")
+            with contextlib.ExitStack() as stack:
+                for engine in ENGINES:
+                    stack.enter_context(
+                        service(
+                            commands[engine] + options[engine],
+                            urls[engine],
+                            environments[engine],
+                            tmp_path,
+                            f"{engine}-manager-restart",
+                        )
+                    )
+                cold = generate_pair("after-manager-restart")
+                for engine in ENGINES:
+                    compare_output(engine, cold[engine], baseline[engine])
+                    assert cached_tokens(engine, cold[engine]) == 0
+                snapshot("manager_restart_cold")
+                assert snapshots["manager_restart_cold"].get("orbitkv_load_bytes_total", 0) == 0
+                assert snapshots["manager_restart_cold"].get("orbitkv_save_bytes_total", 0) > 0
+                warm = generate_pair("manager-restart-hbm")
+                for engine in ENGINES:
+                    compare_output(engine, warm[engine], baseline[engine])
+                    assert cached_tokens(engine, warm[engine]) >= 704
+            snapshot("manager_restart_final")
+            assert snapshots["manager_restart_final"].get("orbitkv_load_failures_total", 0) == 0
+        assert not Path(f"/tmp/orbitkv-{port}.sock").exists(), "replacement left its UDS behind"
+        (tmp_path / "result.json").write_text(
+            json.dumps(
+                {
+                    "tier": tier,
+                    "model": model,
+                    "profile": "one A100; dense TP=1 PP=1 eager; two official engines; one installed Manager",
+                    "model_config_sha256": hashlib.sha256(
+                        (Path(model) / "config.json").read_bytes()
+                    ).hexdigest(),
+                    "manager_pids": [old_pid, replacement.pid],
+                    "concurrent": concurrent,
+                    "snapshots": snapshots,
+                    "manager_restart_policy": "drain engines, cold rebuild, no durable SSD-index claim",
+                },
+                indent=2,
+            )
+            + "\n"
+        )
     finally:
         for engine in ENGINES:
             after = probe_installation(

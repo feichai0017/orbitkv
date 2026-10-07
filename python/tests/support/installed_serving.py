@@ -91,7 +91,7 @@ def service(command, url, env, directory, name):
         (directory / f"{name}-cleanup.json").write_text(json.dumps(cleanup, indent=2) + "\n")
         assert not remaining, f"{name} required forced cleanup: {cleanup}"
         assert not cleanup["remaining_processes"], cleanup
-        if name == "manager":
+        if name.startswith("manager"):
             assert process.returncode == 0, cleanup
         else:
             assert process.returncode in (0, -signal.SIGTERM), cleanup
