@@ -359,3 +359,32 @@ def test_ssd_requires_direct_io_alignment(tmp_path):
         ]
     )
     assert selected.tier == "ssd"
+
+
+def test_ssd_cleanup_waits_for_physical_write_and_query_owners(monkeypatch):
+    from benches.communication import cleanup_published
+
+    events = []
+    states = iter(
+        [
+            {"orbitkv_ssd_write_bytes_total": 1, "orbitkv_ssd_write_inflight": 1},
+            {"orbitkv_ssd_write_bytes_total": 1, "orbitkv_query_reserved_bytes": 4096},
+            {"orbitkv_ssd_write_bytes_total": 1},
+        ]
+    )
+
+    def observe(url):
+        events.append("observe")
+        return next(states)
+
+    def post(url, timeout):
+        events.append(url.rsplit("/", 1)[-1])
+        return SimpleNamespace(
+            raise_for_status=lambda: None, json=lambda: {"still_referenced_blocks": 0}
+        )
+
+    monkeypatch.setattr("benches.communication.metrics", observe)
+    monkeypatch.setattr("benches.communication.requests.post", post)
+    monkeypatch.setattr("benches.communication.time.sleep", lambda _: events.append("wait"))
+    cleanup_published("http://manager", 1, wait_for_ssd=True)
+    assert events == ["sync", "observe", "wait", "observe", "wait", "observe", "cleanup"]
