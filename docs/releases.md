@@ -80,6 +80,10 @@ Mooncake libraries. `maturin build` alone does not stage the complete runtime.
    controls in DRAM and io_uring SSD cells. The installed console entry executes
    the Manager directly: SIGTERM must drain and exit 0; forced cleanup fails.
    Run the [release smoke and correctness gates](../python/tests/README.md#release-smoke).
+   Claiming a shared Manager additionally requires the
+   [two-engine gate](../python/tests/README.md#two-engines-sharing-one-manager),
+   matching both installations to the frozen wheel and retaining concurrent
+   output, each engine restart, actual SSD reads and normal drain evidence.
 4. Review the final benchmark summaries and known limits. Publish only after
    these checks pass and the release is approved.
 

@@ -39,7 +39,7 @@ record submitted, merged and released as different states.
 | S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. Independent final review accepts the second frozen S2.10 same-host formal handoff: all 25 cells are valid and five 16-owner ordinary visibility runs pass 50 ms, while both DRAM and SSD isolation fail the frozen per-pair/CI contract. S2.10b lifecycle, low-overhead observation and 14-cell diagnosis are complete. Independent review accepts the diagnostic archive but blocks a production repair: the dominant measured tail is after native return at the Python observer boundary, while no repeatable Manager, metadata-lock, completion-notification or SSD-owner shift is established. The supported envelope stays four owners and all prior formal campaigns remain immutable. Physical cross-host cache/HA, independent etcd failure domains and native GDS are qualification blocked on missing hardware; final serving, RDMA and S3-dependent cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
-| S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.31.0/0.5.21 final wheel passes ordinary-cache installed/model/lifecycle gates locally. Independent acceptance, public lifecycle implementation and broader deployment qualification remain open. |
+| S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.31.0/0.5.21 final wheel passes ordinary-cache installed/model/lifecycle gates and the S5.5 same-host dual-engine shared-Manager DRAM/io_uring cells locally. Independent acceptance, public lifecycle implementation and broader deployment qualification remain open. |
 | S6 | Partial: observations/limited choices exist; unified executed decisions remain open. |
 | S7 | Open: consumed retention/checkpoint compiler beyond recovery validation. |
 | S8 | Partial: existing wheel workflow; final images, artifact gates and publication remain open. |
@@ -1234,6 +1234,37 @@ wheel gates. Open profiles only with proven ownership and fault handling; no
 fork-only factory, callback, default configuration or CI dependency may remain.
 
 ### S5.5 — Deployment matrix and upstream maintenance
+
+**Local gates passed; independent review open (2026-10-07):** test commit
+`06d00d53` adds a reproducible two-engine shared-Manager gate for official
+vLLM 0.31.0/SGLang 0.5.21. One A100 runs dense Qwen3-8B, TP=1/PP=1 eager,
+a 1 GiB Manager pool and optional 2 GiB io_uring SSD. Each framework has its
+own native output control and installed environment. Both media pass concurrent
+cold/HBM requests and each engine's graceful exit/restart while the survivor
+continues serving through the same Manager PID. Each restarted engine loads
+113,246,208 bytes; SSD recovery has zero Manager DRAM beforehand and the same
+positive physical io_uring byte delta. All 14 services across these two cells
+exit zero without forced cleanup. Installed engine/OrbitKV hashes stay unchanged.
+
+The production wheel remains the S5.2 freeze `9d14998d…`; no Manager, engine,
+cache strategy or transport code changes. The test helper is shared with the
+ordinary full/partial installed-wheel gate. RECORD validation now covers all
+package data/code, with only generated Python bytecode exempt; the engine pin
+checker parses `project.optional-dependencies` as TOML, including Python 3.10.
+The first SSD attempt stopped at a test-only positive-eviction assertion when a
+second cleanup was unnecessary; its logs and complete frozen cohort remain
+archived. The corrected gate records every metrics boundary and accepts an
+already-empty DRAM only while still requiring positive SSD reads. External
+source, commands, raw runs and handoff:
+`/root/orbitkv-artifacts/s5-shared-manager-20261007/`, mirrored under
+`/workspace/orbitkv-s5-shared-manager-20261007/` on A100. Use
+[the maintained reproduction](../python/tests/README.md#two-engines-sharing-one-manager).
+
+This delivers one same-host deployment profile, not all of S5.5. Independent review,
+concurrent restore pressure/fairness, Manager restart, isolated containers,
+physical cross-host/rank combinations, native P/D faults and S3-dependent
+reclamation remain open. Shared capacity does not establish interchangeable
+cross-engine KV bytes or a latency/throughput advantage.
 
 - Track each engine separately: single instance; independent replicas; multiple
   instances sharing a Manager; dense/hybrid; P/D; attention DP, TP, PP, MoE EP and

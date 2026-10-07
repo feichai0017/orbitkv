@@ -15,6 +15,9 @@ selected official versions with cold/native-HBM/full/partial reuse and
 DRAM/io_uring SSD recovery. It rejects editable/source imports and changed
 installed files. Its dense TP=1/PP=1 eager profile is separate from graph, P/D
 and failure-lifetime qualification; see S5.2 for current acceptance status.
+The [shared-Manager gate](../python/tests/README.md#two-engines-sharing-one-manager)
+also passes locally for two simultaneous official engines and individual graceful
+restarts in DRAM/io_uring SSD; S5.5 records its narrow scope and pending review.
 
 ## Ownership contract
 

@@ -18,9 +18,9 @@ does not establish OrbitKV compatibility.
 
 | Mode | Processes | Status |
 | --- | --- | --- |
-| Single-node vLLM or SGLang cache | Engine + independent Cache Manager | TP=1 DRAM/SSD recovery and concurrent faults validated on both; multi-rank and long-running fault soak remain open |
-| Multiple engines on one node | Engines share one Manager and its cache budget | Shared endpoint and independent instance registrations are implemented; concurrent multi-engine serving and container isolation need separate qualification |
-| Independent matching replicas, TP=1 | Two engines, two Managers and etcd | Qwen3-8B sharing and restart gates pass on both engines over same-host TCP and the recorded H20/A100 TCP natural-text suite; [recorded scope](shared-cache-qualification.md#recorded-result) |
+| Single-node vLLM or SGLang cache | Engine + independent Cache Manager | Current releases pass the installed dense eager TP=1 DRAM/io_uring gates locally; independent acceptance, multi-rank and transfer-fault qualification remain open |
+| Multiple engines on one node | Engines share one Manager and its cache budget | Current releases pass same-host dense eager DRAM/io_uring concurrent cold/HBM requests and individual engine restart locally; independent review, restore pressure, Manager restart and containers remain open |
+| Independent matching replicas, TP=1 | Two engines, two Managers and etcd | Historical Qwen3-8B sharing/restart and H20/A100 TCP evidence is retained at its recorded engine/wheel revisions; current-release reruns remain open; [recorded scope](shared-cache-qualification.md#recorded-result) |
 | Shared cache across nodes | One Cache Manager per host with local global index + etcd metadata | Experimental; [two-host TCP correctness](shared-cache-qualification.md#two-host-tcp-2026-09-28) is recorded with numerical limits; RDMA and metadata scale/failure qualification remain open |
 | vLLM native P/D plus cache | Official NIXL, MultiConnector, upstream router and independent Managers | Candidate: P read/write cache, D save-only; [gates and limits](pd.md) |
 | SGLang native P/D plus cache | Official disaggregation backend/router and independent Managers | Candidate: P restore, D save; [gates and limits](pd.md) |
@@ -136,6 +136,12 @@ using the same host socket:
 Each engine instance registers separately. Give serving instances different
 HTTP ports, preserve immutable model identities and let each engine manage its
 own HBM allocation. They share external capacity, not a combined HBM allocator.
+The [installed shared-Manager gate](../python/tests/README.md#two-engines-sharing-one-manager)
+uses separate official engine environments, native output controls and actual
+DRAM/io_uring recovery after each engine restarts while the other stays available.
+See [S5.5](completion-plan.md#s55--deployment-matrix-and-upstream-maintenance)
+for the frozen wheel, evidence and independent-review status.
+
 Per-instance query limits bound retained reads and leases; these are not
 resident-cache quotas or a guarantee of fair scheduling. Incompatible storage
 identities stay separate.
@@ -179,11 +185,11 @@ GPU allocation away from the engines. A DaemonSet alone does not arrange this.
 Use `/health` and `/metrics` on the Manager's HTTP endpoint for probes and
 monitoring; HTTP does not carry the engine's cache data.
 
-Container images, shared GPU/PID/IPC wiring, rolling restarts and concurrent
-multi-engine serving remain deployment acceptance work. OrbitKV does not yet
+Container images, shared GPU/PID/IPC wiring, Manager rolling restarts and
+concurrent restore pressure remain deployment acceptance work. OrbitKV does not yet
 ship a qualified DaemonSet/Helm installation or an isolated-IPC mode. The current
-serving gates run separate processes inside one environment; they do not
-establish parity with LMCache's container deployment support.
+shared-Manager gates use separate venvs with the same UID/PID/IPC namespaces on
+one host; they do not establish parity with LMCache's container deployment support.
 
 The next deployment work packages the current explicit shared-resource profile,
 then qualifies isolated allocation registration and completion in Rust. Following
