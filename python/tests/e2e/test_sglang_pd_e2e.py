@@ -192,6 +192,7 @@ def test_sglang_native_pd_and_external_cache_match_monolithic(channel_server, re
             ]
             + pd_args,
         )
+        wait_ready("prefill", prefill, prefill_port)
         decode = launch(
             "decode",
             common
@@ -208,7 +209,6 @@ def test_sglang_native_pd_and_external_cache_match_monolithic(channel_server, re
             ]
             + pd_args,
         )
-        wait_ready("prefill", prefill, prefill_port)
         wait_ready("decode", decode, decode_port)
 
         router = launch(
