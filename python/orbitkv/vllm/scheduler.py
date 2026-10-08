@@ -4,6 +4,7 @@ Scheduler-side connector logic.
 
 import os
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -135,6 +136,8 @@ class SchedulerAdapter:
             )
         self._tp_shard_client = TpShardQueryClient(clients)
         self._clients = clients
+        self._cache_generation: bytes | None = None
+        self._generation_hashes: dict[str, tuple[tuple[bytes, ...], tuple[bytes, ...]]] = {}
         self._queued_at: dict[str, float] = {}
         self._cache_groups = CacheGroupLayout.from_config(kv_cache_config)
         self._recovery = None
@@ -188,7 +191,7 @@ class SchedulerAdapter:
     def bind_gpu_block_pool(self, gpu_block_pool) -> None:
         self._gpu_block_pool = gpu_block_pool
 
-    def _request_block_hashes(self, request: "Request") -> tuple[bytes, ...]:
+    def _native_block_hashes(self, request: "Request") -> tuple[bytes, ...]:
         """Per-block keys from `Request.block_hashes` (see `ConnectorContext.hash_scale`).
 
         vLLM hashes full spans only, so the hashes never reach past the
@@ -219,6 +222,19 @@ class SchedulerAdapter:
                 block_hashes = block_hashes[:hashed]
         return block_hashes_per_block(block_hashes, self._ctx.hash_scale)
 
+    def _request_block_hashes(self, request: "Request") -> tuple[bytes, ...]:
+        hashes = self._native_block_hashes(request)
+        if self._cache_generation is None:
+            return hashes
+        cached = self._generation_hashes.get(request.request_id)
+        if cached is not None and cached[0] == hashes:
+            return cached[1]
+        from orbitkv import rekey_hashes
+
+        scoped = rekey_hashes(hashes, self._cache_generation)
+        self._generation_hashes[request.request_id] = (hashes, scoped)
+        return scoped
+
     def on_new_request(self, request: "Request") -> None:
         self._queued_at[request.request_id] = time.monotonic()
         trace_transfer("queued", request.request_id, engine="vllm")
@@ -234,7 +250,7 @@ class SchedulerAdapter:
         # Warm the same whole pages admission will query, including a page
         # whose last token will be recomputed. This keeps shared reads identical.
         # Enqueue neither allocates GPU blocks nor pins the resident prefix.
-        hashes = self._request_block_hashes(request)
+        hashes = self._native_block_hashes(request)
         resident = 0
         if self._gpu_block_pool is not None:
             for block_hash in hashes:
@@ -242,7 +258,7 @@ class SchedulerAdapter:
                     break
                 resident += 1
         if resident < len(hashes):
-            demand = BlockHashes(hashes[resident:])
+            demand = BlockHashes(self._request_block_hashes(request)[resident:])
             for client in self._clients:
                 try:
                     if prepare:
@@ -985,6 +1001,7 @@ class SchedulerAdapter:
         for client in self._clients:
             client.cancel_query(self._ctx.instance_id, req_id)
         self._requests.pop(req_id, None)
+        self._generation_hashes.pop(req_id, None)
         self._block_hashes.pop(req_id, None)
         self._external_matched_blocks.pop(req_id, None)
         self._block_index_offsets.pop(req_id, None)
@@ -1152,6 +1169,23 @@ class SchedulerAdapter:
         if stats.is_empty():
             return None
         return stats
+
+    def reset_cache(self) -> bool:
+        """Invalidate future external reuse only after all request ownership ends."""
+        if (
+            self._requests
+            or self._pending_query_probes
+            or self._pending_load_intents
+            or self._restores_awaiting_compute
+            or self._pending_saves
+            or self._held_requests
+            or self._pinned_boundary_jobs
+            or self._queued_at
+        ):
+            return False
+        self._cache_generation = uuid.uuid4().bytes
+        self._generation_hashes.clear()
+        return True
 
     def shutdown(self) -> None:
         for req_id in list(self._pending_query_probes):

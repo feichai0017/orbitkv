@@ -318,3 +318,6 @@ class RestoreStatus:
     success: bool
     message: str
     def __init__(self, done: bool, success: bool, message: str = "") -> None: ...
+
+
+def rekey_hashes(hashes: tuple[bytes, ...], generation: bytes) -> tuple[bytes, ...]: ...

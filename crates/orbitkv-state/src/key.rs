@@ -32,6 +32,16 @@ pub fn storage_namespace(identity: &str, page_first: bool, mut slots: Vec<Storag
     format!("orbitkv:v2:{:x}", digest.finalize())
 }
 
+/// Isolate cached prefix state after an explicit engine-owned reset.
+pub fn generation_hash(hash: &[u8], generation: &[u8; 16]) -> Digest {
+    let mut digest = Sha256::new();
+    digest.update(b"orbitkv.prefix-generation.v1\0");
+    digest.update(generation);
+    digest.update((hash.len() as u64).to_le_bytes());
+    digest.update(hash);
+    digest.finalize().into()
+}
+
 pub fn is_storage_namespace(namespace: &str) -> bool {
     namespace.strip_prefix("orbitkv:v2:").is_some_and(|digest| {
         digest.len() == 64

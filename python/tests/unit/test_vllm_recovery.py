@@ -283,3 +283,99 @@ def test_unselected_cache_releases_its_leases_without_a_destination_write(hybrid
     assert not scheduler._pending_load_intents
     assert scheduler._block_index_offsets["r"] == 4
     assert client.release.call_args_list == [call(b"attention"), call(b"state")]
+
+
+@pytest.mark.parametrize(
+    "owner",
+    [
+        "_requests",
+        "_pending_query_probes",
+        "_pending_load_intents",
+        "_restores_awaiting_compute",
+        "_pending_saves",
+        "_held_requests",
+        "_pinned_boundary_jobs",
+        "_queued_at",
+    ],
+)
+def test_external_reset_refuses_each_live_owner_without_changing_keys(hybrid, owner):
+    scheduler, _, _ = hybrid()
+    state = getattr(scheduler, owner)
+    if isinstance(state, set):
+        state.add("r")
+    else:
+        state["r"] = object()
+    try:
+        assert scheduler.reset_cache() is False
+        assert scheduler._cache_generation is None
+        assert scheduler._request_block_hashes(request(tokens=32)) == (b"\x00", b"\x01")
+    finally:
+        state.clear()
+
+
+def test_public_external_reset_isolates_keys_and_reuses_the_native_batch(hybrid, monkeypatch):
+    import orbitkv
+    from orbitkv.vllm.connector import OrbitKVConnector
+
+    scheduler, (client,), _ = hybrid()
+    connector = object.__new__(OrbitKVConnector)
+    connector._scheduler = scheduler
+    req = request(tokens=32)
+    assert scheduler._request_block_hashes(req) == tuple(req.block_hashes)
+    mapper = MagicMock(side_effect=[(b"new-key", b"new-tail"), (b"new-key", b"changed-tail")])
+    monkeypatch.setitem(orbitkv.__dict__, "rekey_hashes", mapper)
+    assert connector.reset_cache() is True
+    first_generation = scheduler._cache_generation
+    assert len(first_generation) == 16
+    assert scheduler._request_block_hashes(req) == (b"new-key", b"new-tail")
+    assert scheduler._request_block_hashes(req) == (b"new-key", b"new-tail")
+    mapper.assert_called_once_with(tuple(req.block_hashes), first_generation)
+    req.block_hashes[1] = b"different-native-state"
+    assert scheduler._request_block_hashes(req) == (b"new-key", b"changed-tail")
+    assert mapper.call_count == 2
+    scheduler._cleanup_request(req.request_id)
+    assert not scheduler._generation_hashes
+    client.cancel_query.assert_called_once_with("instance", "r")
+    assert connector.reset_cache() is True
+    assert scheduler._cache_generation != first_generation
+    connector._scheduler = None
+    assert connector.reset_cache() is False
+
+
+@pytest.mark.parametrize("preparation", [False, True], ids=["warming", "owned"])
+@pytest.mark.parametrize("resident_blocks", [1, 2], ids=["partial-hbm", "full-hbm"])
+def test_reset_preparation_probes_native_hbm_and_only_scopes_external_gaps(
+    hybrid, monkeypatch, preparation, resident_blocks
+):
+    import orbitkv
+
+    original, clients, _ = hybrid()
+    scheduler = SchedulerAdapter(original._ctx, clients=clients)
+    (client,) = clients
+    assert scheduler.reset_cache() is True
+    setting = "ORBITKV_PREPARE_REQUESTS" if preparation else "ORBITKV_QUEUE_WARMUP"
+    other = "ORBITKV_QUEUE_WARMUP" if preparation else "ORBITKV_PREPARE_REQUESTS"
+    monkeypatch.setenv(setting, "1")
+    monkeypatch.delenv(other, raising=False)
+    mapper = MagicMock(return_value=(b"external-first", b"external-second"))
+    monkeypatch.setitem(orbitkv.__dict__, "rekey_hashes", mapper)
+    scheduler._gpu_block_pool = MagicMock()
+    scheduler._gpu_block_pool.get_cached_block.side_effect = (
+        lambda hash, groups: object() if hash == b"\x00" or resident_blocks == 2 else None
+    )
+    try:
+        scheduler.on_new_request(request(tokens=32))
+        assert scheduler._gpu_block_pool.get_cached_block.call_args_list == [
+            call(b"\x00", [0]),
+            call(b"\x01", [0]),
+        ]
+        submit = client.prepare_prefix if preparation else client.warm_prefix
+        if resident_blocks == 2:
+            submit.assert_not_called()
+            mapper.assert_not_called()
+        else:
+            mapper.assert_called_once_with((b"\x00", b"\x01"), scheduler._cache_generation)
+            submit.assert_called_once_with("instance", BlockHashes((b"external-second",)), "r")
+        client.query_prefetch.assert_not_called()
+    finally:
+        scheduler.shutdown()

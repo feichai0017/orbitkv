@@ -6,6 +6,7 @@ use pyo3::{
     create_exception,
     exceptions::{PyException, PyRuntimeError, PyValueError},
     prelude::*,
+    types::{PyBytes, PyTuple},
 };
 use std::time::Duration;
 
@@ -19,6 +20,20 @@ mod recovery;
 // Custom Python exceptions for error classification
 create_exception!(orbitkv, OrbitKVError, PyException);
 create_exception!(orbitkv, OrbitKVInternal, OrbitKVError);
+
+#[pyfunction]
+fn rekey_hashes(py: Python<'_>, hashes: Vec<Vec<u8>>, generation: &[u8]) -> PyResult<Py<PyTuple>> {
+    let generation: &[u8; 16] = generation
+        .try_into()
+        .map_err(|_| PyValueError::new_err("cache generation must contain exactly 16 bytes"))?;
+    let keys: Vec<_> = py.detach(|| {
+        hashes
+            .iter()
+            .map(|hash| orbitkv_state::generation_hash(hash, generation))
+            .collect()
+    });
+    Ok(PyTuple::new(py, keys.iter().map(|key| PyBytes::new(py, key)))?.unbind())
+}
 
 fn u64_to_usize(value: u64, field: &str) -> PyResult<usize> {
     usize::try_from(value)
@@ -238,6 +253,7 @@ fn orbitkv(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<QueryReady>()?;
     m.add_class::<QueryCandidates>()?;
     m.add_class::<recovery::PyRecoveryContract>()?;
+    m.add_function(wrap_pyfunction!(rekey_hashes, m)?)?;
 
     Ok(())
 }
