@@ -99,8 +99,11 @@ and report global and per-instance query limits separately. The admission owner
 now retains exact global and maximum-single-instance reservation peaks since
 Manager budget creation, including warm-up; the gate reads them after drain so
 short reservations between sampler ticks are still covered. Pool peaks remain
-sampled. These new counters and guards are implemented but do not retroactively
-qualify old frozen cells. No timed cache flush, restart, cache-policy change or
+sampled. The new installed wheel passes one 30-second A100 dense eager
+two-engine boundary cell with all 87 exact native controls, both reservation
+peaks within their limits and final ownership drain. This functional check is
+pending independent review and does not qualify sustained pressure, fairness
+or old frozen cells. Evidence: `/root/orbitkv-artifacts/s5-budget-peaks-20261008/`. No timed cache flush, restart, cache-policy change or
 Python state coordinator is introduced.
 
 Two short untraced direct cells pass 44 and 43 requests, physical io_uring reads

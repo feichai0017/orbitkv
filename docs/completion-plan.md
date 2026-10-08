@@ -1234,7 +1234,8 @@ Do not delete consumed safety behavior based on these proposals.
 - Replace private enqueue/abort/release and decode-ready Hooks with explicit
   lifecycle contracts. Keep telemetry out of ownership transitions and model
   computation in the engine. Incorporate generation checks from S3.
-- **Implementation open:** adapter/LoRA identity and live-weight invalidation.
+- **Implemented support boundary:** both adapters reject dynamic LoRA.
+  **Implementation open:** immutable per-adapter reuse and live-weight invalidation.
   Preserve cache salt, computation identity, multimodal inputs and representation
   boundaries; reject unsupported combinations instead of sharing unsafe keys.
 - **Qualification open:** Full + SWA + temporal recurrent native serving, page
@@ -1358,7 +1359,8 @@ source-only Python gate passes 273 tests with one skip. The initial 15-second
 direct smoke passes 44 requests, physical SSD reads/writes, sampled global/pool
 budgets, unchanged installed files and eight normal zero exits. A fresh untraced
 file-lifetime diagnostic also passes 43 requests; its short tails are descriptive.
-Per-instance reservation peaks are not exported or measured by this harness.
+Those frozen cells predate the owner peak metrics recorded below; they do not
+measure per-instance reservation peaks.
 
 **Sustained qualification blocked:** two untraced launches fail in the SGLang
 client's iceoryx2 `DoesNotExist` discovery before observer start and foreground
@@ -1422,7 +1424,7 @@ Its selected file/lock traces do not identify a deletion actor; tracing may
 affect scheduling. The earlier failure remains unresolved. Complete evidence:
 `/root/orbitkv-artifacts/s5-ipc-causal-20261008/`.
 
-**Budget peak observation implemented; qualification open (2026-10-08):**
+**Budget peak observation implemented; local boundary gate passed (2026-10-08):**
 the existing QueryBudget admission owner now retains lifetime global and
 maximum-single-instance concurrent reservation peaks under its existing lock.
 Observable metrics retain peaks through release without instance labels or a
@@ -1430,8 +1432,16 @@ second state owner. The pressure gate requires both peaks after drain, checks
 the configured global/per-instance limits and rejects a reset or missing value.
 This covers short reservations between sampler ticks; it does not identify an
 engine's own maximum, measure physical pinned/HBM allocation or qualify fairness.
-A new installed-artifact boundary gate and independent review remain required;
-old cohorts and the unresolved startup failure retain their original status.
+The frozen CUDA 13 wheel from `c3cf15a9` passes one new A100 dense eager
+shared-engine/io_uring boundary gate: all 87 exact native input/text/token
+controls pass, both engines make bounded progress, all seven Manager/engine
+services and the sampler exit zero, and installed files stay unchanged. Global
+and maximum-single-instance peaks are 217,055,232 and 113,246,208 bytes, below
+the configured 384/192 MiB limits. The final query/SSD ownership drains to zero.
+The 30.542-second window does not qualify sustained tails or fairness; independent
+review, the earlier unresolved startup failure and all broader limits remain open.
+Evidence: `/root/orbitkv-artifacts/s5-budget-peaks-20261008/`, mirrored on A100
+under `/workspace/orbitkv-s5-budget-peaks-20261008/`.
 
 This delivers one same-host deployment profile, not all of S5.5. Independent review,
 sustained restore pressure/fairness, isolated containers,
