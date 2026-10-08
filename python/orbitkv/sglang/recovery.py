@@ -110,6 +110,10 @@ class RecoveryLinkerWrapper(UnifiedCacheLinkerWrapper):
                 raise ValueError("Unsupported recurrent checkpoint representation")
         self.cache = cache
         self.cache_linker = cache_linker
+        self.needs_rank_consensus = cache.tp_world_size > 1 or any(
+            group is not None and torch.distributed.get_world_size(group=group) > 1
+            for group in (cache.attn_cp_group, cache.attn_tp_group)
+        )
         self.restore_from_store = restore_from_store
         self._skip_swa = False
         self._components = cache._components_tuple
@@ -129,14 +133,15 @@ class RecoveryLinkerWrapper(UnifiedCacheLinkerWrapper):
             if hit is None or len(self.cache_linker.layout.pools) == 1:
                 return matched
             boundary = hit.device_hit_len + len(hit.tail_hashes) * self.cache.page_size
-            state = torch.tensor(
-                [self.cache_linker.prepare_recovery(req.rid, boundary)], dtype=torch.int
-            )
-            self.cache._all_reduce_attn_groups(state, torch.distributed.ReduceOp.MIN)
-            if state.item() == 1:
+            state = self.cache_linker.prepare_recovery(req.rid, boundary)
+            if self.needs_rank_consensus:
+                decision = torch.tensor([state], dtype=torch.int)
+                self.cache._all_reduce_attn_groups(decision, torch.distributed.ReduceOp.MIN)
+                state = int(decision.item())
+            if state == 1:
                 return matched
             self.hit_markers.pop(req.rid, None)
-            if state.item() < 0:
+            if state < 0:
                 self.cache_linker.expire_query(req.rid)
             return result
         finally:

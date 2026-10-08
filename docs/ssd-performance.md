@@ -123,6 +123,24 @@ stored/GPU bytes. Full contract, source, wheel hashes, rejection decisions,
 raw timings and controls: `/root/orbitkv-artifacts/s4-readv-kda-20261008/`,
 with the A100 mirror at `/workspace/orbitkv-perf-20261008/`.
 
+## Reader thread fanout evaluation (2026-10-08)
+
+**Rejected; the default remains 16 total io_uring threads.** The existing owner
+already submits independent host-reader batches concurrently. A single-file
+candidate reduces only read queues from 15 to seven, preserving scalar READV,
+queue depth, byte budgets and completion ownership. All 14 real SSD tests and
+completed cohort payload/read/drain controls pass.
+
+The frozen three-pair, alternating-order A100/ext4-NVMe cohort stops at the third
+small-shape pair: 12 and 34 blocks of 4 KiB regress from 291.776 to 511.521 µs
+and from 542.133 to 864.261 µs. Both exceed the predeclared 5% median guard.
+Earlier pairs cross parity, so this is a failed promotion test rather than an
+estimate of a stable system-wide regression. Lower whole-cohort CPU ticks do
+not authorize promotion. No final model pair or installed-engine promotion gate
+starts. The candidate is reverted; source, complete wheels, raw samples and
+controls remain at `/root/orbitkv-artifacts/s4-ssd-read-fanout-20261008/` and
+`/workspace/orbitkv-ssd-fanout-20261008/`.
+
 ## Shared-Manager mixed-pressure qualification
 
 `benches.shared_manager_pressure` runs installed official vLLM 0.31.0 and

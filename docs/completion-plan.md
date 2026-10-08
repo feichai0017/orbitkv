@@ -1051,6 +1051,16 @@ layer hooks. The current contracts live in [transport](transport.md) and
   gates, rejected sources and byte controls are archived at
   `/root/orbitkv-artifacts/s4-readv-kda-20261008/`, mirrored at
   `/workspace/orbitkv-perf-20261008/`. This closes neither S4 nor S5.
+- **SSD read fanout evaluated (2026-10-08): rejected; no production change.**
+  Reducing the existing single-file reader from 15 to seven read queues passes
+  all 14 real SSD lifecycle tests and exact-byte/physical-read controls, but the
+  third matched small-shape pair exceeds the frozen 5% median guard (ratios
+  1.753 and 1.594). The cohort stops there; the remaining model cells and installed
+  promotion gates are not started. The accepted scalar reader and 16 total
+  io_uring threads remain unchanged. Lower whole-cohort CPU ticks do not justify
+  a latency regression. Frozen sources, wheels, controls and failed samples are
+  retained at `/root/orbitkv-artifacts/s4-ssd-read-fanout-20261008/` and
+  `/workspace/orbitkv-ssd-fanout-20261008/`; see [SSD performance](ssd-performance.md).
 - Profile actual descriptor shapes and inference contention before further
   mapped-host copy changes. Consider SSD-staging scatter or encoding/checksum
   fusion only after their consumed route exposes a material dispatch/HBM cost.
@@ -1204,6 +1214,25 @@ chain instead of a duplicate Scheduler abort Hook. Ordinary cache registration
 has two internal Hooks; enqueue preparation remains opt-in. The later S5.4
 cutover removes those custom P/D owners and fork observation Hooks entirely;
 the following evidence records the earlier cleanup, not current native P/D support.
+
+**Single-rank admission cleanup implemented (2026-10-08); final GPU gates open.**
+The SGLang wrapper determines whether its released attention/TP groups have
+multiple participants once at construction. Single-rank request admission and
+hybrid materialization use scalar decisions without allocating Torch tensors;
+multi-rank MAX/MIN decisions and pending/expiry/cancel ownership are preserved.
+The final complete wheel `fe427c42…` passes 42 controlled admission/event/recovery
+checks with installed official SGLang 0.5.21 and all 278 source-only checks.
+The CPU release check reuses existing dependencies; it is interface evidence,
+not a fresh GPU deployment gate. All 75 native package members are byte-identical
+to the prior `485eec94…` wheel. Installed SSD/restart, synthetic GPU recovery and
+900-second direct/kernel shared-Manager gates are frozen but not started because
+A100 is allocated to Traex's S2 formal campaign. A bounded one-time controller
+waits for the entire eight-cell campaign and clean postflights before running
+those gates; it never uses an inter-cell idle gap or replaces failed cells.
+This changes neither the two
+private safety Hooks nor advertised rank/model support and claims no measured
+speedup. Evidence: `/root/orbitkv-artifacts/s5-single-rank-admission-20261008/`,
+with the prepared A100 environments at `/workspace/orbitkv-s5-single-rank-20261008/`.
 
 The initial cleanup's source-only gate passed 414 tests. With frozen native artifacts, the pinned
 SGLang 0.5.20 admission/event gate passes 22 tests and the vLLM 0.29.0 native
@@ -1536,6 +1565,15 @@ services and three tracers exit zero, and installed files remain unchanged.
 Its selected file/lock traces do not identify a deletion actor; tracing may
 affect scheduling. The earlier failure remains unresolved. Complete evidence:
 `/root/orbitkv-artifacts/s5-ipc-causal-20261008/`.
+
+A separate three-cell untraced startup diagnostic completes with the previous
+`485eec94…` wheel. Each uses readonly process/service/lock observation, native
+output controls and a 30-second shared-engine window. All byte/text/token
+oracles and normal cleanup pass. The observer never opens process-monitor lock
+files; its own overhead is unqualified. None reproduces the missing-service
+failure, so no deletion actor or production repair is established and sustained
+qualification remains open. Evidence: `/root/orbitkv-artifacts/s5-finish-20261008/`,
+mirrored at `/workspace/orbitkv-s5-finish-20261008/`.
 
 **Budget peak observation implemented; local boundary gate passed (2026-10-08):**
 the existing QueryBudget admission owner now retains lifetime global and

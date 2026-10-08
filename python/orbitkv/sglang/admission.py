@@ -86,7 +86,6 @@ def admit_request(original: Callable, adder: Any, req: Any, *args: Any, **kwargs
     wrapper = getattr(adder.tree_cache, "linker", None)
     linker = getattr(wrapper, "cache_linker", None)
     if isinstance(linker, OrbitKVLinker):
-        import torch
         from sglang.srt.managers.schedule_policy import AddReqResult
 
         match_limit = req._compute_max_prefix_len(len(req.full_untruncated_fill_ids))
@@ -95,10 +94,15 @@ def admit_request(original: Callable, adder: Any, req: Any, *args: Any, **kwargs
             linker.cancel_query(req.rid)
         # Every attention rank takes the same admission decision even when its
         # SSD read finishes in a different scheduler iteration.
-        state = torch.tensor([linker.query_state(req.rid)], dtype=torch.int)
-        adder.tree_cache._all_reduce_attn_groups(state, torch.distributed.ReduceOp.MAX)
-        if state.item() == 1:
+        state = linker.query_state(req.rid)
+        if wrapper.needs_rank_consensus:
+            import torch
+
+            decision = torch.tensor([state], dtype=torch.int)
+            adder.tree_cache._all_reduce_attn_groups(decision, torch.distributed.ReduceOp.MAX)
+            state = int(decision.item())
+        if state == 1:
             return AddReqResult.CONTINUE
-        if state.item() == 2:
+        if state == 2:
             linker.expire_query(req.rid)
     return original(adder, req, *args, **kwargs)

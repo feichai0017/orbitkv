@@ -111,6 +111,14 @@ pending request while allowing other requests to progress. Do not assume HiCache
 scheduler hooks run when OrbitKV rejects the separate hierarchical-cache mode.
 The [hybrid recovery contract](hybrid-recovery.md) defines legal state boundaries.
 
+Request admission and hybrid materialization use scalar decisions when the
+released attention/TP groups have one participant. With multiple participants,
+the existing collective decision still waits for every required rank before
+admitting or exposing restored state. This removes redundant single-rank tensor
+allocation without changing cancellation, lease expiry or the internal Hooks.
+The installed 0.5.21 CPU interface gate passes; final GPU qualification of this
+cleanup remains open in S5.2.
+
 `events.py` owns the CUDA events and producer/consumer counters needed before
 graph capture. `linker.py` consumes those events and owns cache queries, loads,
 offloads and registration. Plugin discovery imports neither the native extension
