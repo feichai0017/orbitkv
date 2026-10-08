@@ -142,6 +142,8 @@ jobs:
           components: clippy
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Validate sccache or select direct rustc
+        run: scripts/configure-rustc-wrapper.sh
       - name: Run rust clippy check
         run: |
           cargo clippy --workspace --exclude orbitkv-py --all-targets -- -D warnings
@@ -231,6 +233,8 @@ jobs:
         uses: dtolnay/rust-toolchain@1.97.1
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Validate sccache or select direct rustc
+        run: scripts/configure-rustc-wrapper.sh
       - name: Run cargo check
         run: |
           cargo check -p orbitkv-core ${{ matrix.cargo-features }}
@@ -307,6 +311,8 @@ jobs:
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Validate sccache or select direct rustc
+        run: scripts/configure-rustc-wrapper.sh
 
       - name: Install wheel build tools
         run: pip install maturin "auditwheel==6.8.2" "patchelf>=0.14.5" wheel
