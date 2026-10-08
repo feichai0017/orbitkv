@@ -239,8 +239,11 @@ class ObserverSession:
     process: subprocess.Popen | None = field(default=None, init=False)
     thread: threading.Thread | None = field(default=None, init=False)
     thread_errors: list[BaseException] = field(default_factory=list, init=False)
+    cleanup_errors: list[BaseException] = field(default_factory=list, init=False)
     started: bool = field(default=False, init=False)
     finished: bool = field(default=False, init=False)
+    stop_attempted: bool = field(default=False, init=False)
+    forced_cleanup: str | None = field(default=None, init=False)
 
     def _path(self, name: str) -> Path:
         return self.output / f"observer-{name}.json"
@@ -418,27 +421,57 @@ class ObserverSession:
     def abort(self) -> None:
         if self.finished:
             return
-        if not self._path("stop").exists():
-            _atomic_json(
-                self._path("stop"),
-                {
-                    "contract": OBSERVER_PROTOCOL,
-                    "requested_mono_ns": time.monotonic_ns(),
-                    "reason": "cell_cleanup",
-                },
-            )
-        if self.thread is not None:
-            self.thread.join(timeout=2)
-        if self.process is not None and self.process.poll() is None:
+        stop_failed = False
+        if not self.stop_attempted:
+            self.stop_attempted = True
             try:
-                self.process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self.process.terminate()
+                if not self._path("stop").exists():
+                    _atomic_json(
+                        self._path("stop"),
+                        {
+                            "contract": OBSERVER_PROTOCOL,
+                            "requested_mono_ns": time.monotonic_ns(),
+                            "reason": "cell_cleanup",
+                        },
+                    )
+            except BaseException as error:
+                self.cleanup_errors.append(error)
+                stop_failed = True
+        if self.thread is not None:
+            try:
+                self.thread.join(timeout=2)
+                if self.thread.is_alive():
+                    self.cleanup_errors.append(
+                        RuntimeError("in-process observer remained alive during cleanup")
+                    )
+            except BaseException as error:
+                self.cleanup_errors.append(error)
+        if self.process is not None:
+            try:
+                if stop_failed and self.process.poll() is None:
+                    self.forced_cleanup = "terminate"
+                    self.process.terminate()
+                if self.process.poll() is None:
+                    try:
+                        self.process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        self.forced_cleanup = "terminate"
+                        self.process.terminate()
+                        try:
+                            self.process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            self.forced_cleanup = "kill"
+                            self.process.kill()
+                            self.process.wait(timeout=5)
+            except BaseException as error:
+                self.cleanup_errors.append(error)
                 try:
-                    self.process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    self.process.kill()
-                    self.process.wait(timeout=5)
+                    if self.process.poll() is None:
+                        self.forced_cleanup = "kill"
+                        self.process.kill()
+                        self.process.wait(timeout=5)
+                except BaseException as fallback_error:
+                    self.cleanup_errors.append(fallback_error)
 
 
 def main() -> None:

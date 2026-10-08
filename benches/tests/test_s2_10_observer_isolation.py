@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
+import signal
 import threading
 import time
 from contextlib import contextmanager
@@ -86,7 +88,9 @@ def _run_session(tmp_path, endpoint, mode):
 def assert_failed_launch_reaped(session, output):
     assert session.process is not None
     pid = session.process.pid
-    assert session.process.poll() == 0
+    assert session.process.returncode == 0
+    with pytest.raises(ChildProcessError):
+        os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG)
     assert not Path(f"/proc/{pid}").exists()
     stop = json.loads((output / "observer-stop.json").read_text())
     assert stop["reason"] == "cell_cleanup"
@@ -160,6 +164,53 @@ def test_helper_ready_timeout_is_stopped_and_reaped_before_error_propagates(tmp_
         assert_failed_launch_reaped(session, output)
     finally:
         if session.process is not None and session.process.poll() is None:
+            session.abort()
+
+
+def test_helper_cleanup_write_failure_preserves_launch_error_and_reaps(tmp_path, monkeypatch):
+    output = tmp_path / "cleanup-write-failure"
+    output.mkdir()
+    session = ObserverSession(
+        mode="helper-process",
+        endpoint="http://127.0.0.1:1",
+        incarnation="owner-1",
+        expected_view="view-1",
+        output=output,
+        cadence_ns=25_000_000,
+        poll_count=2,
+    )
+    read_json = polling._read_json
+    atomic_json = polling._atomic_json
+    cleanup_error = OSError(errno.ENOSPC, "injected observer stop write failure")
+
+    def invalid_ready(path):
+        record = read_json(path)
+        return (
+            {**record, "contract": "invalid-contract"}
+            if path.name == "observer-ready.json"
+            else record
+        )
+
+    def fail_stop(path, record):
+        if path.name == "observer-stop.json":
+            raise cleanup_error
+        atomic_json(path, record)
+
+    monkeypatch.setattr(polling, "_read_json", invalid_ready)
+    monkeypatch.setattr(polling, "_atomic_json", fail_stop)
+    try:
+        with pytest.raises(RuntimeError, match="invalid observer ready record"):
+            session.launch(timeout_seconds=2)
+        assert session.process is not None
+        assert session.process.returncode == -signal.SIGTERM
+        assert session.cleanup_errors == [cleanup_error]
+        assert session.forced_cleanup == "terminate"
+        assert not (output / "observer-stop.json").exists()
+        assert not (output / "observer-exit.json").exists()
+        with pytest.raises(ChildProcessError):
+            os.waitid(os.P_PID, session.process.pid, os.WEXITED | os.WNOHANG)
+    finally:
+        if session.process is not None and session.process.returncode is None:
             session.abort()
 
 
