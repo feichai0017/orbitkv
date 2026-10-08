@@ -39,7 +39,7 @@ record submitted, merged and released as different states.
 | S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. Independent final review accepts the second frozen S2.10 same-host formal handoff: all 25 cells are valid and five 16-owner ordinary visibility runs pass 50 ms, while both DRAM and SSD isolation fail the frozen per-pair/CI contract. S2.10b lifecycle, low-overhead observation and 14-cell diagnosis are complete. Independent review accepts the diagnostic archive but blocks a production repair: the dominant measured tail is after native return at the Python observer boundary, while no repeatable Manager, metadata-lock, completion-notification or SSD-owner shift is established. The supported envelope stays four owners and all prior formal campaigns remain immutable. Physical cross-host cache/HA, independent etcd failure domains and native GDS are qualification blocked on missing hardware; final serving, RDMA and S3-dependent cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
-| S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.31.0/0.5.21 final wheel passes ordinary-cache installed/model/lifecycle gates, same-host dual-engine shared-Manager DRAM/io_uring restart/overlap gates and bounded native P/D model gates locally. Bounded SSD host restore batching and the mixed-pressure harness are implemented; short pressure gates pass, but sustained qualification is blocked by intermittent SGLang IPC startup discovery. Independent acceptance, public lifecycle implementation and broader deployment qualification remain open. |
+| S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.31.0/0.5.21 final wheel passes ordinary-cache installed/model/lifecycle gates, same-host dual-engine shared-Manager DRAM/io_uring restart/overlap gates and bounded native P/D model gates locally. Bounded SSD host restore batching and the mixed-pressure harness are implemented; short pressure gates pass, but sustained qualification is blocked by intermittent iceoryx2 startup discovery in both released-engine integrations. Independent acceptance, public lifecycle implementation and broader deployment qualification remain open. |
 | S6 | Partial: observations/limited choices exist; unified executed decisions remain open. |
 | S7 | Open: consumed retention/checkpoint compiler beyond recovery validation. |
 | S8 | Partial: existing wheel workflow; final images, artifact gates and publication remain open. |
@@ -1389,10 +1389,31 @@ cleanup; the recorded request/event service files are deleted after Manager
 endpoint stop. It does not reproduce the discovery failure or establish a repair.
 The complete 262-file artifact manifest is verified locally at
 `/root/orbitkv-artifacts/s5-ipc-startup-20261008/a100/diagnostic-v7/` and on A100 at
-`/workspace/orbitkv-s5-ipc-startup-20261008/diagnostic-v7/`. The next S5.5 action is
-to freeze and deploy the failure-context build, reproduce startup discovery and
-establish its cause before a production repair and independent review, then
-freeze a new sustained cohort. No short diagnostic upgrades the support envelope.
+`/workspace/orbitkv-s5-ipc-startup-20261008/diagnostic-v7/`.
+
+The failure-context wheel built from `1ea56c2e` subsequently passes package repair,
+isolated native import and both copied official environments' Manager CLI checks.
+Its single untraced startup diagnostic reproduces `DoesNotExist` in vLLM 0.31.0:
+the worker registers 36 GPU layers, then the same process's scheduler client cannot
+open the matching advertised request service. Its actual static-config path is
+absent in the caller namespace (`ENOENT`); the Manager stops 294.416 seconds later.
+This broadens the observed failure beyond SGLang and rules out prior Manager exit
+for this run, but does not identify the deletion actor or a production repair.
+No cached SGLang launch or foreground window starts. The cached vLLM exits one,
+the Manager and two native controls exit zero, and no forced cleanup is used.
+All five recorded PIDs and the UDS are absent; GPU compute is empty. All installed
+candidate/engine hashes and the original frozen environments remain unchanged.
+
+The failed cell, static-Python build failure and successful shared-Python build
+are retained at `/root/orbitkv-artifacts/s5-ipc-startup-20261008/`. The corresponding
+A100 failure-context evidence is
+`/workspace/orbitkv-s5-ipc-startup-20261008/failure-context-1ea56c2e/`; its 250-file
+cohort manifest is verified locally, excluding installation directories whose
+files are verified separately against installed RECORD hashes. The production
+commit's CI run `37720474129` passes all 13 jobs. The next S5.5 action is to inspect
+node/service ownership and discovery-file lifetimes around GPU registration and
+a subsequent client attach, establish the cause and independently review a repair,
+then freeze a new sustained cohort. No diagnostic upgrades the support envelope.
 
 This delivers one same-host deployment profile, not all of S5.5. Independent review,
 sustained restore pressure/fairness, isolated containers,
