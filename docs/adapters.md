@@ -17,7 +17,9 @@ installed files. Its dense TP=1/PP=1 eager profile is separate from graph, P/D
 and failure-lifetime qualification; see S5.2 for current acceptance status.
 The [shared-Manager gate](../python/tests/README.md#two-engines-sharing-one-manager)
 also passes locally for two simultaneous official engines and individual graceful
-restarts in DRAM/io_uring SSD; S5.5 records its narrow scope and pending review.
+restarts in DRAM/io_uring SSD. The final wheel also passes H20 direct/kernel
+900-second shared-Manager io_uring gates with exact native controls and bounded
+resource drain; S5.5 records its scoped independent acceptance and broader limits.
 
 ## Ownership contract
 

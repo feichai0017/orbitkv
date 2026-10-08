@@ -174,6 +174,16 @@ fairness, tail isolation, per-instance peak qualification or a kernel advantage.
 All failures and diagnostics are retained outside Git at
 `/root/orbitkv-artifacts/s5-shared-pressure-kda-20261007/`.
 
+The later unchanged final wheel `fe427c42…` completes both 900-second H20
+direct/kernel shared-Manager cells with exact native outputs, positive io_uring
+read/write and GPU traffic, bounded reservation peaks and normal exit. Six
+actual io_uring drain gauges are present and zero; inactive cuFile staging is
+not misreported as measured zero. This correctness/progress profile is independently accepted; the overlay filesystem, different seeds and lack of matched
+independent pairs establish neither physical NVMe nor inference performance.
+Earlier invalid startups remain unresolved and preserved. Scope and full
+evidence: [S5.5](completion-plan.md#s55--deployment-matrix-and-upstream-maintenance),
+`/root/orbitkv-artifacts/s5-h20-closeout-20261008/`.
+
 Reproduce only with a fresh output/data directory and an idle GPU. Record the
 startup outcome before interpreting any latency sample:
 

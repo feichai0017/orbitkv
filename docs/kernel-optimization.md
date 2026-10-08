@@ -114,8 +114,18 @@ Contracts, sources, failed cells and the rejected candidate remain at
 `/workspace/orbitkv-s5-shared-pressure-kda-20261007/`.
 
 Independent reproduction, sustained inference contention, CUDA graph execution,
-H20, native transfer faults and S3-dependent reclamation remain unqualified.
+H20 paired native performance, native transfer faults and S3-dependent reclamation remain unqualified.
 These results do not close S4 or establish TTFT/ITL, throughput or NIC isolation.
+
+The final installed wheel `fe427c42…` also passes a 900-second H20 SM90
+two-engine shared-Manager io_uring gate with `kernel` explicitly consumed in
+worker logs. All fresh/reused requests match native text/token-count controls,
+reservation budgets and six actual io_uring drain gauges pass, and all services
+exit normally. The corresponding direct cell passes too. This is consumed-path
+correctness and sustained progress, independently accepted in the recorded profile;
+different seeds and no matched independent pairs preclude a performance claim.
+See [the scoped S5.5 result](completion-plan.md#s55--deployment-matrix-and-upstream-maintenance)
+and `/root/orbitkv-artifacts/s5-h20-closeout-20261008/`.
 
 ## Bounded CPU descriptor reuse follow-up (2026-10-08)
 

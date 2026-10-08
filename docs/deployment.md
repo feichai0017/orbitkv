@@ -18,8 +18,8 @@ does not establish OrbitKV compatibility.
 
 | Mode | Processes | Status |
 | --- | --- | --- |
-| Single-node vLLM or SGLang cache | Engine + independent Cache Manager | Current releases pass the installed dense eager TP=1 DRAM/io_uring gates locally; independent acceptance, multi-rank and transfer-fault qualification remain open |
-| Multiple engines on one node | Engines share one Manager and its cache budget | Current releases pass same-host dense eager DRAM/io_uring concurrent cold/HBM requests and individual engine restart locally; independent review, restore pressure, Manager restart and containers remain open |
+| Single-node vLLM or SGLang cache | Engine + independent Cache Manager | The installed dense eager TP=1 DRAM/io_uring profile is independently accepted on H20; multi-rank and transfer-fault qualification remain open |
+| Multiple engines on one node | Engines share one Manager and its cache budget | The H20 dense eager direct/kernel 900-second io_uring pressure profile is independently accepted; individual engine recovery passes, while Manager restart and separate-container qualification remain open |
 | Independent matching replicas, TP=1 | Two engines, two Managers and etcd | Historical Qwen3-8B sharing/restart and H20/A100 TCP evidence is retained at its recorded engine/wheel revisions; current-release reruns remain open; [recorded scope](shared-cache-qualification.md#recorded-result) |
 | Shared cache across nodes | One Cache Manager per host with local global index + etcd metadata | Experimental; [two-host TCP correctness](shared-cache-qualification.md#two-host-tcp-2026-09-28) is recorded with numerical limits; RDMA and metadata scale/failure qualification remain open |
 | vLLM native P/D plus cache | Official NIXL, MultiConnector, upstream router and independent Managers | Candidate: P read/write cache, D save-only; [gates and limits](pd.md) |
@@ -165,6 +165,33 @@ Managers can run on one host. Assign distinct bootstrap sockets, HTTP endpoints,
 peer endpoints when enabled, and SSD files. Never point two Managers at the same
 cache file. Start with one engine and one Manager until the intended shared
 serving workload passes its concurrency gate.
+
+## H20 direct CUDA runtime
+
+CUDA initialization in the current H20 container fails or stalls under the
+shared default MPS directory. A process-local private pipe directory and the existing
+`/usr/local/cuda/compat` driver closure pass arithmetic and spawned CUDA IPC in
+both fresh official release environments. All test processes inherit these
+settings; the shared MPS service and host driver keep their configuration.
+The [NVIDIA MPS directory contract](https://docs.nvidia.com/deploy/topics/topic_5_2_2.html)
+defines `CUDA_MPS_PIPE_DIRECTORY`. This recipe selects direct CUDA access for
+the assigned GPU; deployments using MPS select their functioning assigned
+server's directory instead.
+
+```bash
+export CUDA_MPS_PIPE_DIRECTORY="$(mktemp -d /tmp/orbitkv-mps.XXXXXX)"
+export LD_LIBRARY_PATH="/usr/local/cuda/compat:${LD_LIBRARY_PATH:-}"
+python -c 'import torch; x = torch.arange(4096, device="cuda", dtype=torch.int64); y = (x * 3 + 7).sum().item(); torch.cuda.synchronize(); assert y == 25188352; print(torch.cuda.get_device_name(), y)'
+```
+
+Seeing a device in `nvidia-smi` alone does not establish CUDA or IPC readiness.
+The independently accepted scope is one assigned H20 and processes in this
+container. Separate container namespaces, multi-GPU/rank layouts, native P/D faults
+and peer data-plane qualification remain tracked in the
+[completion plan](completion-plan.md#s5--released-engine-integration-and-upstream-contributions).
+The failed default/535/580 probes and successful private-directory controls are
+preserved at `/root/orbitkv-artifacts/s5-h20-container-runtime-20261008/` and
+`/root/orbitkv-artifacts/s5-h20-readiness-20261008/`.
 
 ## Containers and Kubernetes
 
