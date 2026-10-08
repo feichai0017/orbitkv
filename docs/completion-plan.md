@@ -1389,6 +1389,17 @@ Do not delete consumed safety behavior based on these proposals.
 - Replace private enqueue/abort/release and decode-ready Hooks with explicit
   lifecycle contracts. Keep telemetry out of ownership transitions and model
   computation in the engine. Incorporate generation checks from S3.
+- **Explicit vLLM external reset implemented (2026-10-08; qualification pending):**
+  the released `reset_cache()` callback refuses every tracked request, source
+  query, destination load and publication owner. Once idle, it assigns a fresh
+  prefix-key generation; Rust transforms the native hash batch and the scheduler
+  reuses it until the native hashes change. Query and save consume the same keys.
+  `reset_external=true` invalidates future reuse by this engine process without
+  deleting other replicas' Manager data. Ordinary HBM-only reset and immutable
+  process-restart reuse stay unchanged. This does not invalidate other engines,
+  persist an invalidation across restart or make weight changes that bypass the
+  callback safe. SGLang's ordinary flush retains external reuse; its skipped-flush
+  weight updates still require a public consumed lifecycle contract.
 - **Implemented support boundary:** both adapters reject dynamic LoRA.
   **Implementation open:** immutable per-adapter reuse and live-weight invalidation.
   Preserve cache salt, computation identity, multimodal inputs and representation

@@ -283,3 +283,60 @@ def test_unselected_cache_releases_its_leases_without_a_destination_write(hybrid
     assert not scheduler._pending_load_intents
     assert scheduler._block_index_offsets["r"] == 4
     assert client.release.call_args_list == [call(b"attention"), call(b"state")]
+
+
+@pytest.mark.parametrize(
+    "owner",
+    [
+        "_requests",
+        "_pending_query_probes",
+        "_pending_load_intents",
+        "_restores_awaiting_compute",
+        "_pending_saves",
+        "_held_requests",
+        "_pinned_boundary_jobs",
+        "_queued_at",
+    ],
+)
+def test_external_reset_refuses_each_live_owner_without_changing_keys(hybrid, owner):
+    scheduler, _, _ = hybrid()
+    state = getattr(scheduler, owner)
+    if isinstance(state, set):
+        state.add("r")
+    else:
+        state["r"] = object()
+    try:
+        assert scheduler.reset_cache() is False
+        assert scheduler._cache_generation is None
+        assert scheduler._request_block_hashes(request(tokens=32)) == (b"\x00", b"\x01")
+    finally:
+        state.clear()
+
+
+def test_public_external_reset_isolates_keys_and_reuses_the_native_batch(hybrid, monkeypatch):
+    import orbitkv
+    from orbitkv.vllm.connector import OrbitKVConnector
+
+    scheduler, (client,), _ = hybrid()
+    connector = object.__new__(OrbitKVConnector)
+    connector._scheduler = scheduler
+    req = request(tokens=32)
+    assert scheduler._request_block_hashes(req) == tuple(req.block_hashes)
+    mapper = MagicMock(side_effect=[(b"new-key", b"new-tail"), (b"new-key", b"changed-tail")])
+    monkeypatch.setitem(orbitkv.__dict__, "rekey_hashes", mapper)
+    assert connector.reset_cache() is True
+    first_generation = scheduler._cache_generation
+    assert len(first_generation) == 16
+    assert scheduler._request_block_hashes(req) == (b"new-key", b"new-tail")
+    assert scheduler._request_block_hashes(req) == (b"new-key", b"new-tail")
+    mapper.assert_called_once_with(tuple(req.block_hashes), first_generation)
+    req.block_hashes[1] = b"different-native-state"
+    assert scheduler._request_block_hashes(req) == (b"new-key", b"changed-tail")
+    assert mapper.call_count == 2
+    scheduler._cleanup_request(req.request_id)
+    assert not scheduler._generation_hashes
+    client.cancel_query.assert_called_once_with("instance", "r")
+    assert connector.reset_cache() is True
+    assert scheduler._cache_generation != first_generation
+    connector._scheduler = None
+    assert connector.reset_cache() is False

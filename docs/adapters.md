@@ -40,6 +40,24 @@ per-layer readiness, terminal completion and source retirement are separate fact
 Model/adapter identity, cache salt, state representation and shard layout must
 match. Sharing a Manager does not make engine layouts interchangeable.
 
+## Explicit cache reset
+
+Official vLLM 0.31.0 distinguishes an HBM-only prefix reset from
+`POST /reset_prefix_cache?reset_external=true` (development API), or the public
+engine `reset_prefix_cache(reset_connector=True)` call. OrbitKV refuses an
+external reset while it tracks requests, query leases, restores or saves. Once
+idle, it changes the prefix-key generation used by both lookup and publication.
+New requests cannot reuse the previous generation; newly saved state can be
+reused after an HBM-only reset. Each immutable process restart still derives its
+initial domain from the model artifacts and computation configuration.
+
+This reset affects one engine process, not all replicas or physical Manager
+storage reclamation. Its keys are not shared with other replicas after reset.
+It does not prove safe live weight updates that skip reset, active-request reset
+or cancellation of native DMA. SGLang's ordinary `flush_cache` continues to clear
+HBM and retain same-weight external reuse; released skipped-flush weight updates
+remain unsupported. The completion plan records qualification separately.
+
 ## LMCache and FlexKV reference
 
 Use release source, not an unversioned example, when comparing integrations:

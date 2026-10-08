@@ -49,6 +49,13 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
   and D, but 0.5.21 still releases on timeout without a full drain ACK. Keep
   transfer cancellation, peer-loss and delayed-ACK page reuse unqualified;
   ordinary linker cancellation is a separate cache-owned contract.
+- vLLM's public `reset_cache()` now invalidates future external reuse through
+  a fresh prefix-key generation only after all tracked request/query/load/save
+  owners end. HBM-only reset preserves the current generation. Test idle
+  `reset_external=true` followed by a cold miss and reuse of newly saved state;
+  do not advertise active-request reset, persistent cluster-wide invalidation
+  or live weight changes that bypass the callback. SGLang ordinary flush keeps
+  same-weight external reuse and is not a universal weight-update notification.
 - Run native model composition and lifetime gates separately. Output/restart
   does not prove cancellation, partial-submit, delayed-ACK or page-reuse safety.
   Earlier fork passes remain upstream contribution evidence, not release support.

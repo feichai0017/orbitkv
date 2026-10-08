@@ -135,6 +135,55 @@ def run_cache_plan(engine, tier, model, directory, env):
             assert snapshots["after_partial"].get("orbitkv_load_bytes_total", 0) > snapshots[
                 "before_partial"
             ].get("orbitkv_load_bytes_total", 0), snapshots
+            if engine == "vllm":
+                deadline = time.monotonic() + 30
+                while True:
+                    reset = requests.post(
+                        f"{engine_url}/reset_prefix_cache?reset_external=true", timeout=40
+                    )
+                    reset.raise_for_status()
+                    if reset.json()["success"]:
+                        break
+                    assert time.monotonic() < deadline, reset.text
+                    time.sleep(0.1)
+                snapshots["before_external_reset_request"] = wait_for_drain(http_port)
+                invalidated = complete("cache-after-external-reset", tokens)
+                compare_output(engine, invalidated, baseline_cold)
+                assert cached_tokens(engine, invalidated) == 0, invalidated
+                snapshots["after_external_reset_request"] = wait_for_drain(http_port)
+                assert (
+                    snapshots["after_external_reset_request"]["orbitkv_load_bytes_total"]
+                    == (snapshots["before_external_reset_request"]["orbitkv_load_bytes_total"])
+                ), snapshots
+                assert (
+                    snapshots["after_external_reset_request"]["orbitkv_save_bytes_total"]
+                    > (snapshots["before_external_reset_request"]["orbitkv_save_bytes_total"])
+                ), snapshots
+                reset = requests.post(f"{engine_url}/reset_prefix_cache", timeout=40)
+                reset.raise_for_status()
+                assert reset.json()["success"], reset.text
+                if tier == "ssd" and fetch_orbitkv_metrics(http_port).get(
+                    "orbitkv_cache_resident_bytes", 0
+                ):
+                    evict_dram_after_ssd_writes(http_port)
+                snapshots["before_reset_generation_reuse"] = wait_for_drain(http_port)
+                reused = complete("cache-reset-generation-reuse", tokens)
+                compare_output(engine, reused, baseline_warm)
+                assert cached_tokens(engine, reused) >= 704, reused
+                snapshots["after_reset_generation_reuse"] = wait_for_drain(http_port)
+                assert (
+                    snapshots["after_reset_generation_reuse"]["orbitkv_load_bytes_total"]
+                    > (snapshots["before_reset_generation_reuse"]["orbitkv_load_bytes_total"])
+                ), snapshots
+                if tier == "ssd":
+                    assert (
+                        snapshots["after_reset_generation_reuse"][
+                            "orbitkv_ssd_prefetch_bytes_total"
+                        ]
+                        > snapshots["before_reset_generation_reuse"][
+                            "orbitkv_ssd_prefetch_bytes_total"
+                        ]
+                    ), snapshots
         final = wait_for_drain(http_port)
         assert (
             f"backend={env['ORBITKV_TRANSFER_BACKEND']}" in (directory / "manager.log").read_text()

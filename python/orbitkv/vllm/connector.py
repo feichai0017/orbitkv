@@ -422,6 +422,11 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             return
         self._worker.register_cross_layers_kv_cache(kv_cache, attn_backend)
 
+    def reset_cache(self) -> bool:
+        if self._scheduler is None:
+            return False
+        return self._scheduler.reset_cache()
+
     def shutdown(self):
         try:
             if self._scheduler:

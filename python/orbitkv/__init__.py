@@ -21,6 +21,7 @@ _NATIVE_EXPORTS = {
     "QueryReady",
     "QueryCandidates",
     "RecoveryContract",
+    "rekey_hashes",
     "RestoreHandle",
     "RestoreStatus",
 }
@@ -62,6 +63,7 @@ __all__ = [
     "QueryReady",
     "QueryCandidates",
     "RecoveryContract",
+    "rekey_hashes",
     "RestoreHandle",
     "RestoreStatus",
 ]

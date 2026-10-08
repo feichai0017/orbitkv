@@ -88,3 +88,21 @@ fn group_encoding_is_versioned_and_unambiguous_for_every_hash_length() {
     assert_ne!(group_hash(&[1, 2], 1), group_hash(&[1, 2], 2));
     assert_ne!(group_hash(&[1, 2], 1), group_hash(&[1, 2, 0, 0, 0, 1], 0));
 }
+
+#[test]
+fn cache_generation_isolates_reset_prefixes_and_preserves_native_hash_boundaries() {
+    let first = [1; 16];
+    let second = [2; 16];
+    let hash = [3; 32];
+    let scoped = generation_hash(&hash, &first);
+    assert_eq!(scoped, generation_hash(&hash, &first));
+    assert_ne!(scoped, hash);
+    assert_ne!(scoped, generation_hash(&hash, &second));
+    assert_ne!(scoped, generation_hash(&[4; 32], &first));
+    assert_ne!(generation_hash(&[], &first), generation_hash(&[0], &first));
+    assert_ne!(
+        generation_hash(&[1, 0], &first),
+        generation_hash(&[1], &first)
+    );
+    assert_ne!(group_hash(&scoped, 0), group_hash(&scoped, 1));
+}

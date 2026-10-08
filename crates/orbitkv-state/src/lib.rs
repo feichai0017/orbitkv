@@ -31,6 +31,6 @@ pub use inventory::{
     InventoryScope,
 };
 pub use key::{
-    ContractError, Digest, StateDescriptor, StateKey, StorageSlot, TokenRange, group_hash,
-    is_storage_namespace, storage_namespace,
+    ContractError, Digest, StateDescriptor, StateKey, StorageSlot, TokenRange, generation_hash,
+    group_hash, is_storage_namespace, storage_namespace,
 };
