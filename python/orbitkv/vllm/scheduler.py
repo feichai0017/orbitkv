@@ -191,7 +191,7 @@ class SchedulerAdapter:
     def bind_gpu_block_pool(self, gpu_block_pool) -> None:
         self._gpu_block_pool = gpu_block_pool
 
-    def _request_block_hashes(self, request: "Request") -> tuple[bytes, ...]:
+    def _native_block_hashes(self, request: "Request") -> tuple[bytes, ...]:
         """Per-block keys from `Request.block_hashes` (see `ConnectorContext.hash_scale`).
 
         vLLM hashes full spans only, so the hashes never reach past the
@@ -220,7 +220,10 @@ class SchedulerAdapter:
                 )
             if stale == 1:
                 block_hashes = block_hashes[:hashed]
-        hashes = block_hashes_per_block(block_hashes, self._ctx.hash_scale)
+        return block_hashes_per_block(block_hashes, self._ctx.hash_scale)
+
+    def _request_block_hashes(self, request: "Request") -> tuple[bytes, ...]:
+        hashes = self._native_block_hashes(request)
         if self._cache_generation is None:
             return hashes
         cached = self._generation_hashes.get(request.request_id)
@@ -247,7 +250,7 @@ class SchedulerAdapter:
         # Warm the same whole pages admission will query, including a page
         # whose last token will be recomputed. This keeps shared reads identical.
         # Enqueue neither allocates GPU blocks nor pins the resident prefix.
-        hashes = self._request_block_hashes(request)
+        hashes = self._native_block_hashes(request)
         resident = 0
         if self._gpu_block_pool is not None:
             for block_hash in hashes:
@@ -255,7 +258,7 @@ class SchedulerAdapter:
                     break
                 resident += 1
         if resident < len(hashes):
-            demand = BlockHashes(hashes[resident:])
+            demand = BlockHashes(self._request_block_hashes(request)[resident:])
             for client in self._clients:
                 try:
                     if prepare:

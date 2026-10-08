@@ -340,3 +340,42 @@ def test_public_external_reset_isolates_keys_and_reuses_the_native_batch(hybrid,
     assert scheduler._cache_generation != first_generation
     connector._scheduler = None
     assert connector.reset_cache() is False
+
+
+@pytest.mark.parametrize("preparation", [False, True], ids=["warming", "owned"])
+@pytest.mark.parametrize("resident_blocks", [1, 2], ids=["partial-hbm", "full-hbm"])
+def test_reset_preparation_probes_native_hbm_and_only_scopes_external_gaps(
+    hybrid, monkeypatch, preparation, resident_blocks
+):
+    import orbitkv
+
+    original, clients, _ = hybrid()
+    scheduler = SchedulerAdapter(original._ctx, clients=clients)
+    (client,) = clients
+    assert scheduler.reset_cache() is True
+    setting = "ORBITKV_PREPARE_REQUESTS" if preparation else "ORBITKV_QUEUE_WARMUP"
+    other = "ORBITKV_QUEUE_WARMUP" if preparation else "ORBITKV_PREPARE_REQUESTS"
+    monkeypatch.setenv(setting, "1")
+    monkeypatch.delenv(other, raising=False)
+    mapper = MagicMock(return_value=(b"external-first", b"external-second"))
+    monkeypatch.setitem(orbitkv.__dict__, "rekey_hashes", mapper)
+    scheduler._gpu_block_pool = MagicMock()
+    scheduler._gpu_block_pool.get_cached_block.side_effect = (
+        lambda hash, groups: object() if hash == b"\x00" or resident_blocks == 2 else None
+    )
+    try:
+        scheduler.on_new_request(request(tokens=32))
+        assert scheduler._gpu_block_pool.get_cached_block.call_args_list == [
+            call(b"\x00", [0]),
+            call(b"\x01", [0]),
+        ]
+        submit = client.prepare_prefix if preparation else client.warm_prefix
+        if resident_blocks == 2:
+            submit.assert_not_called()
+            mapper.assert_not_called()
+        else:
+            mapper.assert_called_once_with((b"\x00", b"\x01"), scheduler._cache_generation)
+            submit.assert_called_once_with("instance", BlockHashes((b"external-second",)), "r")
+        client.query_prefetch.assert_not_called()
+    finally:
+        scheduler.shutdown()
