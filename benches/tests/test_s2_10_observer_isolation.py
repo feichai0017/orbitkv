@@ -214,6 +214,52 @@ def test_helper_cleanup_write_failure_preserves_launch_error_and_reaps(tmp_path,
             session.abort()
 
 
+def test_in_process_cleanup_write_failure_preserves_launch_error_and_joins(tmp_path, monkeypatch):
+    output = tmp_path / "in-process-cleanup-write-failure"
+    output.mkdir()
+    session = ObserverSession(
+        mode="in-process",
+        endpoint="http://127.0.0.1:1",
+        incarnation="owner-1",
+        expected_view="view-1",
+        output=output,
+        cadence_ns=25_000_000,
+        poll_count=2,
+    )
+    read_json = polling._read_json
+    atomic_json = polling._atomic_json
+    cleanup_error = OSError(errno.ENOSPC, "injected observer stop write failure")
+
+    def invalid_ready(path):
+        record = read_json(path)
+        return (
+            {**record, "contract": "invalid-contract"}
+            if path.name == "observer-ready.json"
+            else record
+        )
+
+    def fail_stop(path, record):
+        if path.name == "observer-stop.json":
+            raise cleanup_error
+        atomic_json(path, record)
+
+    monkeypatch.setattr(polling, "_read_json", invalid_ready)
+    monkeypatch.setattr(polling, "_atomic_json", fail_stop)
+    try:
+        with pytest.raises(RuntimeError, match="invalid observer ready record"):
+            session.launch(timeout_seconds=2)
+        assert session.thread is not None
+        assert not session.thread.is_alive()
+        assert session.cleanup_errors == [cleanup_error]
+        assert not (output / "observer-stop.json").exists()
+        exited = json.loads((output / "observer-exit.json").read_text())
+        assert exited["status"] == "stopped_before_start"
+        assert exited["samples"] == 0
+    finally:
+        if session.thread is not None and session.thread.is_alive():
+            session.abort()
+
+
 def test_in_process_and_helper_use_identical_bounded_schedule_and_sample_schema(tmp_path):
     owner = {
         "owner": "owner-1",

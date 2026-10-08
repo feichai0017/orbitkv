@@ -49,10 +49,15 @@ def _owner_status(endpoint: str, incarnation: str) -> tuple[dict | None, int]:
     )
 
 
-def _wait_for(path: Path, stop: Path, timeout_seconds: float) -> bool:
+def _wait_for(
+    path: Path,
+    stop: Path,
+    timeout_seconds: float,
+    cancel: threading.Event | None = None,
+) -> bool:
     deadline = time.monotonic() + timeout_seconds
     while not path.exists():
-        if stop.exists():
+        if (cancel is not None and cancel.is_set()) or stop.exists():
             return False
         if time.monotonic() >= deadline:
             raise TimeoutError(f"timed out waiting for {path.name}")
@@ -60,9 +65,13 @@ def _wait_for(path: Path, stop: Path, timeout_seconds: float) -> bool:
     return True
 
 
-def _wait_until(target_ns: int, stop: Path) -> bool:
+def _wait_until(
+    target_ns: int,
+    stop: Path,
+    cancel: threading.Event | None = None,
+) -> bool:
     while True:
-        if stop.exists():
+        if (cancel is not None and cancel.is_set()) or stop.exists():
             return False
         remaining_ns = target_ns - time.monotonic_ns()
         if remaining_ns <= 0:
@@ -86,6 +95,7 @@ def _run_observer(
     max_polls: int,
     start_timeout_seconds: float,
     stop_timeout_seconds: float,
+    cancel: threading.Event | None = None,
 ) -> dict:
     paths = {
         name: output / f"observer-{name}.json"
@@ -118,7 +128,7 @@ def _run_observer(
             "expected_cadence_ns": expected_cadence_ns,
         },
     )
-    if not _wait_for(paths["start"], paths["stop"], start_timeout_seconds):
+    if not _wait_for(paths["start"], paths["stop"], start_timeout_seconds, cancel):
         result = {
             "contract": OBSERVER_PROTOCOL,
             "mode": mode,
@@ -155,7 +165,7 @@ def _run_observer(
     with samples_path.open("x", buffering=1) as samples_file:
         for index in range(max_polls):
             scheduled_ns = first_scheduled_ns + index * expected_cadence_ns
-            if not _wait_until(scheduled_ns, paths["stop"]):
+            if not _wait_until(scheduled_ns, paths["stop"], cancel):
                 raise RuntimeError(f"observer stopped after {index}/{max_polls} polls")
             poll_start_ns = time.monotonic_ns()
             cpu_start_ns = time.thread_time_ns()
@@ -201,7 +211,7 @@ def _run_observer(
         "max_scheduling_deviation_ns": max_lateness_ns,
     }
     _atomic_json(paths["complete"], complete)
-    if not _wait_for(paths["stop"], paths["stop"], stop_timeout_seconds):
+    if not _wait_for(paths["stop"], paths["stop"], stop_timeout_seconds, cancel):
         raise AssertionError("unreachable observer stop wait")
     result = {**complete, "status": "exited", "exit_mono_ns": time.monotonic_ns()}
     _atomic_json(paths["exit"], result)
@@ -240,6 +250,7 @@ class ObserverSession:
     thread: threading.Thread | None = field(default=None, init=False)
     thread_errors: list[BaseException] = field(default_factory=list, init=False)
     cleanup_errors: list[BaseException] = field(default_factory=list, init=False)
+    thread_cancel: threading.Event = field(default_factory=threading.Event, init=False)
     started: bool = field(default=False, init=False)
     finished: bool = field(default=False, init=False)
     stop_attempted: bool = field(default=False, init=False)
@@ -270,6 +281,7 @@ class ObserverSession:
                             max_polls=self.poll_count,
                             start_timeout_seconds=timeout_seconds,
                             stop_timeout_seconds=timeout_seconds,
+                            cancel=self.thread_cancel,
                         )
                     except BaseException as error:
                         self.thread_errors.append(error)
@@ -421,6 +433,7 @@ class ObserverSession:
     def abort(self) -> None:
         if self.finished:
             return
+        self.thread_cancel.set()
         stop_failed = False
         if not self.stop_attempted:
             self.stop_attempted = True
@@ -439,7 +452,7 @@ class ObserverSession:
                 stop_failed = True
         if self.thread is not None:
             try:
-                self.thread.join(timeout=2)
+                self.thread.join(timeout=6)
                 if self.thread.is_alive():
                     self.cleanup_errors.append(
                         RuntimeError("in-process observer remained alive during cleanup")
