@@ -224,7 +224,7 @@ def test_graph_capture_keeps_dependencies_and_forward_waits_for_new_records(laye
         assert not counter.request_ids
 
 
-def test_pending_query_defers_only_its_request_and_preserves_ready_lease(linker):
+def test_pending_query_defers_only_its_request_and_preserves_ready_lease(linker, monkeypatch):
     from sglang.srt.managers.schedule_policy import AddReqResult
 
     from orbitkv import QueryLoading, QueryReady
@@ -233,12 +233,19 @@ def test_pending_query_defers_only_its_request_and_preserves_ready_lease(linker)
     linker.client.query_prefetch.side_effect = [QueryLoading(), QueryReady(2, b"lease")]
     original = MagicMock(return_value=AddReqResult.CONTINUE)
     cache = SimpleNamespace(
-        linker=SimpleNamespace(cache_linker=linker), _all_reduce_attn_groups=MagicMock()
+        linker=SimpleNamespace(cache_linker=linker, needs_rank_consensus=False),
+        _all_reduce_attn_groups=MagicMock(),
     )
     adder = SimpleNamespace(tree_cache=cache)
     req = request("slow")
     keys = transfer(["a", "b"])
     assert linker.lookup(req.rid, keys) == []
+    import torch
+
+    def reject_tensor(*args, **kwargs):
+        raise AssertionError("Single-rank admission must use the scalar query decision")
+
+    monkeypatch.setattr(torch, "tensor", reject_tensor)
     assert admit_request(original, adder, req) == AddReqResult.CONTINUE
     original.assert_not_called()
     unrelated = request("other")
@@ -370,7 +377,8 @@ def test_resident_prefix_retires_unused_external_query(
     )
     linker.lookup(req.rid, transfer(["a", "b", "c"]))
     cache = SimpleNamespace(
-        linker=SimpleNamespace(cache_linker=linker), _all_reduce_attn_groups=MagicMock()
+        linker=SimpleNamespace(cache_linker=linker, needs_rank_consensus=False),
+        _all_reduce_attn_groups=MagicMock(),
     )
     original = MagicMock()
     admit_request(original, SimpleNamespace(tree_cache=cache), req)
@@ -394,7 +402,8 @@ def test_admission_expires_pending_work_without_another_lookup(linker):
     linker.lookup(req.rid, transfer(["a", "b", "c"]))
     linker._QUERY_WAIT_SECONDS = 0
     cache = SimpleNamespace(
-        linker=SimpleNamespace(cache_linker=linker), _all_reduce_attn_groups=MagicMock()
+        linker=SimpleNamespace(cache_linker=linker, needs_rank_consensus=False),
+        _all_reduce_attn_groups=MagicMock(),
     )
     original = MagicMock()
     admit_request(original, SimpleNamespace(tree_cache=cache), req)
@@ -413,7 +422,7 @@ def test_attention_ranks_share_wait_and_expiration_decisions(linker, peer_state)
     linker.client.query_prefetch.return_value = QueryReady(1, b"lease")
     linker.lookup("req", transfer(["key"]))
     cache = SimpleNamespace(
-        linker=SimpleNamespace(cache_linker=linker),
+        linker=SimpleNamespace(cache_linker=linker, needs_rank_consensus=True),
         _all_reduce_attn_groups=lambda state, op: state.fill_(peer_state),
     )
     original = MagicMock()
@@ -469,7 +478,20 @@ def test_decode_only_promises_resident_pages_and_never_prepares_external_loads(
 
 
 @pytest.mark.parametrize("mode", ["null", "prefill", "decode"])
-def test_factory_selects_restore_owner_from_pinned_runtime_role(monkeypatch, mode):
+@pytest.mark.parametrize(
+    "tp_size,cp_size,attn_size,consensus",
+    [
+        (1, None, None, False),
+        (1, 1, 1, False),
+        (1, 2, 1, True),
+        (1, 1, 2, True),
+        (2, None, None, True),
+    ],
+    ids=["local", "singleton-groups", "attention-cp", "attention-tp", "fallback-tp"],
+)
+def test_factory_selects_restore_owner_from_pinned_runtime_role(
+    monkeypatch, mode, tp_size, cp_size, attn_size, consensus
+):
     from sglang.srt.mem_cache.unified_cache.components import ComponentType
 
     from orbitkv.sglang.plugin import create_cache
@@ -511,7 +533,67 @@ def test_factory_selects_restore_owner_from_pinned_runtime_role(monkeypatch, mod
         server_args=object(),
         tp_worker=MagicMock(),
     )
+    import torch
+
+    cache.tp_world_size = tp_size
+    cache.attn_cp_group = cp_size
+    cache.attn_tp_group = attn_size
+    monkeypatch.setattr(torch.distributed, "get_world_size", lambda *, group: group)
     assert create_cache(ctx) is cache
+    assert cache.linker.needs_rank_consensus == consensus
     assert cache.linker.restore_from_store == (mode != "decode")
     assert cache.linker.cache_linker is linker
     assert cache.write_through_threshold == 1
+
+
+@pytest.mark.parametrize(
+    "consensus,local,peer,ready,expired",
+    [
+        (False, 1, None, True, False),
+        (False, 0, None, False, False),
+        (False, -1, None, False, True),
+        (True, 1, 0, False, False),
+        (True, 1, -1, False, True),
+        (True, -1, 1, False, True),
+    ],
+    ids=[
+        "local-ready",
+        "local-pending",
+        "local-stale",
+        "peer-pending",
+        "peer-stale",
+        "local-stale-peer-ready",
+    ],
+)
+def test_hybrid_match_requires_rank_common_materialized_state(
+    linker, monkeypatch, consensus, local, peer, ready, expired
+):
+    import torch
+    from sglang.srt.mem_cache.unified_cache.unified_cache_linker import UnifiedCacheLinkerWrapper
+
+    from orbitkv.sglang.recovery import RecoveryLinkerWrapper
+
+    req = request("req")
+    resident = SimpleNamespace(device_indices=torch.arange(64))
+    matched = object()
+    wrapper = object.__new__(RecoveryLinkerWrapper)
+    wrapper.cache_linker = linker
+    wrapper.restore_from_store = True
+    wrapper.needs_rank_consensus = consensus
+    wrapper.hit_markers = {req.rid: SimpleNamespace(device_hit_len=64, tail_hashes=["one", "two"])}
+    linker.layout.pools["auxiliary"] = object()
+    linker.prepare_recovery = MagicMock(return_value=local)
+    linker.expire_query = MagicMock()
+    reduced = MagicMock(side_effect=lambda state, op: state.fill_(min(int(state.item()), peer)))
+    wrapper.cache = SimpleNamespace(page_size=64, _all_reduce_attn_groups=reduced)
+    monkeypatch.setattr(UnifiedCacheLinkerWrapper, "match", lambda *args: matched)
+    if not consensus:
+        monkeypatch.setattr(
+            torch, "tensor", lambda *args, **kwargs: pytest.fail("Unexpected rank tensor")
+        )
+    assert wrapper.match(object(), req, resident) is (matched if ready else resident)
+    linker.prepare_recovery.assert_called_once_with(req.rid, 192)
+    assert reduced.call_count == int(consensus)
+    assert linker.expire_query.call_count == int(expired)
+    assert (req.rid in wrapper.hit_markers) == ready
+    assert req.rid not in linker._origins

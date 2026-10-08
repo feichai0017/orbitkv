@@ -41,8 +41,8 @@ use writer::{SsdWriteBatch, SsdWriteCommand, ssd_writer_loop};
 /// Owns an immutable SSD source until the last query/GPU consumer releases it.
 pub struct SsdReadLease {
     pub(crate) entry: SsdIndexEntry,
-    key: StateKey,
-    store: Arc<SsdStore>,
+    pub(crate) key: StateKey,
+    pub(crate) store: Arc<SsdStore>,
 }
 
 /// An index snapshot does not reserve disk space or keep payload readers alive.
@@ -107,18 +107,6 @@ impl SsdReadLease {
 
     pub(crate) fn cost_resource(&self) -> ExecutionResource {
         self.store.io.cost_resource
-    }
-
-    /// Materialize this immutable generation through the existing host reader.
-    /// The queued batch retains the lease even if its consumer is cancelled.
-    pub(crate) async fn read_host(
-        self: &Arc<Self>,
-    ) -> Result<Arc<SealedBlock>, crate::EngineError> {
-        let mut blocks = self.store.read_host_batch(vec![Arc::clone(self)]).await?;
-        if blocks.len() != 1 || blocks[0].0 != self.key {
-            return Err(crate::EngineError::Storage("SSD source read failed".into()));
-        }
-        Ok(blocks.remove(0).1)
     }
 
     pub(crate) fn invalidate_encoded(&self) {

@@ -2,6 +2,7 @@
 
 import contextlib
 import json
+import math
 import os
 import signal
 import subprocess
@@ -49,6 +50,7 @@ def service(command, url, env, directory, name):
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
+    primary_error = None
     try:
         deadline = time.monotonic() + 600
         while time.monotonic() < deadline:
@@ -63,6 +65,9 @@ def service(command, url, env, directory, name):
         else:
             pytest.fail(f"{name} startup timed out: {log_path.read_text()[-8000:]}")
         yield process
+    except BaseException as error:
+        primary_error = error
+        raise
     finally:
         stop_started = time.monotonic()
         with contextlib.suppress(ProcessLookupError):
@@ -88,20 +93,37 @@ def service(command, url, env, directory, name):
             "before_forced_kill": remaining,
             "remaining_processes": process_group_members(process.pid),
         }
+        errors = []
+        if remaining:
+            errors.append("forced cleanup required")
+        if cleanup["remaining_processes"]:
+            errors.append("owned processes remain")
+        accepted = (0,) if name.startswith("manager") else (0, -signal.SIGTERM)
+        if process.returncode not in accepted:
+            errors.append(f"unexpected exit code {process.returncode}")
+        cleanup["errors"] = errors
+        cleanup["primary_failure"] = (
+            {"type": type(primary_error).__name__, "message": str(primary_error)}
+            if primary_error is not None
+            else None
+        )
         (directory / f"{name}-cleanup.json").write_text(json.dumps(cleanup, indent=2) + "\n")
-        assert not remaining, f"{name} required forced cleanup: {cleanup}"
-        assert not cleanup["remaining_processes"], cleanup
-        if name.startswith("manager"):
-            assert process.returncode == 0, cleanup
-        else:
-            assert process.returncode in (0, -signal.SIGTERM), cleanup
+        if errors and primary_error is None:
+            raise AssertionError(f"{name} cleanup failed: {cleanup}")
 
 
 def wait_for_drain(http_port: int) -> dict[str, float]:
     deadline = time.monotonic() + 30
+    required = {"orbitkv_query_reserved_bytes"}
     while True:
         metrics = fetch_orbitkv_metrics(http_port)
-        if not any(metrics.get(name, 0) for name in DRAIN_GAUGES):
+        required.update(name for name in DRAIN_GAUGES if name in metrics)
+        missing = required.difference(metrics)
+        assert not missing, f"Missing resource-drain gauges: {sorted(missing)}"
+        assert all(math.isfinite(metrics[name]) and metrics[name] >= 0 for name in required), (
+            f"Invalid resource-drain gauges: {metrics}"
+        )
+        if all(metrics[name] == 0 for name in required):
             return metrics
         assert time.monotonic() < deadline, metrics
         time.sleep(0.1)

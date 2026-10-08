@@ -23,7 +23,7 @@ import requests
 
 from .artifacts import external_path
 from .metrics import metrics
-from .runtime import free_port, process_usage, server
+from .runtime import free_port, process_usage, server, storage_manifest
 
 
 def arguments(argv: list[str] | None = None) -> argparse.Namespace:
@@ -32,7 +32,18 @@ def arguments(argv: list[str] | None = None) -> argparse.Namespace:
         "--manager", type=Path, default=os.environ.get("ORBITKV_CACHE_MANAGER_BINARY")
     )
     parser.add_argument("--label", required=True)
+    parser.add_argument(
+        "--tier",
+        choices=("dram", "ssd"),
+        default="dram",
+        help="ssd measures forced io_uring restores only, with physical-read and GPU-byte controls",
+    )
     parser.add_argument("--output", type=external_path, required=True)
+    parser.add_argument(
+        "--ssd-cache-path",
+        type=external_path,
+        help="fresh SSD data path on the tested mount, independent of retained output",
+    )
     parser.add_argument("--iterations", type=int, default=100)
     parser.add_argument("--warmup", type=int, default=20)
     parser.add_argument("--repeats", type=int, default=3)
@@ -93,6 +104,13 @@ def arguments(argv: list[str] | None = None) -> argparse.Namespace:
         args.payload_bytes
     ):
         parser.error("payload-bytes and idle-ms must not contain duplicates")
+    if args.tier == "ssd" and args.block_bytes // (2 if args.layout == "split" else 1) % 512:
+        parser.error("SSD segment bytes must be multiples of 512 for O_DIRECT")
+    if args.ssd_cache_path is not None:
+        if args.tier != "ssd":
+            parser.error("ssd-cache-path requires --tier ssd")
+        if args.ssd_cache_path.exists():
+            parser.error("ssd-cache-path must be fresh; existing data will not be overwritten")
     args.manager = args.manager.resolve()
     return args
 
@@ -330,11 +348,29 @@ def verify_bytes(torch, tensor, expected, start, count) -> None:
         raise AssertionError("GPU restore bytes differ from the independently retained source")
 
 
-def cleanup_published(manager_url: str, timeout: float) -> None:
+def cleanup_published(manager_url: str, timeout: float, *, wait_for_ssd: bool = False) -> None:
     # Complete sealing before eviction. Both calls are outside sample latency;
     # whole-cohort CPU explicitly includes this bounded-cache maintenance.
     response = requests.post(f"{manager_url}/cache/sync", timeout=timeout)
     response.raise_for_status()
+    if wait_for_ssd:
+        # /cache/sync seals the DRAM publication, not asynchronous SSD writes.
+        # Wait outside the restore timer while write owners still retain pages.
+        deadline = time.monotonic() + timeout
+        while True:
+            observed = metrics(manager_url)
+            if observed.get("orbitkv_ssd_write_bytes_total", 0) > 0 and all(
+                observed.get(name, 0) == 0
+                for name in (
+                    "orbitkv_ssd_write_inflight",
+                    "orbitkv_ssd_write_queue_pending",
+                    "orbitkv_query_reserved_bytes",
+                )
+            ):
+                break
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"SSD publication ownership did not drain: {observed}")
+            time.sleep(0.001)
     response = requests.post(f"{manager_url}/cache/memory/cleanup", timeout=timeout)
     response.raise_for_status()
     if response.json()["still_referenced_blocks"]:
@@ -401,6 +437,18 @@ def main(argv: list[str] | None = None) -> None:
         str(budget),
     ]
     args.output.mkdir(parents=True, exist_ok=False)
+    cache_path = args.ssd_cache_path or args.output / "cache.bin"
+    if args.tier == "ssd":
+        command += [
+            "--ssd-backend",
+            "uring",
+            "--ssd-read-path",
+            "uring",
+            "--ssd-cache-path",
+            str(cache_path),
+            "--ssd-cache-capacity",
+            str(max(64 * 1024**2, max(args.payload_bytes) * args.layers * 2)),
+        ]
     manifest = {
         "label": args.label,
         "arguments": {
@@ -439,7 +487,7 @@ def main(argv: list[str] | None = None) -> None:
         "percentiles": "linear interpolation at (n - 1) * q; computed independently per cohort",
         "scope": {
             "query": "submit through QueryReady, including native polling; release is outside latency",
-            "restore": "one start_restore through native wait_restore ready; equal, nonoverlapping query leases partition the unchanged total payload; hash views and target chunks are precomputed, all lease acquisition is outside latency",
+            "restore": "one start_restore through native wait_restore ready; equal, nonoverlapping query leases partition the unchanged total payload; hash views and target chunks are precomputed, all lease acquisition is outside latency; SSD mode forces io_uring with zero DRAM before each sample, fills destinations with a sentinel and checks GPU bytes after every sample; the client timer includes Python/native call overhead, allocation, validation and the selected H2D backend",
             "publish": "save acknowledgement including metadata chunking and actual D2H of fresh keys; sealing synchronization and cache eviction are outside sample latency",
             "cpu": "sample CPU is caller thread/process; Manager cohort CPU includes preparation queries, releases, Publish sealing/cleanup HTTP, Python loop gaps and prescribed idle intervals, excludes warmup and byte validation; /proc tick-quantized totals are not precise per-RPC CPU measurements",
             "payload": "raw uint8 layers with contiguous or split K/V GPU storage, 4 KiB logical blocks by default; split K/V each holds half of block-bytes, preserving total payload; --payload-bytes is per layer, output payload_bytes is total across layers; Query reports logical payload and 32-byte hash count, not transported KV bytes",
@@ -459,6 +507,8 @@ def main(argv: list[str] | None = None) -> None:
         with server(
             command, env, f"http://127.0.0.1:{http}", args.output / "manager.log"
         ) as manager:
+            if args.tier == "ssd":
+                manifest["storage"] = storage_manifest(manager.pid, cache_path)
             manifest["manager_pid"] = manager.pid
             manifest["manager_cpu_affinity"] = sorted(os.sched_getaffinity(manager.pid))
             write_json(args.output / "manifest.json", manifest)
@@ -521,6 +571,12 @@ def main(argv: list[str] | None = None) -> None:
             # Publish seals asynchronously: establish full residency before any
             # correctness or timed query demands an exact hit count.
             populate(client, native, instance, device, layers, hashes, args.timeout)
+            if args.tier == "ssd":
+                cleanup_published(
+                    f"http://127.0.0.1:{http}", args.timeout, wait_for_ssd=args.tier == "ssd"
+                )
+                if metrics(f"http://127.0.0.1:{http}").get("orbitkv_cache_resident_bytes", 0):
+                    raise AssertionError("SSD validation requires empty Manager DRAM")
             batches = {}
             for size in args.payload_bytes:
                 blocks = size // args.block_bytes
@@ -577,11 +633,16 @@ def main(argv: list[str] | None = None) -> None:
             write_json(args.output / "manifest.json", manifest)
             cases = [
                 (operation, size, idle)
-                for operation in ("query_miss", "query_hit", "restore", "publish")
+                for operation in (
+                    ("restore",)
+                    if args.tier == "ssd"
+                    else ("query_miss", "query_hit", "restore", "publish")
+                )
                 for size in args.payload_bytes
                 for idle in args.idle_ms
             ]
-            cases += [("restore_empty", 0, idle) for idle in args.idle_ms]
+            if args.tier == "dram":
+                cases += [("restore_empty", 0, idle) for idle in args.idle_ms]
             with (args.output / "samples.jsonl").open("w") as raw:
                 for repeat in range(args.repeats):
                     for case_index, (operation, size, idle_ms) in enumerate(
@@ -593,8 +654,24 @@ def main(argv: list[str] | None = None) -> None:
                         if operation in {"query_hit", "restore"}:
                             populate(client, native, instance, device, layers, hashes, args.timeout)
                         if operation == "publish":
-                            cleanup_published(f"http://127.0.0.1:{http}", args.timeout)
+                            cleanup_published(
+                                f"http://127.0.0.1:{http}",
+                                args.timeout,
+                                wait_for_ssd=args.tier == "ssd",
+                            )
                         for index in range(args.warmup):
+                            if args.tier == "ssd":
+                                cleanup_published(
+                                    f"http://127.0.0.1:{http}",
+                                    args.timeout,
+                                    wait_for_ssd=args.tier == "ssd",
+                                )
+                                if metrics(f"http://127.0.0.1:{http}").get(
+                                    "orbitkv_cache_resident_bytes", 0
+                                ):
+                                    raise AssertionError("SSD warmup was masked by DRAM")
+                                pages[:, :, count : count + len(targets)].fill_(253)
+                                torch.cuda.synchronize()
                             sample(
                                 client,
                                 native,
@@ -610,7 +687,11 @@ def main(argv: list[str] | None = None) -> None:
                                 args.timeout,
                             )
                             if operation == "publish":
-                                cleanup_published(f"http://127.0.0.1:{http}", args.timeout)
+                                cleanup_published(
+                                    f"http://127.0.0.1:{http}",
+                                    args.timeout,
+                                    wait_for_ssd=args.tier == "ssd",
+                                )
                         if operation == "restore":
                             pages[:, :, count : count + len(targets)].fill_(253)
                             torch.cuda.synchronize()
@@ -621,11 +702,28 @@ def main(argv: list[str] | None = None) -> None:
                         bytes_before = (
                             metrics(f"http://127.0.0.1:{http}").get(counter, 0) if counter else 0
                         )
+                        ssd_before = (
+                            metrics(f"http://127.0.0.1:{http}") if args.tier == "ssd" else {}
+                        )
+                        if args.tier == "ssd":
+                            write_json(args.output / f"{prefix}-ssd-before.json", ssd_before)
                         before = process_usage(manager.pid)
                         cohort_cpu = time.process_time_ns()
                         cohort_started = time.perf_counter_ns()
                         rows = []
                         for index in range(args.iterations):
+                            if args.tier == "ssd":
+                                cleanup_published(
+                                    f"http://127.0.0.1:{http}",
+                                    args.timeout,
+                                    wait_for_ssd=args.tier == "ssd",
+                                )
+                                if metrics(f"http://127.0.0.1:{http}").get(
+                                    "orbitkv_cache_resident_bytes", 0
+                                ):
+                                    raise AssertionError("SSD sample was masked by DRAM")
+                                pages[:, :, count : count + len(targets)].fill_(253)
+                                torch.cuda.synchronize()
                             rows.append(
                                 sample(
                                     client,
@@ -642,8 +740,14 @@ def main(argv: list[str] | None = None) -> None:
                                     args.timeout,
                                 )
                             )
+                            if args.tier == "ssd":
+                                verify_bytes(torch, pages, expected, count, len(targets))
                             if operation == "publish":
-                                cleanup_published(f"http://127.0.0.1:{http}", args.timeout)
+                                cleanup_published(
+                                    f"http://127.0.0.1:{http}",
+                                    args.timeout,
+                                    wait_for_ssd=args.tier == "ssd",
+                                )
                         elapsed = time.perf_counter_ns() - cohort_started
                         cohort_cpu = time.process_time_ns() - cohort_cpu
                         after = process_usage(manager.pid)
@@ -659,7 +763,30 @@ def main(argv: list[str] | None = None) -> None:
                                 )
                         if operation == "restore":
                             verify_bytes(torch, pages, expected, count, len(targets))
+                        ssd_observed = {}
+                        if args.tier == "ssd":
+                            observed = metrics(f"http://127.0.0.1:{http}")
+                            write_json(args.output / f"{prefix}-ssd-after.json", observed)
+                            for name in (
+                                "orbitkv_ssd_prefetch_bytes_total",
+                                "orbitkv_ssd_prefetch_duration_seconds_count",
+                                "orbitkv_ssd_prefetch_duration_seconds_sum",
+                                "orbitkv_ssd_prefetch_failures_total",
+                                "orbitkv_ssd_uring_read_operations_total",
+                            ):
+                                ssd_observed[name] = observed.get(name, 0) - ssd_before.get(name, 0)
+                            if ssd_observed["orbitkv_ssd_prefetch_bytes_total"] != expected_bytes:
+                                raise AssertionError(
+                                    f"SSD bytes differ from GPU bytes: {ssd_observed}"
+                                )
+                            if ssd_observed["orbitkv_ssd_prefetch_duration_seconds_count"] <= 0:
+                                raise AssertionError("SSD batch completion evidence is missing")
+                            if ssd_observed["orbitkv_ssd_uring_read_operations_total"] <= 0:
+                                raise AssertionError("Queued io_uring READV evidence is missing")
+                            if ssd_observed["orbitkv_ssd_prefetch_failures_total"]:
+                                raise AssertionError(f"SSD reads failed: {ssd_observed}")
                         key = {
+                            "tier": args.tier,
                             "repeat": repeat,
                             "operation": operation,
                             "payload_bytes": size * args.layers,
@@ -688,17 +815,39 @@ def main(argv: list[str] | None = None) -> None:
                                 - before["cpu_seconds"],
                                 "gpu_bytes_verified": operation == "restore",
                                 "completed_copy_bytes": copied_bytes if counter else None,
+                                "ssd_observed": ssd_observed,
                             }
                         )
                         print(
                             f"{args.label} repeat={repeat} {operation} layout={args.layout} bytes={size} leases={key['restore_batch_size']} idle_ms={idle_ms:g} p50_us={cohorts[-1]['samples']['wall_us']['p50']:.2f} p99_us={cohorts[-1]['samples']['wall_us']['p99']:.2f}",
                             flush=True,
                         )
+            if args.tier == "ssd":
+                observed = metrics(f"http://127.0.0.1:{http}")
+                retained = {
+                    name: observed.get(name, 0)
+                    for name in (
+                        "orbitkv_ssd_read_pinned_bytes",
+                        "orbitkv_ssd_prefetch_inflight",
+                        "orbitkv_ssd_write_inflight",
+                        "orbitkv_ssd_write_queue_pending",
+                    )
+                }
+                write_json(args.output / "drain.json", retained)
+                if any(retained.values()):
+                    raise AssertionError(f"SSD ownership has not drained: {retained}")
             ok, message = client.unregister_context(instance)
             if not ok:
                 raise RuntimeError(f"context drain failed: {message}")
             client.close()
             client = None
+        if args.tier == "ssd":
+            write_json(
+                args.output / "manager-exit.json",
+                {"pid": manager.pid, "exit_code": manager.returncode},
+            )
+            if manager.returncode != 0:
+                raise RuntimeError(f"SSD Manager did not exit normally: {manager.returncode}")
         if {str(path): digest(path) for path in artifacts} != artifact_hashes:
             raise RuntimeError("native artifacts or GPU registration helper changed during the run")
         write_json(args.output / "results.json", {"label": args.label, "cohorts": cohorts})

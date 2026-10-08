@@ -191,6 +191,30 @@ fn failed_doorbell_does_not_end_a_submitted_publish() {
 }
 
 #[test]
+fn missing_request_service_reports_the_effective_discovery_path() {
+    let name = service_name("missing-requests");
+    let error = match TransportClient::connect(&name) {
+        Err(TransportError::Service(error)) => error,
+        _ => panic!("opening an absent request service must fail"),
+    };
+    assert!(
+        error.contains("RequestResponseOpenError::DoesNotExist"),
+        "{error}"
+    );
+    assert!(error.contains(&name), "{error}");
+    assert!(error.contains("pattern=RequestResponse"), "{error}");
+    assert!(
+        error.contains(Config::global_config().global.service_dir().as_str()),
+        "{error}"
+    );
+    assert!(error.contains("metadata=Err("), "{error}");
+    assert!(
+        error.contains(&format!("pid={}", std::process::id())),
+        "{error}"
+    );
+}
+
+#[test]
 fn request_doorbell_is_required_and_scoped_to_the_manager_service() {
     let name = service_name("missing-wake");
     let node = NodeBuilder::new().create::<ThreadSafeIpcService>().unwrap();
@@ -199,10 +223,16 @@ fn request_doorbell_is_required_and_scoped_to_the_manager_service() {
         .request_response::<WireMessage, WireMessage>()
         .create()
         .unwrap();
-    assert!(matches!(
-        TransportClient::connect(&name),
-        Err(TransportError::Service(_))
-    ));
+    let error = match TransportClient::connect(&name) {
+        Err(TransportError::Service(error)) => error,
+        _ => panic!("opening a service without its request doorbell must fail"),
+    };
+    assert!(error.contains("EventOpenError::DoesNotExist"), "{error}");
+    assert!(error.contains(&format!("{name}/requests")), "{error}");
+    assert!(error.contains("pattern=Event"), "{error}");
+    assert!(error.contains("static_config="), "{error}");
+    assert!(error.contains("metadata=Err("), "{error}");
+    assert!(error.contains("mount_namespace=Ok("), "{error}");
 
     let old_name = service_name("old-manager");
     let old_server = TransportServer::bind(&old_name).unwrap();

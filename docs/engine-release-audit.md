@@ -44,6 +44,18 @@ older interface inventory below records its 0.30.0/0.5.20 research inputs, not
 new-release qualification. The complete delivery status lives in S5 of the
 completion plan.
 
+## 2026-10-08 upstream recheck
+
+Official vLLM [0.31.0](https://github.com/vllm-project/vllm/releases/tag/v0.31.0)
+and SGLang [0.5.21](https://github.com/sgl-project/sglang/releases/tag/v0.5.21)
+remain the latest non-prerelease releases. The V2 ordering contribution
+[vLLM #59410](https://github.com/vllm-project/vllm/pull/59410), external-linker
+factory [SGLang #40595](https://github.com/sgl-project/sglang/pull/40595) and
+load-failure lifecycle [SGLang #40896](https://github.com/sgl-project/sglang/pull/40896)
+are open and unmerged. No dependent Hook removal or support expansion is
+authorized by this recheck. Primary API snapshots are preserved with
+`/root/orbitkv-artifacts/s5-budget-peaks-20261008/`.
+
 ## Released integration boundaries
 
 | Engine | Consumed interface | Ownership |

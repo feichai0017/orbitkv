@@ -39,7 +39,7 @@ record submitted, merged and released as different states.
 | S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. Independent final review accepts the second frozen S2.10 same-host formal handoff: all 25 cells are valid and five 16-owner ordinary visibility runs pass 50 ms, while both DRAM and SSD isolation fail the frozen per-pair/CI contract. S2.10b lifecycle, low-overhead observation and 14-cell diagnosis are complete. Independent review accepts the diagnostic archive but blocks a production repair: the dominant measured tail is after native return at the Python observer boundary, while no repeatable Manager, metadata-lock, completion-notification or SSD-owner shift is established. The supported envelope stays four owners and all prior formal campaigns remain immutable. Physical cross-host cache/HA, independent etcd failure domains and native GDS are qualification blocked on missing hardware; final serving, RDMA and S3-dependent cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
-| S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`; the 0.31.0/0.5.21 final wheel passes ordinary-cache installed/model/lifecycle gates and the S5.5 same-host dual-engine shared-Manager DRAM/io_uring cells (including overlapping restore and drained Manager cold restart) and bounded native P/D model gates locally. Independent acceptance, public lifecycle implementation and broader deployment qualification remain open. |
+| S5 | Partial: the S5.1 release/interface audit is independently accepted at `38f8dbb2`. Official 0.31.0/0.5.21 installed ordinary-cache/restart and bounded native P/D model gates pass locally. The final wheel and intact H20 cohort are independently accepted for ordinary-cache GPU recovery and 900-second direct/kernel two-engine shared-Manager io_uring pressure gates with exact native outputs, bounded reservations and normal drain. Recovered original review records and missing reviewer raw files are explicitly documented below. Public lifecycle migration, immutable adapter/live-weight identity, cross-host TP fan-out and broader lifetime/deployment qualification remain open. |
 | S6 | Partial: observations/limited choices exist; unified executed decisions remain open. |
 | S7 | Open: consumed retention/checkpoint compiler beyond recovery validation. |
 | S8 | Partial: existing wheel workflow; final images, artifact gates and publication remain open. |
@@ -1001,13 +1001,74 @@ layer hooks. The current contracts live in [transport](transport.md) and
   and five installed-kernel model gates pass on A100 SM80. The largest paired
   4 KiB median regression is 1.11%, below the frozen 5% guard. A 12-run follow-up
   on representative 128 KiB model-sized fragments remains near old-kernel parity;
-  it does not establish an inference speedup. Default DMA, descriptor bytes and
-  physical-drain ownership are unchanged. Independent reproduction, contention,
+  it does not establish an inference speedup. Existing backend selection,
+  descriptor bytes and physical-drain ownership are unchanged. Independent reproduction, contention,
   graphs, H20 and S3-dependent faults remain open. Sources, raw samples, native
   comparisons, final wheel and failed builds remain outside the checkout at
   `/root/orbitkv-artifacts/kda-native-copy-20261007/`; see
   [kernel optimization](kernel-optimization.md). Codec/checksum fusion requires
   a separately measured, consumed bottleneck.
+- **SSD host restore batching implemented; native gates pass (2026-10-07),
+  installed gates pass; independent acceptance open:** production `50c6d58d` submits at
+  most 16 unique SSD generations per existing reader batch and storage owner.
+  Repeated layer references remain deduplicated; same-key generations are
+  separated and every batch drains before an error returns or GPU sources change.
+  No physical I/O coalescing, new early readiness or cache policy is implied.
+  The frozen 12-cell A100/ext4-NVMe io_uring cohort passes exact bytes, physical
+  reads and all 15 paired median guards (largest ratio 1.0154). Twelve 4 KiB
+  blocks become one reader batch, with geometric mean median ratio 0.645;
+  the 108 MiB interval crosses parity. Python/native call overhead is included;
+  p99 is descriptive and one small 34-block pair rises 0.738 → 2.486 ms. Fourteen
+  real SSD native tests pass without environment skips. The unchanged complete
+  wheel `8acd6a06…` passes all three official-engine SSD/shared-Manager gates
+  in a fresh durable cohort, with 20 normal zero exits and unchanged installed
+  files. The original passing cohort has incomplete provenance after temporary
+  cleanup; its surviving records are preserved separately and no old cell is
+  reused. The final native cohort retains all 3,000 samples in `/workspace`,
+  with SSD data on the same NVMe mount. Sources, frozen contracts, failed runs and the
+  final handoff stay outside Git at
+  `/root/orbitkv-artifacts/s5-ssd-host-batching-20261007/`; see
+  [SSD performance](ssd-performance.md).
+- **Bounded KDA/physical-read follow-up evaluated (2026-10-08): both candidates
+  rejected; measurement support implemented, independent review open.** CPU
+  descriptor reuse passes all native byte controls but a grid-stride H2D median
+  regresses 5.98%, beyond the frozen 5% guard; later shape/pair runs are not
+  started. Adjacent same-batch READV merging reduces 12-block requests from 12
+  to one and 34-block requests from 34 to three, but the first matched small
+  medians regress 10.02% and 24.61%. Its qualification stops immediately.
+  Exact-byte/short-read/lease gates and 14 SSD integration tests pass, which
+  does not authorize performance promotion. Both candidate implementations
+  are removed from production and archived outside Git; CUDA sources/defaults
+  and the accepted scalar read path stay unchanged.
+  The final Manager counts queued READV SQEs separately from blocks and NVMe
+  commands; the communication harness retains before/after stage snapshots
+  outside its timer. A distinct four-cell cost-enabled diagnostic completes
+  without promotion: the 108 MiB baseline averages about 20.3 ms SSD preparation
+  and 4.8 ms direct H2D; instrumentation overhead is unqualified and overlapping
+  stage means cannot decompose percentile latency. Next inspect existing SSD
+  preparation/read parallelism and completion scheduling before another candidate;
+  the S5.5 startup blocker remains unresolved. Contracts, frozen wheels, failed
+  gates, rejected sources and byte controls are archived at
+  `/root/orbitkv-artifacts/s4-readv-kda-20261008/`, mirrored at
+  `/workspace/orbitkv-perf-20261008/`. This closes neither S4 nor S5.
+- **SSD read fanout evaluated (2026-10-08): rejected; no production change.**
+  Reducing the existing single-file reader from 15 to seven read queues passes
+  all 14 real SSD lifecycle tests and exact-byte/physical-read controls, but the
+  third matched small-shape pair exceeds the frozen 5% median guard (ratios
+  1.753 and 1.594). The cohort stops there; the remaining model cells and installed
+  promotion gates are not started. The accepted scalar reader and 16 total
+  io_uring threads remain unchanged. Lower whole-cohort CPU ticks do not justify
+  a latency regression. Frozen sources, wheels, controls and failed samples are
+  retained at `/root/orbitkv-artifacts/s4-ssd-read-fanout-20261008/` and
+  `/workspace/orbitkv-ssd-fanout-20261008/`; see [SSD performance](ssd-performance.md).
+- Profile actual descriptor shapes and inference contention before further
+  mapped-host copy changes. Consider SSD-staging scatter or encoding/checksum
+  fusion only after their consumed route exposes a material dispatch/HBM cost.
+  Keep device code in the existing `.cu` files and Rust ownership through final
+  drain. Native GDS eligibility, lossy codec quality and physical I/O merging
+  are separate gates; [kernel requirements](kernel-optimization.md) specifies
+  the controls. Next S5.5 qualification is sustained shared-Manager SSD mixed
+  save/restore, per-instance progress and bounded cleanup, not a new scheduler.
 - Extend readiness to legal multipart and SSD/codec pipelines where it can
   shorten the engine critical path. Retain the parent source/destination fence
   and final drain; a ready layer does not retire the whole operation.
@@ -1154,6 +1215,38 @@ has two internal Hooks; enqueue preparation remains opt-in. The later S5.4
 cutover removes those custom P/D owners and fork observation Hooks entirely;
 the following evidence records the earlier cleanup, not current native P/D support.
 
+**Single-rank admission cleanup independently accepted on H20 (2026-10-08).** The SGLang wrapper captures whether released
+attention/TP groups need consensus once. Single-rank request admission and hybrid
+materialization use scalar decisions without allocating Torch tensors; multirank
+MAX/MIN decisions and pending/expiry/cancel ownership remain consumed. The final
+complete wheel `fe427c42…` passes 42 installed official SGLang 0.5.21 controls,
+four synthetic GPU DRAM/SSD recovery controls and installed SGLang SSD
+full/partial/restart. Fresh official vLLM 0.31.0/SGLang 0.5.21 environments resolve
+all declared dependencies, with no source OrbitKV package shadowing imports.
+Both 900-second shared-Manager direct/kernel cells complete and every fresh/reused
+request matches native input/text/token-count controls. All 75 native package
+members are unchanged from the prior wheel. The two private safety Hooks and
+advertised rank/model scope remain unchanged; no measured speedup is claimed.
+The original A100 queue was cancelled before launch after H20 readiness passed;
+Traex's S2 campaign was untouched. Earlier evidence is immutable at
+`/root/orbitkv-artifacts/s5-single-rank-admission-20261008/`; the complete H20
+handoff is `/root/orbitkv-artifacts/s5-h20-closeout-20261008/PARENT-HANDOFF.md`.
+
+**H20 direct CUDA runtime independently accepted in this process profile (2026-10-08).**
+Default initialization returned `CUDA_ERROR_NO_DEVICE` with the 590 compatibility
+library or timed out with matching 535 and isolated official 580 libraries.
+With the same 580 library and GPU UUID, changing only `CUDA_MPS_PIPE_DIRECTORY`
+to an empty private directory turns a 30-second timeout into CUDA_SUCCESS in
+0.164 seconds. The existing 590 compatibility library then passes too. Both
+fresh engine environments pass real CUDA arithmetic and spawned CUDA IPC:
+65,536 exact bytes and child computation 100,708,352, exit zero and empty GPU
+postflight. Shared MPS, host driver and global library links are unchanged.
+This is a direct-CUDA process profile, not a shared-daemon diagnosis or a
+cross-container/MPS, TENT/HA or S2 qualification. Failed controls remain in
+`/root/orbitkv-artifacts/s5-h20-container-runtime-20261008/` and
+`/root/orbitkv-artifacts/s5-h20-readiness-20261008/`; see
+[runtime setup](deployment.md#h20-direct-cuda-runtime).
+
 The initial cleanup's source-only gate passed 414 tests. With frozen native artifacts, the pinned
 SGLang 0.5.20 admission/event gate passes 22 tests and the vLLM 0.29.0 native
 recovery-contract gate passes seven. These integration tests use controlled
@@ -1296,7 +1389,8 @@ Do not delete consumed safety behavior based on these proposals.
 - Replace private enqueue/abort/release and decode-ready Hooks with explicit
   lifecycle contracts. Keep telemetry out of ownership transitions and model
   computation in the engine. Incorporate generation checks from S3.
-- **Implementation open:** adapter/LoRA identity and live-weight invalidation.
+- **Implemented support boundary:** both adapters reject dynamic LoRA.
+  **Implementation open:** immutable per-adapter reuse and live-weight invalidation.
   Preserve cache salt, computation identity, multimodal inputs and representation
   boundaries; reject unsupported combinations instead of sharing unsafe keys.
 - **Qualification open:** Full + SWA + temporal recurrent native serving, page
@@ -1394,8 +1488,166 @@ Manager death or native DMA termination. The wheel is unchanged (`9d14998d…`).
 Evidence: `/root/orbitkv-artifacts/s5-concurrent-recovery-20261007/`;
 A100 mirror: `/workspace/orbitkv-s5-concurrent-recovery-20261007/`.
 
-This delivers one same-host deployment profile, not all of S5.5. Independent review,
-sustained restore pressure/fairness, isolated containers,
+The SSD host-batching follow-up (`50c6d58d`, frozen wheel `8acd6a06…`) passes
+three fresh installed gates: each official engine's ordinary SSD full/partial
+restore, plus shared-Manager SSD serving. Both engines use `direct`; each full
+or partial restart loads 113,246,208 bytes from SSD after DRAM eviction. Their
+overlapping external restores load 226,492,416 bytes, with matching io_uring
+reads and four reader batches. All 20 services exit zero without forced cleanup;
+all installed package/engine files stay unchanged and GPU postflight is empty.
+Normal Manager restart remains a cold rebuild. Functional release-gate files
+are on the `/workspace` overlay; the separate 12-cell native comparison uses
+ext4/NVMe and demonstrates median improvement, with descriptive p99 regressions
+retained. The first aggregate cohort has incomplete provenance; the new complete
+raw cohort and all surviving controls are archived at
+`/root/orbitkv-artifacts/s5-ssd-host-batching-20261007/`, mirrored at
+`/workspace/orbitkv-s5-ssd-host-batching-20261007/`. Independent review and
+sustained mixed save/restore tail/fairness qualification remain open.
+
+The bounded S5.5 pressure harness is implemented at `7deb9769`, with strict
+primary-error preservation at `36433e55`. `benches.shared_manager_pressure`
+uses two installed official engines, per-instance request quotas, 512 MiB shared
+DRAM, 8 GiB io_uring SSD, 384 MiB global/192 MiB configured per-instance query
+budgets, fresh/reused inputs, native controls for every output and an independent
+resource sampler. CPU benchmark contracts pass (246 tests); the default
+source-only Python gate passes 273 tests with one skip. The initial 15-second
+direct smoke passes 44 requests, physical SSD reads/writes, sampled global/pool
+budgets, unchanged installed files and eight normal zero exits. A fresh untraced
+file-lifetime diagnostic also passes 43 requests; its short tails are descriptive.
+Those frozen cells predate the owner peak metrics recorded below; they do not
+measure per-instance reservation peaks.
+
+**Sustained qualification blocked:** two untraced launches fail in the SGLang
+client's iceoryx2 `DoesNotExist` discovery before observer start and foreground
+round zero. The 900-second direct cell is invalid; its kernel cell is not started.
+A complete traced kernel profile passes 85 requests and supplies the actual save
+fragment histogram, while idle and registered-GPU delayed joins also pass. These
+diagnostics do not establish a cause or a production repair. The SGLang-only
+trace wrapper requires forced cleanup and is retained as an invalid diagnostic.
+Do not inherit a sustained tail/fairness or backend-advantage claim from any of
+these short cells. The frozen task, KDA rejected candidate and complete failure
+archive are at `/root/orbitkv-artifacts/s5-shared-pressure-kda-20261007/`, mirrored
+under the matching `/workspace/` directory on A100. Existing S3/public-lifecycle
+dependencies remain unchanged.
+
+**IPC diagnostics implemented; repair and qualification open (2026-10-08):**
+failed request-service and `/requests` event discovery now report the actual
+service name, messaging pattern, effective static-config path, file metadata and
+mount namespace. This executes only after a failed open; normal submission and
+service ownership are unchanged. The channel gate passes 62 unit tests (one
+private child fixture ignored at top level), six completion/ownership tests and
+one real process round-trip; targeted Clippy and format checks pass.
+
+A single predeclared A100 file/lock-lifetime diagnostic reuses the existing
+`8acd6a06…` installed wheel, not these new error messages. Both official engines
+start and 87 requests pass exact native input/text/prompt/completion-token
+oracles during a 30.506-second window. All eight services exit zero without forced
+cleanup; the recorded request/event service files are deleted after Manager
+endpoint stop. It does not reproduce the discovery failure or establish a repair.
+The complete 262-file artifact manifest is verified locally at
+`/root/orbitkv-artifacts/s5-ipc-startup-20261008/a100/diagnostic-v7/` and on A100 at
+`/workspace/orbitkv-s5-ipc-startup-20261008/diagnostic-v7/`.
+
+The failure-context wheel built from `1ea56c2e` subsequently passes package repair,
+isolated native import and both copied official environments' Manager CLI checks.
+Its single untraced startup diagnostic reproduces `DoesNotExist` in vLLM 0.31.0:
+the worker registers 36 GPU layers, then the same process's scheduler client cannot
+open the matching advertised request service. Its actual static-config path is
+absent in the caller namespace (`ENOENT`); the Manager stops 294.416 seconds later.
+This broadens the observed failure beyond SGLang and rules out prior Manager exit
+for this run, but does not identify the deletion actor or a production repair.
+No cached SGLang launch or foreground window starts. The cached vLLM exits one,
+the Manager and two native controls exit zero, and no forced cleanup is used.
+All five recorded PIDs and the UDS are absent; GPU compute is empty. All installed
+candidate/engine hashes and the original frozen environments remain unchanged.
+
+The failed cell, static-Python build failure and successful shared-Python build
+are retained at `/root/orbitkv-artifacts/s5-ipc-startup-20261008/`. The corresponding
+A100 failure-context evidence is
+`/workspace/orbitkv-s5-ipc-startup-20261008/failure-context-1ea56c2e/`; its 250-file
+cohort manifest is verified locally, excluding installation directories whose
+files are verified separately against installed RECORD hashes. The production
+commit's CI run `37720474129` passes all 13 jobs. The next S5.5 action is to inspect
+node/service ownership and discovery-file lifetimes around GPU registration and
+a subsequent client attach, establish the cause and independently review a repair,
+then freeze a new sustained cohort. No diagnostic upgrades the support envelope.
+
+The subsequent single syscall-attribution diagnostic also does not reproduce
+the failure: 86 requests match exact native input/text/token controls, eight
+services and three tracers exit zero, and installed files remain unchanged.
+Its selected file/lock traces do not identify a deletion actor; tracing may
+affect scheduling. The earlier failure remains unresolved. Complete evidence:
+`/root/orbitkv-artifacts/s5-ipc-causal-20261008/`.
+
+A separate three-cell untraced startup diagnostic completes with the previous
+`485eec94…` wheel. Each uses readonly process/service/lock observation, native
+output controls and a 30-second shared-engine window. All byte/text/token
+oracles and normal cleanup pass. The observer never opens process-monitor lock
+files; its own overhead is unqualified. None reproduces the missing-service
+failure, so no deletion actor or production repair is established and sustained
+qualification remains open. Evidence: `/root/orbitkv-artifacts/s5-finish-20261008/`,
+mirrored at `/workspace/orbitkv-s5-finish-20261008/`.
+
+**Budget peak observation implemented; local boundary gate passed (2026-10-08):**
+the existing QueryBudget admission owner now retains lifetime global and
+maximum-single-instance concurrent reservation peaks under its existing lock.
+Observable metrics retain peaks through release without instance labels or a
+second state owner. The pressure gate requires both peaks after drain, checks
+the configured global/per-instance limits and rejects a reset or missing value.
+This covers short reservations between sampler ticks; it does not identify an
+engine's own maximum, measure physical pinned/HBM allocation or qualify fairness.
+The frozen CUDA 13 wheel from `c3cf15a9` passes one new A100 dense eager
+shared-engine/io_uring boundary gate: all 87 exact native input/text/token
+controls pass, both engines make bounded progress, all seven Manager/engine
+services and the sampler exit zero, and installed files stay unchanged. Global
+and maximum-single-instance peaks are 217,055,232 and 113,246,208 bytes, below
+the configured 384/192 MiB limits. The final query/SSD ownership drains to zero.
+The 30.542-second window does not qualify sustained tails or fairness; independent
+review, the earlier unresolved startup failure and all broader limits remain open.
+Evidence: `/root/orbitkv-artifacts/s5-budget-peaks-20261008/`, mirrored on A100
+under `/workspace/orbitkv-s5-budget-peaks-20261008/`.
+
+**H20 sustained ordinary-cache pressure independently accepted (2026-10-08).** The unchanged `fe427c42…` wheel and frozen
+`e1e42d17` measurement program complete a 900.210-second direct
+window (2288 vLLM/1876 SGLang requests) and a
+900.323-second kernel window (2252 vLLM/1914 SGLang).
+Both use dense Qwen3-8B, TP=1/PP=1 eager, 512 MiB DRAM, 8 GiB io_uring SSD
+and 384/192 MiB global/per-instance query budgets. Every request matches its
+exact native input/text/token-count oracle, the actual worker routes are logged,
+both engines maintain bounded progress, and owner reservation peaks stay below
+both limits. Seven services and the sampler per cell exit zero; installed
+distribution hashes stay unchanged and GPU postflight is empty. The SSD file is
+on the container's overlay filesystem: this does not establish physical NVMe
+performance. Seeds differ by route; no kernel-versus-DMA advantage, isolation
+or fairness claim follows.
+
+The test-only remediation `55ad0343` requires all six final io_uring drain
+gauges to exist and equal zero. The shared wait helper retains observed lazy
+gauges and rejects missing, disappearing, negative or nonfinite values; cuFile
+staging is required only if observed, and is not reported as measured zero on
+this io_uring route. Both original frozen captures pass the stricter validator;
+no cell is replaced or retried. Default Python/benchmark contracts pass
+283/264 tests. The earlier intermittent discovery failures remain unresolved
+and immutable. Full inputs, outputs, failures and scope are at
+`/root/orbitkv-artifacts/s5-h20-closeout-20261008/`.
+
+Independent review accepts production `e1e42d17` and the test-only `55ad0343`
+drain remediation. Both official environments pass independent CUDA/IPC checks,
+four installed DRAM/SSD model cells and four synthetic GPU byte/lease controls.
+Synthetic controls do not export structured Manager exit codes and do not prove
+native recurrent serving or S3 termination. The reviewer verifies all 808
+primary artifact hashes and independently reconstructs all 8,330 raw request
+oracles. After an unexplained reviewer `/tmp` evidence loss, original reports,
+controller read-back and results were recovered from recorded tool executions;
+pre-existing report hashes match. Some reviewer raw model/log/probe files remain
+missing and are not fabricated. Scoped acceptance uses those original execution
+records and the intact primary raw cohort, without retry or replacement. The
+report is `/root/orbitkv-artifacts/s5-h20-closeout-20261008/reviewer-evidence-recovery-20261008/FINAL-REVIEW.md`;
+future campaigns archive
+directly outside `/tmp`.
+
+This independently accepted cohort delivers one same-host deployment profile.
+Matched tail isolation/fairness, isolated containers,
 physical cross-host/rank combinations, native P/D faults and S3-dependent
 reclamation remain open. Shared capacity does not establish interchangeable
 cross-engine KV bytes or a latency/throughput advantage.

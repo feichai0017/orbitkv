@@ -3,6 +3,239 @@
 For artifact locations and verification limits, see [benchmark evidence](benchmark-evidence.md).
 The [pre-migration report](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/ssd-performance.md) retains full tables and historical run details.
 
+## Native SSD host restore batching (2026-10-07)
+
+**Implemented; native median and installed-engine local gates pass; independent review open.**
+Production commit `50c6d58d` groups immutable io_uring restore sources by SSD
+store, with at most 16 unique keys per reader batch. Repeated layer references
+share one generation; different generations of the same key remain in separate
+batches. All reads reach terminal completion before any GPU source is replaced
+or an error returns. Existing query, extent and destination ownership is retained.
+The change reduces batch admission/completion work, not physical READV operations.
+It is consumed by the managed SSD host-restore lane, including the explicit
+`--ssd-read-path uring` demand route tested here. Default host-prefetch queries
+keep their existing batch reader; this is not a claimed speedup for every SSD
+lookup. It changes no GPU backend default, cache policy or readiness boundary.
+
+A frozen baseline/candidate cohort uses complete CUDA 13 wheels on one A100 SM80,
+with `O_DIRECT` files on the `/tmp` ext4 NVMe mount. Twelve cells cover five
+shapes, each with 20 warm-ups and 100 measured restores; three independent pairs
+reverse order. They include 4 KiB blocks and representative 36-layer split K/V
+layouts of 9 and 108 MiB. These layouts are not a captured engine histogram.
+The client timer wraps native `start_restore` through `wait_restore` return,
+including Python call/return overhead, host SSD materialization and H2D. It is
+not a GPU-only or instrumented Rust-only timer; preparation queries and byte
+checks are outside.
+
+All 15 per-shape paired median ratios pass the predeclared 1.05 guard; the largest
+is 1.0154. Twelve-block 4 KiB restores use one reader batch instead of twelve,
+with a geometric mean median ratio of 0.645. Thirty-four-block restores use three
+batches instead of 34, with ratio 0.903. The 9 MiB layout stays near parity.
+The 108 MiB median ratio is 0.971, but its descriptive pair-bootstrap interval
+[0.947, 1.011] crosses parity, so a stable model-shaped improvement is not
+established. Every measured destination is filled with a sentinel first and
+compared byte-for-byte; physical SSD reads equal completed H2D bytes. Managers
+exit zero and pinned/read/write ownership counters drain. These are client
+restore measurements, not TTFT, ITL, throughput or device-bandwidth qualification.
+
+Only three independent pairs are available per shape. All samples and pair
+bootstrap intervals remain in the external analysis; p99 at 100 samples is
+descriptive. One 34-block paired p99 rises from 0.738 to 2.486 ms (3.37x), and one
+12-block pair rises from 0.639 to 1.101 ms (1.72x). These tails remain visible;
+the median guard does not qualify tail performance or inference contention.
+Earlier manifest/controller errors, asynchronous-write preparation failure and
+temporary-file provenance loss are recorded separately. The final cohort uses
+one corrected harness throughout and retains raw evidence in `/workspace`,
+without mixing cells from older attempts. `/cache/sync` waits for insertion,
+not asynchronous SSD writes; the benchmark waits for SSD write/query ownership
+before evicting DRAM. SSD data uses the same ext4/NVMe mount via a separate fresh
+`--ssd-cache-path`, which cannot overwrite an existing path.
+
+Reproduce with a prebuilt installed wheel and a fresh external directory:
+
+```bash
+/path/to/release/python -m benches.communication \
+  --manager /path/to/installed/orbitkv-cache-manager-py \
+  --tier ssd --ssd-cache-path /mnt/nvme/orbitkv-bench/restore-001 \
+  --layout split --layers 36 --block-bytes 262144 \
+  --payload-bytes 262144 3145728 --iterations 100 --warmup 20 \
+  --repeats 1 --idle-ms 0 --idle-seconds 0.1 \
+  --output /var/tmp/orbitkv-ssd/restore-001
+```
+
+The benchmark forces io_uring and an SSD-only source for every restore. Its
+Manager, extension, shared libraries, commands, mount, counters and byte oracles
+are recorded. Use the same harness, budgets and workload for both wheels. Current
+raw results and the promotion contract live outside Git at
+`/root/orbitkv-artifacts/s5-ssd-host-batching-20261007/`, with the new A100
+cohort at `/workspace/orbitkv-s5-ssd-host-batching-20261007/`. Evidence and
+SSD payload paths are separate. The first passing cohort lost part of its
+raw evidence during unexpected `/tmp` cleanup; its aggregate observations
+and surviving files are retained, but do not qualify independent acceptance.
+
+The complete CUDA 13 wheel `8acd6a06…` also passes three fresh official-engine
+SSD gates on A100: vLLM 0.31.0 V1 and SGLang 0.5.21 ordinary cold/HBM/full/partial
+cache flows, plus shared-Manager serving, engine restart and drained Manager
+cold rebuild. Each full/partial restore loads 113,246,208 bytes; concurrent
+external restore loads 226,492,416 bytes with matching physical io_uring reads
+and four reader batches. All 20 services exit zero without forced cleanup;
+installed engine/OrbitKV files are unchanged and GPU postflight is empty. These
+functional gates use `direct`, dense Qwen3-8B TP=1/PP=1 eager, with cache files
+on the `/workspace` overlay; they do not measure NVMe throughput or close
+sustained contention, graphs, H20, native P/D faults or S3 crash reclamation.
+
+## Physical READV merging evaluation (2026-10-08)
+
+**Rejected; production retains the accepted scalar reader.** A bounded candidate
+merged only already queued same-batch, same-file, logically and physically adjacent
+leased extents, with no padding/gap reads. Its caps were 16 blocks, 32 MiB and
+1,024 iovecs; logical in-flight credits and source ownership through CQE drain
+were unchanged. A short READV failed every member of its group. The real
+short-read/byte/lease gate and all 14 native SSD lifecycle tests passed.
+
+Two complete CUDA 13 wheels shared the same READV counter, client extension,
+TENT libraries, direct backend and harness. On A100 with ext4/NVMe, the first
+matched pair used 20 warm-ups and 100 measured restores for each small shape.
+Twelve 4 KiB blocks used one queued READV instead of 12, but median restore
+latency rose 293.86 → 323.31 µs. Thirty-four blocks used three instead of 34,
+but latency rose 533.68 → 665.01 µs. Both exceed the predeclared 5% guard;
+no later qualification cells or installed-model promotion gates started.
+These first-pair results reject this candidate; they are not a repeated system
+regression estimate. All failed samples and candidate source are retained.
+
+A separate four-cell diagnostic enables existing bounded cost observations,
+with five warm-ups and 30 measured operations per shape. Every payload and
+ownership drain passes. The 108 MiB scalar baseline averages 20.3 ms from SSD
+prefetch enqueue through host materialization and 4.8 ms in direct H2D service.
+The merged candidate supplies no demonstrated advantage. These overlapping
+host boundaries locate further investigation; instrumentation overhead is
+unqualified, and their means cannot be added to decompose a tail percentile.
+The current read owner distributes scalar I/O over 15 read queues for one file;
+merging reduces that active fanout. Lost parallelism and extra preparation work
+remain hypotheses until bounded attribution separates them.
+
+The production counter `orbitkv_ssd_uring_read_operations_total` distinguishes
+queued READV SQEs from reader batches and physical device commands.
+`benches.communication` persists existing stage snapshots before/after each
+cohort, outside the measured request loop, and requires positive READV evidence
+for new SSD experiments. It retains SSD prefetch duration alongside equal
+stored/GPU bytes. Full contract, source, wheel hashes, rejection decisions,
+raw timings and controls: `/root/orbitkv-artifacts/s4-readv-kda-20261008/`,
+with the A100 mirror at `/workspace/orbitkv-perf-20261008/`.
+
+## Reader thread fanout evaluation (2026-10-08)
+
+**Rejected; the default remains 16 total io_uring threads.** The existing owner
+already submits independent host-reader batches concurrently. A single-file
+candidate reduces only read queues from 15 to seven, preserving scalar READV,
+queue depth, byte budgets and completion ownership. All 14 real SSD tests and
+completed cohort payload/read/drain controls pass.
+
+The frozen three-pair, alternating-order A100/ext4-NVMe cohort stops at the third
+small-shape pair: 12 and 34 blocks of 4 KiB regress from 291.776 to 511.521 µs
+and from 542.133 to 864.261 µs. Both exceed the predeclared 5% median guard.
+Earlier pairs cross parity, so this is a failed promotion test rather than an
+estimate of a stable system-wide regression. Lower whole-cohort CPU ticks do
+not authorize promotion. No final model pair or installed-engine promotion gate
+starts. The candidate is reverted; source, complete wheels, raw samples and
+controls remain at `/root/orbitkv-artifacts/s4-ssd-read-fanout-20261008/` and
+`/workspace/orbitkv-ssd-fanout-20261008/`.
+
+## Shared-Manager mixed-pressure qualification
+
+`benches.shared_manager_pressure` runs installed official vLLM 0.31.0 and
+SGLang 0.5.21 against one Manager. The fixed workload interleaves reused prefixes
+with deterministic fresh prefixes, fixes each engine to 4,096 native GPU tokens
+and caps client admission separately for each engine, compares every output and token count to its own native engine, and
+finishes every admitted request before shutdown. A separate lightweight process
+samples Manager resources once per second without loading Torch, CUDA or OrbitKV.
+The gate requires a completion gap below 30 seconds while each engine has
+admitted work, positive physical read/write and save/load bytes, final ownership
+drain and normal cleanup. Configure
+and report global and per-instance query limits separately. The admission owner
+now retains exact global and maximum-single-instance reservation peaks since
+Manager budget creation, including warm-up; the gate reads them after drain so
+short reservations between sampler ticks are still covered. Pool peaks remain
+sampled. The new installed wheel passes one 30-second A100 dense eager
+two-engine boundary cell with all 87 exact native controls, both reservation
+peaks within their limits and final ownership drain. This functional check is
+pending independent review and does not qualify sustained pressure, fairness
+or old frozen cells. Evidence: `/root/orbitkv-artifacts/s5-budget-peaks-20261008/`. No timed cache flush, restart, cache-policy change or
+Python state coordinator is introduced.
+
+Two short untraced direct cells pass 44 and 43 requests, physical io_uring reads
+and writes, sampled bounds, final drain and unchanged installed files. They are
+smoke/diagnostic evidence with descriptive tails. The sustained two-cell cohort
+is **invalid at direct startup**, before any timed request: SGLang reports an
+iceoryx2 discovery `DoesNotExist`. Its kernel cell is not started. A traced
+kernel profile supplies actual save fragment sizes but cannot certify performance;
+the intermittent discovery cause remains unresolved. Do not declare sustained
+fairness, tail isolation, per-instance peak qualification or a kernel advantage.
+All failures and diagnostics are retained outside Git at
+`/root/orbitkv-artifacts/s5-shared-pressure-kda-20261007/`.
+
+The later unchanged final wheel `fe427c42…` completes both 900-second H20
+direct/kernel shared-Manager cells with exact native outputs, positive io_uring
+read/write and GPU traffic, bounded reservation peaks and normal exit. Six
+actual io_uring drain gauges are present and zero; inactive cuFile staging is
+not misreported as measured zero. This correctness/progress profile is independently accepted; the overlay filesystem, different seeds and lack of matched
+independent pairs establish neither physical NVMe nor inference performance.
+Earlier invalid startups remain unresolved and preserved. Scope and full
+evidence: [S5.5](completion-plan.md#s55--deployment-matrix-and-upstream-maintenance),
+`/root/orbitkv-artifacts/s5-h20-closeout-20261008/`.
+
+Reproduce only with a fresh output/data directory and an idle GPU. Record the
+startup outcome before interpreting any latency sample:
+
+```bash
+/path/to/vllm-release/python -m benches.shared_manager_pressure \
+  --vllm-python /path/to/vllm-release/python \
+  --sglang-python /path/to/sglang-release/python \
+  --model /path/to/immutable-model --transfer-backend direct \
+  --duration-seconds 900 --seed sustained-01 \
+  --ssd-path /mnt/nvme/orbitkv-bench/shared-pressure-001 \
+  --output /var/tmp/orbitkv-ssd/shared-pressure-001
+```
+
+The defaults use 512 MiB Manager DRAM, 8 GiB io_uring SSD, 384 MiB global and
+192 MiB configured per-instance query limits, 16 prefixes of 768 tokens per
+engine, eight output tokens and one admitted request per engine. Every eighth
+input is fresh. TTFT is client time to first nonempty streamed text; a debug `--profile` run
+reports consumed descriptors separately from performance qualification. Keep
+workload, budgets and order fixed in matched runs, retain
+every sample, and report p99 as descriptive below 1,000 requests per engine.
+Independent run pairs are required for a comparative performance claim. A failed
+startup or correctness/drain/provenance guard stops its cohort; a revision needs
+a new freeze rather than a replacement cell.
+
+## Next SSD work and native GDS boundary
+
+[LMCache's local disk design](https://docs.lmcache.ai/kv_cache/storage_backends/local_storage.html)
+uses asynchronous writes and prioritizes prefetch over deletes and puts.
+[FlexKV's current configuration reference](https://github.com/taco-project/FlexKV/blob/main/docs/flexkv_config_reference/README_en.md)
+describes coalescing small scattered SSD I/O. These are design references inspected
+on 2026-10-07, not matched performance controls or qualified OrbitKV behavior.
+OrbitKV already has bounded read/write owners; extend those owners after measuring
+mixed save/query pressure, per-instance progress and write admission.
+
+Physical I/O merging is separate from host-reader batching. A future candidate
+must use leased adjacent extents in the same file, bounded bytes/iovec counts,
+correct short-read/error handling and validation for every generation. It must
+avoid unrequested gaps, ring-wrap aliasing and extra CPU repacking. Multi-device
+scaling needs actual device topology and matched budgets.
+
+The existing cuFile path uses registered GPU staging before scatter/decode.
+[NVIDIA's guide](https://docs.nvidia.com/gpudirect-storage/best-practices-guide/index.html)
+distinguishes small batch I/O from stream-ordered operations and recommends
+reusing registered staging where registration can be amortized. It also notes
+higher execution latency for small stream-ordered I/O. GDS is therefore a measured
+route candidate, not an automatic speedup. Use [the native-path gate](gds.md)
+with compatibility disabled and physical native I/O statistics; library presence
+or successful initialization is insufficient. Direct engine-page I/O and new
+scatter/checksum kernels remain unqualified follow-ups in S4.
+
+## Historical concurrent inference evidence
+
 The September 23, 2026 Qwen3-8B experiment keeps DRAM and SSD enabled together
 and uses a working set larger than their in-memory capacity. It measures
 request latency, transfer stages, bytes and cleanup under natural eviction.
