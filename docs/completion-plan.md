@@ -39,7 +39,7 @@ record submitted, merged and released as different states.
 | S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. Independent final review accepts the second frozen S2.10 same-host formal handoff: all 25 cells are valid and five 16-owner ordinary visibility runs pass 50 ms, while both DRAM and SSD isolation fail the frozen per-pair/CI contract. S2.10b lifecycle, low-overhead observation and 14-cell diagnosis are complete. Independent review accepts the diagnostic archive but blocks a production repair: the dominant measured tail is after native return at the Python observer boundary, while no repeatable Manager, metadata-lock, completion-notification or SSD-owner shift is established. The supported envelope stays four owners and all prior formal campaigns remain immutable. Physical cross-host cache/HA, independent etcd failure domains and native GDS are qualification blocked on missing hardware; final serving, RDMA and S3-dependent cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
-| S5 | Partial: the S5.1 release/interface audit is independently accepted at `38f8dbb2`. Official 0.31.0/0.5.21 installed ordinary-cache/restart and bounded native P/D model gates pass locally. The final wheel and intact H20 cohort are independently accepted for ordinary-cache GPU recovery and 900-second direct/kernel two-engine shared-Manager io_uring pressure gates with exact native outputs, bounded reservations and normal drain. Recovered original review records and missing reviewer raw files are explicitly documented below. Public lifecycle migration, immutable adapter/live-weight identity, cross-host TP fan-out and broader lifetime/deployment qualification remain open. |
+| S5 | Partial: the S5.1 release/interface audit is independently accepted at `38f8dbb2`. Official 0.31.0/0.5.21 installed ordinary-cache/restart and bounded native P/D model gates pass locally. The final wheel and intact H20 cohort are independently accepted for ordinary-cache GPU recovery and 900-second direct/kernel two-engine shared-Manager io_uring pressure gates with exact native outputs, bounded reservations and normal drain. Recovered original review records and missing reviewer raw files are explicitly documented below. Idle process-scoped vLLM external reset is independently accepted at `6d874384`. Public lifecycle migration, immutable adapter/live-weight identity, cross-host TP fan-out and broader lifetime/deployment qualification remain open. |
 | S6 | Partial: observations/limited choices exist; unified executed decisions remain open. |
 | S7 | Open: consumed retention/checkpoint compiler beyond recovery validation. |
 | S8 | Partial: existing wheel workflow; final images, artifact gates and publication remain open. |
@@ -1115,6 +1115,18 @@ start independently. **Owners:** engine adapters, existing native client owners
 and narrowly scoped upstream engine interfaces. Reference released LMCache
 integration contracts from [the adapter guide](adapters.md#lmcache-and-flexkv-reference).
 
+The dated records below retain their frozen cohorts. Current scope is summarized
+for the same five substages; a later scoped acceptance does not qualify an earlier
+or broader profile.
+
+| Substage | Current delivery | Remaining work |
+| --- | --- | --- |
+| S5.1 | Release/interface inventory independently accepted at `38f8dbb2`; official engine pins remain 0.31.0/0.5.21 | Track upstream interfaces separately from released support |
+| S5.2 | Scoped ordinary dense cache/restart and shared-Manager pressure accepted; see S5.5 evidence | Broader model/topology and lifetime profiles remain unqualified |
+| S5.3 | Idle vLLM external reset independently accepted at `6d874384` | Public SGLang lifecycle, immutable adapter/live-weight identity and native hybrid-state contracts remain open |
+| S5.4 | Official native P/D cutover implemented with bounded model checks | Independent native fault, transfer cancellation, delayed-ACK and page-reuse qualification depend on S3 |
+| S5.5 | Same-host dense TP=1/PP=1 eager DRAM/io_uring deployment and direct/kernel pressure scoped acceptance | Cross-host TP query coordination is missing code; physical rank/container, isolation and broader deployment gates remain open |
+
 ### S5.1 — Release and interface audit
 
 **2026-10-06 upgrade: vLLM 0.31.0 / SGLang 0.5.21 implemented; independent acceptance open.**
@@ -1389,7 +1401,7 @@ Do not delete consumed safety behavior based on these proposals.
 - Replace private enqueue/abort/release and decode-ready Hooks with explicit
   lifecycle contracts. Keep telemetry out of ownership transitions and model
   computation in the engine. Incorporate generation checks from S3.
-- **Explicit vLLM external reset implemented (2026-10-08; qualification pending):**
+- **Explicit vLLM external reset independently accepted (2026-10-08):**
   the released `reset_cache()` callback refuses every tracked request, source
   query, destination load and publication owner. Once idle, it assigns a fresh
   prefix-key generation; Rust transforms the native hash batch and the scheduler
@@ -1400,6 +1412,21 @@ Do not delete consumed safety behavior based on these proposals.
   persist an invalidation across restart or make weight changes that bypass the
   callback safe. SGLang's ordinary flush retains external reuse; its skipped-flush
   weight updates still require a public consumed lifecycle contract.
+  The reviewed production commit is `6d874384`; the complete CUDA 13 wheel is
+  `605ec4c0…`. Independent source-only tests pass 296 cases with one skip.
+  On one H20 with official vLLM 0.31.0, dense Qwen3-8B, TP=1/PP=1 eager and
+  `direct`, DRAM and overlay io_uring SSD reset gates both pass. Old-generation
+  load is zero; newly saved state restores 113,246,208 bytes after an HBM-only
+  reset, including the same physical io_uring read in SSD. All eight installed
+  gate services exit zero without forced cleanup. Standard model correctness
+  passes six tests with one dense-model hybrid-only skip, and its 12 cache
+  outputs match native controls. The standard Manager audit records cached exit
+  zero and closed process group/socket, but not every possible force-signal
+  attempt; this does not prove S3 physical DMA termination. All 163 independent
+  frozen inputs and installed package RECORD files stay unchanged; the parent
+  376-file evidence manifest passes. Final scoped review:
+  `/root/orbitkv-artifacts/s5-external-reset-20261008/reviewer/FINAL-REVIEW.md`.
+  This closes only the idle reset contract, not S5.3 or the whole S5 stage.
 - **Implemented support boundary:** both adapters reject dynamic LoRA.
   **Implementation open:** immutable per-adapter reuse and live-weight invalidation.
   Preserve cache salt, computation identity, multimodal inputs and representation
