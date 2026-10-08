@@ -705,6 +705,8 @@ def main(argv: list[str] | None = None) -> None:
                         ssd_before = (
                             metrics(f"http://127.0.0.1:{http}") if args.tier == "ssd" else {}
                         )
+                        if args.tier == "ssd":
+                            write_json(args.output / f"{prefix}-ssd-before.json", ssd_before)
                         before = process_usage(manager.pid)
                         cohort_cpu = time.process_time_ns()
                         cohort_started = time.perf_counter_ns()
@@ -764,10 +766,13 @@ def main(argv: list[str] | None = None) -> None:
                         ssd_observed = {}
                         if args.tier == "ssd":
                             observed = metrics(f"http://127.0.0.1:{http}")
+                            write_json(args.output / f"{prefix}-ssd-after.json", observed)
                             for name in (
                                 "orbitkv_ssd_prefetch_bytes_total",
                                 "orbitkv_ssd_prefetch_duration_seconds_count",
+                                "orbitkv_ssd_prefetch_duration_seconds_sum",
                                 "orbitkv_ssd_prefetch_failures_total",
+                                "orbitkv_ssd_uring_read_operations_total",
                             ):
                                 ssd_observed[name] = observed.get(name, 0) - ssd_before.get(name, 0)
                             if ssd_observed["orbitkv_ssd_prefetch_bytes_total"] != expected_bytes:
@@ -776,6 +781,8 @@ def main(argv: list[str] | None = None) -> None:
                                 )
                             if ssd_observed["orbitkv_ssd_prefetch_duration_seconds_count"] <= 0:
                                 raise AssertionError("SSD batch completion evidence is missing")
+                            if ssd_observed["orbitkv_ssd_uring_read_operations_total"] <= 0:
+                                raise AssertionError("Queued io_uring READV evidence is missing")
                             if ssd_observed["orbitkv_ssd_prefetch_failures_total"]:
                                 raise AssertionError(f"SSD reads failed: {ssd_observed}")
                         key = {

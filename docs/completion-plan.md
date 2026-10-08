@@ -1029,6 +1029,28 @@ layer hooks. The current contracts live in [transport](transport.md) and
   final handoff stay outside Git at
   `/root/orbitkv-artifacts/s5-ssd-host-batching-20261007/`; see
   [SSD performance](ssd-performance.md).
+- **Bounded KDA/physical-read follow-up evaluated (2026-10-08): both candidates
+  rejected; measurement support implemented, independent review open.** CPU
+  descriptor reuse passes all native byte controls but a grid-stride H2D median
+  regresses 5.98%, beyond the frozen 5% guard; later shape/pair runs are not
+  started. Adjacent same-batch READV merging reduces 12-block requests from 12
+  to one and 34-block requests from 34 to three, but the first matched small
+  medians regress 10.02% and 24.61%. Its qualification stops immediately.
+  Exact-byte/short-read/lease gates and 14 SSD integration tests pass, which
+  does not authorize performance promotion. Both candidate implementations
+  are removed from production and archived outside Git; CUDA sources/defaults
+  and the accepted scalar read path stay unchanged.
+  The final Manager counts queued READV SQEs separately from blocks and NVMe
+  commands; the communication harness retains before/after stage snapshots
+  outside its timer. A distinct four-cell cost-enabled diagnostic completes
+  without promotion: the 108 MiB baseline averages about 20.3 ms SSD preparation
+  and 4.8 ms direct H2D; instrumentation overhead is unqualified and overlapping
+  stage means cannot decompose percentile latency. Next inspect existing SSD
+  preparation/read parallelism and completion scheduling before another candidate;
+  the S5.5 startup blocker remains unresolved. Contracts, frozen wheels, failed
+  gates, rejected sources and byte controls are archived at
+  `/root/orbitkv-artifacts/s4-readv-kda-20261008/`, mirrored at
+  `/workspace/orbitkv-perf-20261008/`. This closes neither S4 nor S5.
 - Profile actual descriptor shapes and inference contention before further
   mapped-host copy changes. Consider SSD-staging scatter or encoding/checksum
   fusion only after their consumed route exposes a material dispatch/HBM cost.

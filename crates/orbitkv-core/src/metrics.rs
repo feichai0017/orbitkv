@@ -132,6 +132,7 @@ pub(crate) struct CoreMetrics {
     pub ssd_write_admission_skips: Counter<u64>,
     pub ssd_write_inflight: UpDownCounter<i64>,
 
+    pub ssd_uring_read_operations: Counter<u64>,
     pub ssd_prefetch_bytes: Counter<u64>,
     pub ssd_prefetch_duration_seconds: Histogram<f64>,
     pub ssd_prefetch_success: Counter<u64>,
@@ -593,6 +594,10 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .with_description("Current in-flight SSD write operations")
                 .build(),
 
+            ssd_uring_read_operations: meter
+                .u64_counter("orbitkv_ssd_uring_read_operations")
+                .with_description("Successfully queued io_uring READV SQEs; not physical NVMe commands")
+                .build(),
             ssd_prefetch_bytes: meter
                 .u64_counter("orbitkv_ssd_prefetch_bytes")
                 .with_unit("bytes")

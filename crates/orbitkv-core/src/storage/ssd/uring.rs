@@ -158,6 +158,7 @@ impl UringShard {
                 // This measures host submission through observed CQE, including
                 // SQ batching; it is not an isolated device service timer.
                 ctx.observation.submitted();
+                let reading = matches!(ctx.io_type, IoType::Readv);
                 let data = Box::into_raw(Box::new(ctx)) as u64;
                 let sqe = sqe.user_data(data);
                 // SAFETY: The Box<IoCtx> is leaked via into_raw and recovered in the
@@ -173,6 +174,11 @@ impl UringShard {
                         .complete
                         .send(Err(io::Error::other("submission queue full")));
                     continue;
+                }
+                if reading {
+                    crate::metrics::core_metrics()
+                        .ssd_uring_read_operations
+                        .add(1, &[]);
                 }
                 inflight += 1;
             }

@@ -84,6 +84,45 @@ functional gates use `direct`, dense Qwen3-8B TP=1/PP=1 eager, with cache files
 on the `/workspace` overlay; they do not measure NVMe throughput or close
 sustained contention, graphs, H20, native P/D faults or S3 crash reclamation.
 
+## Physical READV merging evaluation (2026-10-08)
+
+**Rejected; production retains the accepted scalar reader.** A bounded candidate
+merged only already queued same-batch, same-file, logically and physically adjacent
+leased extents, with no padding/gap reads. Its caps were 16 blocks, 32 MiB and
+1,024 iovecs; logical in-flight credits and source ownership through CQE drain
+were unchanged. A short READV failed every member of its group. The real
+short-read/byte/lease gate and all 14 native SSD lifecycle tests passed.
+
+Two complete CUDA 13 wheels shared the same READV counter, client extension,
+TENT libraries, direct backend and harness. On A100 with ext4/NVMe, the first
+matched pair used 20 warm-ups and 100 measured restores for each small shape.
+Twelve 4 KiB blocks used one queued READV instead of 12, but median restore
+latency rose 293.86 → 323.31 µs. Thirty-four blocks used three instead of 34,
+but latency rose 533.68 → 665.01 µs. Both exceed the predeclared 5% guard;
+no later qualification cells or installed-model promotion gates started.
+These first-pair results reject this candidate; they are not a repeated system
+regression estimate. All failed samples and candidate source are retained.
+
+A separate four-cell diagnostic enables existing bounded cost observations,
+with five warm-ups and 30 measured operations per shape. Every payload and
+ownership drain passes. The 108 MiB scalar baseline averages 20.3 ms from SSD
+prefetch enqueue through host materialization and 4.8 ms in direct H2D service.
+The merged candidate supplies no demonstrated advantage. These overlapping
+host boundaries locate further investigation; instrumentation overhead is
+unqualified, and their means cannot be added to decompose a tail percentile.
+The current read owner distributes scalar I/O over 15 read queues for one file;
+merging reduces that active fanout. Lost parallelism and extra preparation work
+remain hypotheses until bounded attribution separates them.
+
+The production counter `orbitkv_ssd_uring_read_operations_total` distinguishes
+queued READV SQEs from reader batches and physical device commands.
+`benches.communication` persists existing stage snapshots before/after each
+cohort, outside the measured request loop, and requires positive READV evidence
+for new SSD experiments. It retains SSD prefetch duration alongside equal
+stored/GPU bytes. Full contract, source, wheel hashes, rejection decisions,
+raw timings and controls: `/root/orbitkv-artifacts/s4-readv-kda-20261008/`,
+with the A100 mirror at `/workspace/orbitkv-perf-20261008/`.
+
 ## Shared-Manager mixed-pressure qualification
 
 `benches.shared_manager_pressure` runs installed official vLLM 0.31.0 and

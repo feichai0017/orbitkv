@@ -474,6 +474,11 @@ The setting remains configurable with `--metric-hll-bucket-bits`.
   durations does not measure wall-clock flush time.
 - **orbitkv_ssd_prefetch_bytes_total** (Counter) - Successfully read and
   validated SSD bytes, including reads an engine may not subsequently consume.
+- **orbitkv_ssd_uring_read_operations_total** (Counter) - READV SQEs successfully
+  queued by the existing io_uring shards. Counts software I/O requests, including
+  ones that later fail; it does not count logical blocks, reader batches or NVMe
+  device commands. cuFile reads are separate. Compare with stored read bytes,
+  failures and GPU load bytes before interpreting a reduction.
 - **orbitkv_ssd_prefetch_success_total** (Counter) - Successful SSD prefetches
 - **orbitkv_ssd_prefetch_failures_total** (Counter) - Failed SSD prefetches
 - **orbitkv_ssd_prefetch_duration_seconds** (Histogram) - Prefix prefetch or

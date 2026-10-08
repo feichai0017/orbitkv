@@ -117,6 +117,25 @@ Independent reproduction, sustained inference contention, CUDA graph execution,
 H20, native transfer faults and S3-dependent reclamation remain unqualified.
 These results do not close S4 or establish TTFT/ITL, throughput or NIC isolation.
 
+## Bounded CPU descriptor reuse follow-up (2026-10-08)
+
+**Rejected; no production CUDA or backend change.** A KDA candidate reused the
+worker's pageable CPU packing Vec, retaining at most 96 KiB. Device scratch was
+already reused; shader, arguments and direct default were identical. The first
+A100 pair checks 34 shape/direction rows per executable, with five warm-ups and
+100 samples per backend/row, including exact output, source and guard bytes.
+Every byte control passes. Grid-stride H2D median rises 0.74407 → 0.78856 ms
+(5.98%), beyond the frozen 5% guard. The workflow stops before later model-shape
+or independent pairs and installed-model gates. This is a rejection under the
+contract, not proof that Vec reuse always causes that regression.
+
+The candidate is removed from production; source and all 13,600 kernel/DMA timing
+values remain at `/root/orbitkv-artifacts/s4-readv-kda-20261008/`, mirrored at
+`/workspace/orbitkv-perf-20261008/`. The distinct SSD stage diagnostic in
+[SSD performance](ssd-performance.md) points the next investigation at existing
+SSD preparation and waiting. Rejected attempts do not change kernel defaults
+or establish an inference speedup.
+
 ## Consumed follow-up requirements
 
 The next changes remain in S4 of the completion plan. Use the engine's actual
