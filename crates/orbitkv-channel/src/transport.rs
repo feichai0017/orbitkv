@@ -5,6 +5,7 @@ use iceoryx2::active_request::ActiveRequest;
 use iceoryx2::port::listener::{Listener, ListenerWaitError};
 use iceoryx2::port::notifier::Notifier;
 use iceoryx2::prelude::*;
+use iceoryx2::service::{messaging_pattern::MessagingPattern, service_hash::ServiceHash};
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use thiserror::Error;
 
@@ -67,6 +68,31 @@ pub enum TransportError {
     Protocol(#[from] ProtocolError),
 }
 
+fn service_open_error(
+    node: &iceoryx2::node::Node<ThreadSafeIpcService>,
+    name: &ServiceName,
+    pattern: MessagingPattern,
+    error: impl std::fmt::Display,
+) -> TransportError {
+    let config = &node.config().global;
+    let hash = ServiceHash::new::<
+        <ThreadSafeIpcService as iceoryx2::service::Service>::ServiceNameHasher,
+    >(name, pattern);
+    let path = std::path::PathBuf::from(config.service_dir().as_str()).join(format!(
+        "{}{}{}",
+        config.prefix, hash, config.service.static_config_storage_suffix
+    ));
+    let metadata = std::fs::metadata(&path).map(|metadata| {
+        use std::os::unix::fs::MetadataExt;
+        (metadata.dev(), metadata.ino(), metadata.len())
+    });
+    let mount_namespace = std::fs::read_link("/proc/self/ns/mnt");
+    TransportError::Service(format!(
+        "{error}; name={name:?} pattern={pattern:?} pid={} static_config={path:?} metadata={metadata:?} mount_namespace={mount_namespace:?}",
+        std::process::id()
+    ))
+}
+
 pub struct TransportClient {
     client: IpcClient,
     request_notifier: Notifier<ThreadSafeIpcService>,
@@ -88,7 +114,9 @@ impl TransportClient {
             .service_builder(&name)
             .request_response::<WireMessage, WireMessage>()
             .open()
-            .map_err(|error| TransportError::Service(error.to_string()))?;
+            .map_err(|error| {
+                service_open_error(&node, &name, MessagingPattern::RequestResponse, error)
+            })?;
         let client = service
             .client_builder()
             .create()
@@ -99,11 +127,13 @@ impl TransportClient {
             .map_err(|error: iceoryx2::service::service_name::ServiceNameError| {
                 TransportError::InvalidServiceName(error.to_string())
             })?;
-        let request_events = node
-            .service_builder(&request_name)
-            .event()
-            .open()
-            .map_err(|error| TransportError::Service(error.to_string()))?;
+        let request_events =
+            node.service_builder(&request_name)
+                .event()
+                .open()
+                .map_err(|error| {
+                    service_open_error(&node, &request_name, MessagingPattern::Event, error)
+                })?;
         let request_notifier = request_events
             .notifier_builder()
             .create()

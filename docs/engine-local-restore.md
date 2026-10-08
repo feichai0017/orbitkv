@@ -81,6 +81,27 @@ Python supplies framework callbacks, tensor objects, layouts, and stream
 handles. Rust owns grant state, submission, waiting, and reclamation; blocking
 native calls release the GIL.
 
+## DMA and mapped-host copy kernels
+
+Both raw host-copy backends move bytes from pinned DRAM directly into the final
+engine KV allocation. The `direct` backend submits CUDA memcpy operations for
+coalesced ranges or constant-pitch rows, normally serviced by GPU copy engines.
+The `kernel` backend runs SM threads that read the GPU-visible mapping of host
+DRAM and store into those destination pages. A mapped host pointer remains backed
+by DRAM; obtaining its device address does not allocate a second payload in HBM.
+See [CUDA mapped host memory](https://docs.nvidia.com/cuda/archive/13.0.3/cuda-c-best-practices-guide/index.html#zero-copy).
+
+The kernel uploads a small descriptor table containing destination, source and
+length (24 bytes per fragment), not a full KV staging image. Both backends still
+move payload over the host/device interconnect. Kernel submission can reduce
+residual fragmented-copy overhead, but consumes SM resources also used by model
+execution. Compare against the actual coalescing DMA backend under serving load;
+a kernel microbenchmark alone cannot establish an application improvement.
+
+This raw host path is separate from SSD cuFile staging/scatter and storage
+encoding, which have their own buffers, transformations and qualification gates.
+CUDA copy code remains in the maintained standalone `transfer/kernel.cu` file.
+
 ## Resource ownership
 
 | Resource | Owner | Condition for release or reuse |

@@ -1370,9 +1370,29 @@ trace wrapper requires forced cleanup and is retained as an invalid diagnostic.
 Do not inherit a sustained tail/fairness or backend-advantage claim from any of
 these short cells. The frozen task, KDA rejected candidate and complete failure
 archive are at `/root/orbitkv-artifacts/s5-shared-pressure-kda-20261007/`, mirrored
-under the matching `/workspace/` directory on A100. The next S5.5 action is to
-reproduce and fix startup discovery, independently review it, then freeze a new
-sustained cohort. Existing S3/public-lifecycle dependencies remain unchanged.
+under the matching `/workspace/` directory on A100. Existing S3/public-lifecycle
+dependencies remain unchanged.
+
+**IPC diagnostics implemented; repair and qualification open (2026-10-08):**
+failed request-service and `/requests` event discovery now report the actual
+service name, messaging pattern, effective static-config path, file metadata and
+mount namespace. This executes only after a failed open; normal submission and
+service ownership are unchanged. The channel gate passes 62 unit tests (one
+private child fixture ignored at top level), six completion/ownership tests and
+one real process round-trip; targeted Clippy and format checks pass.
+
+A single predeclared A100 file/lock-lifetime diagnostic reuses the existing
+`8acd6a06…` installed wheel, not these new error messages. Both official engines
+start and 87 requests pass exact native input/text/prompt/completion-token
+oracles during a 30.506-second window. All eight services exit zero without forced
+cleanup; the recorded request/event service files are deleted after Manager
+endpoint stop. It does not reproduce the discovery failure or establish a repair.
+The complete 262-file artifact manifest is verified locally at
+`/root/orbitkv-artifacts/s5-ipc-startup-20261008/a100/diagnostic-v7/` and on A100 at
+`/workspace/orbitkv-s5-ipc-startup-20261008/diagnostic-v7/`. The next S5.5 action is
+to freeze and deploy the failure-context build, reproduce startup discovery and
+establish its cause before a production repair and independent review, then
+freeze a new sustained cohort. No short diagnostic upgrades the support envelope.
 
 This delivers one same-host deployment profile, not all of S5.5. Independent review,
 sustained restore pressure/fairness, isolated containers,

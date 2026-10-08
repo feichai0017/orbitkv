@@ -150,6 +150,16 @@ The process channel admits 64 client ports. A cache client uses a control port
 and a second port after its first Publish. Count scheduler and worker clients
 when sizing a deployment; this is not a limit of 64 engine replicas.
 
+A successful UDS bootstrap does not prove iceoryx2 service discovery. On an
+iceoryx2 open failure, the native client reports the exact service name, messaging
+pattern, effective static-config path, file metadata observation and mount
+namespace. `RequestResponseOpenError::DoesNotExist` identifies the request service;
+`EventOpenError::DoesNotExist` identifies its `/requests` doorbell. Compare the
+reported name with the live Manager incarnation and verify both processes see the
+same discovery directory. The metadata snapshot is taken after the failed open,
+so a present file does not prove it existed during lookup. Do not recreate a
+service from a client or remove discovery files belonging to a live Manager.
+
 For separate cache budgets or incompatible runtime environments, multiple
 Managers can run on one host. Assign distinct bootstrap sockets, HTTP endpoints,
 peer endpoints when enabled, and SSD files. Never point two Managers at the same
