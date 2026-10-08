@@ -128,6 +128,18 @@ def find_cache_manager_binary() -> str | None:
     return None
 
 
+def manager_pythonpath(
+    configured_paths: list[str],
+    site_packages: list[str],
+    runtime_python_paths: tuple[str, ...] | None,
+) -> tuple[str, ...]:
+    if runtime_python_paths is None:
+        roots = [str(PYTHON_ROOT), *configured_paths]
+    else:
+        roots = list(runtime_python_paths)
+    return tuple(dict.fromkeys([*roots, *site_packages]))
+
+
 def wait_for_server_ready(
     bootstrap_socket: str,
     timeout: float = SERVER_STARTUP_TIMEOUT,
@@ -387,6 +399,7 @@ class CacheManagerProcess:
         query_instance_budget: str | None = None,
         log_path: Path | None = None,
         extra_args: tuple[str, ...] = (),
+        runtime_python_paths: tuple[str, ...] | None = None,
     ):
         self.port = port
         self.pool_size = pool_size
@@ -403,6 +416,8 @@ class CacheManagerProcess:
         self.query_instance_budget = query_instance_budget
         self._configured_log_path = log_path
         self.extra_args = extra_args
+        self.runtime_python_paths = runtime_python_paths
+        self.pythonpath: tuple[str, ...] | None = None
         self.process: subprocess.Popen | None = None
         self.command: tuple[str, ...] | None = None
         self._binary_path = find_cache_manager_binary()
@@ -423,7 +438,6 @@ class CacheManagerProcess:
             env["LD_LIBRARY_PATH"] = f"{libdir}:{env.get('LD_LIBRARY_PATH', '')}"
 
         # Set PYTHONPATH to include python package and venv site-packages
-        python_dir = PYTHON_ROOT
         configured_paths = [path for path in env.get("PYTHONPATH", "").split(":") if path]
         site_packages = [
             path
@@ -435,9 +449,12 @@ class CacheManagerProcess:
             )
             if path
         ]
-        env["PYTHONPATH"] = ":".join(
-            dict.fromkeys([str(python_dir), *configured_paths, *site_packages])
+        self.pythonpath = manager_pythonpath(
+            configured_paths,
+            site_packages,
+            self.runtime_python_paths,
         )
+        env["PYTHONPATH"] = os.pathsep.join(self.pythonpath)
 
         cmd = [
             self._binary_path,

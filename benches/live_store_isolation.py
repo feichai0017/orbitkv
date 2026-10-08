@@ -10,7 +10,6 @@ import math
 import os
 import shutil
 import subprocess
-import threading
 import time
 import uuid
 from contextlib import ExitStack
@@ -39,6 +38,7 @@ from .live_store_measurements import (
     _process_sample,
     _summary,
 )
+from .observer_polling import OBSERVER_PROTOCOL, ObserverSession
 from .scoped_metadata import _etcd_revision
 
 PRESSURE_TEST = "cluster::inventory::tests::pressure::external_metadata_only_pressure_source"
@@ -105,9 +105,7 @@ def _collect_diagnostic_events(output, samples, medium):
         "publish_storage_complete",
     }
     if medium == "ssd":
-        save_required.update(
-            {"publish_ssd_enqueue", "publish_ssd_dequeue", "publish_ssd_complete"}
-        )
+        save_required.update({"publish_ssd_enqueue", "publish_ssd_dequeue", "publish_ssd_complete"})
     save_operations = []
     query_operations = []
     for sample in samples:
@@ -222,6 +220,10 @@ def run(
     pressure_cadence_ms: int,
     observer_sample_ms: int,
     diagnostic_timeline_limit: int,
+    observer_mode: str,
+    observer_phase_offset_ms: float,
+    foreground_phase_offset_ms: float,
+    observer_start_lead_ms: int,
 ):
     if diagnostic_timeline_limit:
         os.environ["ORBITKV_TRACE_TRANSFERS"] = "1"
@@ -230,6 +232,7 @@ def run(
         raise ValueError("diagnostic timeline requires --diagnostic-timeline-limit")
     import torch
 
+    import orbitkv
     import orbitkv.orbitkv as native
     from orbitkv import CacheManagerClient
     from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
@@ -239,11 +242,18 @@ def run(
     pages, block_bytes = 8, 4096
     payload_bytes = pages * block_bytes
     identity = f"s2.10:isolation:{medium}:{seed}"
+    installed_python_path = str(Path(native.__file__).resolve().parents[1])
+    manager_python_paths = (installed_python_path,)
     local_namespace, pressure_namespace = _discover_storage_namespaces(
-        output, [identity, "s2.10:isolation:metadata-only-pressure:v1"], pages, block_bytes
+        output,
+        [identity, "s2.10:isolation:metadata-only-pressure:v1"],
+        pages,
+        block_bytes,
+        manager_python_paths=manager_python_paths,
     )
     assert local_namespace != pressure_namespace
     pressure_rounds = math.ceil((warmup_rounds + samples + 1) * cadence_ms / pressure_cadence_ms)
+    observer_poll_count = math.ceil((warmup_rounds + samples + 1) * cadence_ms / observer_sample_ms)
     cluster = f"s210-isolation-{uuid.uuid4().hex[:12]}"
     result = {
         "measurement_contract": (
@@ -266,6 +276,12 @@ def run(
         "pressure_rounds": pressure_rounds,
         "pressure_cadence_ms": pressure_cadence_ms,
         "observer_sample_ms": observer_sample_ms,
+        "observer_mode": observer_mode,
+        "observer_contract": OBSERVER_PROTOCOL,
+        "observer_poll_count": observer_poll_count,
+        "observer_phase_offset_ms": observer_phase_offset_ms,
+        "foreground_phase_offset_ms": foreground_phase_offset_ms,
+        "observer_start_lead_ms": observer_start_lead_ms,
         "order_index": order_index,
         "budgets": {
             "dram_bytes": 67108864,
@@ -279,6 +295,8 @@ def run(
             "manager_save_submit_ms": "CacheManagerClient.save call only",
             "save_to_query_ready_ms": "save call start through local QueryReady",
             "local_query_ms": "query/prefetch call through QueryReady; excludes restore",
+            "save_post_return_ms": "last native save returned_mono_ns through Python outer timer",
+            "query_post_return_ms": "last native query returned_mono_ns through Python outer timer",
             "destination_prepare_ms": "destination zero through CUDA synchronization",
             "restore_complete_ms": "start_restore through native wait_restore completion",
             "gpu_consumable_ms": "start_restore through final CUDA synchronization",
@@ -286,8 +304,13 @@ def run(
         "ssd_read_counter": "orbitkv_ssd_prefetch_bytes_total (io_uring reader completed bytes)",
         "scope": (
             "same-host A100, one full foreground Manager plus one test-owned "
-            "production inventory-stream source, forced TCP"
+            "production inventory-stream source and a fixed-location observer, forced TCP"
         ),
+        "python_runtime": {
+            "client_package": str(Path(orbitkv.__file__).resolve()),
+            "client_extension": str(Path(native.__file__).resolve()),
+            "manager_python_paths": list(manager_python_paths),
+        },
         "diagnostic": {
             "enabled": bool(diagnostic_timeline_limit),
             "timeline_limit": diagnostic_timeline_limit,
@@ -343,6 +366,7 @@ def run(
                 "2",
                 *(() if ssd_enabled else ("--enable-prometheus",)),
             ),
+            runtime_python_paths=manager_python_paths,
         )
         stack.callback(manager.stop)
         assert manager.start(), manager.read_logs()
@@ -391,7 +415,6 @@ def run(
         )
         assert pressure.poll() is None, (output / "pressure-source.log").read_text()
         ready = json.loads(ready_path.read_text())
-        result["clock_domain"] = _clock_domain([manager.process.pid, pressure.pid])
         owner = ready["owner"]["incarnation"]
         _until(
             lambda: (
@@ -411,62 +434,39 @@ def run(
             "scope_digest": metadata["stream"]["scope_digest"],
         }
         result["pressure_binding"] = ready
-        sampler_stop = threading.Event()
-        sampler_errors = []
         initial_view = _owner_status(manager, owner)["view_id"]
-
-        def sample_observer():
-            with (output / "observer-samples.jsonl").open("w", buffering=1) as samples_file:
-                while not sampler_stop.is_set():
-                    started_ns = time.monotonic_ns()
-                    cpu_started_ns = time.thread_time_ns()
-                    try:
-                        row = _owner_status(manager, owner)
-                        assert row and row["fresh"] and row["view_id"] == initial_view, row
-                        ended_ns = time.monotonic_ns()
-                        samples_file.write(
-                            json.dumps(
-                                {
-                                    "poll_start_mono_ns": started_ns,
-                                    "poll_end_mono_ns": ended_ns,
-                                    "sampler_cpu_ns": time.thread_time_ns() - cpu_started_ns,
-                                    "owner": row,
-                                }
-                            )
-                            + "\n"
-                        )
-                    except BaseException as error:
-                        sampler_errors.append(repr(error))
-                        sampler_stop.set()
-                    sampler_stop.wait(
-                        max(0, observer_sample_ms / 1000 - (time.monotonic_ns() - started_ns) / 1e9)
-                    )
-
-        sampler = threading.Thread(
-            target=sample_observer, name="inventory-observer-sampler", daemon=True
+        observer = ObserverSession(
+            mode=observer_mode,
+            endpoint=f"http://127.0.0.1:{manager.http_port}",
+            incarnation=owner,
+            expected_view=initial_view,
+            output=output,
+            cadence_ns=observer_sample_ms * 1_000_000,
+            poll_count=observer_poll_count,
         )
-        sampler.start()
+        stack.callback(observer.abort)
+        observer_ready = observer.launch()
+        result["observer_ready"] = observer_ready
+        observed_pids = [os.getpid(), manager.process.pid, pressure.pid]
+        if observer.pid is not None:
+            observed_pids.append(observer.pid)
+        result["clock_domain"] = _clock_domain(
+            [manager.process.pid, pressure.pid, *([observer.pid] if observer.pid else [])]
+        )
 
-        def stop_sampler():
-            sampler_stop.set()
-            sampler.join(timeout=6)
-            assert not sampler.is_alive()
-
-        stack.callback(stop_sampler)
-
-        latencies = {
-            name: []
-            for name in (
-                "payload_prepare_ms",
-                "cleanup_ms",
-                "manager_save_submit_ms",
-                "save_to_query_ready_ms",
-                "local_query_ms",
-                "destination_prepare_ms",
-                "restore_complete_ms",
-                "gpu_consumable_ms",
-            )
-        }
+        latency_names = [
+            "payload_prepare_ms",
+            "cleanup_ms",
+            "manager_save_submit_ms",
+            "save_to_query_ready_ms",
+            "local_query_ms",
+            "destination_prepare_ms",
+            "restore_complete_ms",
+            "gpu_consumable_ms",
+        ]
+        if diagnostic_timeline_limit:
+            latency_names.extend(("save_post_return_ms", "query_post_return_ms"))
+        latencies = {name: [] for name in latency_names}
         ssd_written = 0
         payload_oracle = hashlib.sha256()
         key_oracle = hashlib.sha256()
@@ -474,7 +474,13 @@ def run(
         stack.callback(resource_samples.close)
         device = resolve_device_id()
 
-        def foreground_round(round_id, measured, scheduled_seconds, actual_seconds):
+        def foreground_round(
+            round_id,
+            measured,
+            scheduled_seconds,
+            actual_seconds,
+            scheduled_mono_ns,
+        ):
             nonlocal ssd_written
             round_start_mono_ns = time.monotonic_ns()
             if round_id > 0:
@@ -583,6 +589,8 @@ def run(
                 "measured": measured,
                 "scheduled_seconds": scheduled_seconds,
                 "actual_seconds": actual_seconds,
+                "scheduled_foreground_start_mono_ns": scheduled_mono_ns,
+                "foreground_start_deviation_ns": round_start_mono_ns - scheduled_mono_ns,
                 "ssd_read_bytes": read_delta,
                 "keys_sha256": hashlib.sha256(b"".join(hashes)).hexdigest(),
                 "payload_prepare_ms": payload_prepare_ms,
@@ -598,8 +606,16 @@ def run(
             if diagnostic_timeline_limit:
                 assert save_started <= save_channel["submitted_mono_ns"]
                 assert save_channel["returned_mono_ns"] <= save_completed
+                assert query_channels
+                assert query_channels[-1]["returned_mono_ns"] <= query_completed
                 sample["save_channel"] = save_channel
                 sample["query_channels"] = query_channels
+                sample["save_post_return_ms"] = (
+                    save_completed - save_channel["returned_mono_ns"]
+                ) / 1_000_000
+                sample["query_post_return_ms"] = (
+                    query_completed - query_channels[-1]["returned_mono_ns"]
+                ) / 1_000_000
             if measured:
                 for name in latencies:
                     latencies[name].append(sample[name])
@@ -607,27 +623,46 @@ def run(
                 key_oracle.update(bytes.fromhex(sample["keys_sha256"]))
             raw.write(json.dumps(sample) + "\n")
 
+        epoch_mono_ns = time.monotonic_ns() + observer_start_lead_ms * 1_000_000
+        observer_start = observer.start(
+            epoch_mono_ns=epoch_mono_ns,
+            observer_phase_offset_ns=round(observer_phase_offset_ms * 1_000_000),
+            foreground_phase_offset_ns=round(foreground_phase_offset_ms * 1_000_000),
+        )
+        result["observer_start"] = observer_start
         go.touch()
         started_path = output / "pressure-started.json"
         _until(lambda: started_path.exists(), [manager])
         result["pressure_start"] = json.loads(started_path.read_text())
-        started = time.monotonic()
+        foreground_epoch_ns = epoch_mono_ns + observer_start["foreground_phase_offset_ns"]
+        result["schedule"] = {
+            "epoch_mono_ns": epoch_mono_ns,
+            "observer_first_scheduled_mono_ns": epoch_mono_ns
+            + observer_start["observer_phase_offset_ns"],
+            "foreground_first_scheduled_mono_ns": foreground_epoch_ns,
+            "missed_deadline_policy": observer_start["missed_deadline_policy"],
+        }
         result["foreground_started_unix_ns"] = time.time_ns()
         before_revision = _etcd_revision(endpoint, f"/orbitkv/v2/{cluster}/")
         measured_started = None
         for round_id in range(warmup_rounds + samples):
             scheduled = round_id * cadence_ms / 1000
-            remaining = started + scheduled - time.monotonic()
-            if remaining > 0:
-                time.sleep(remaining)
+            scheduled_mono_ns = foreground_epoch_ns + round_id * cadence_ms * 1_000_000
+            remaining_ns = scheduled_mono_ns - time.monotonic_ns()
+            if remaining_ns > 0:
+                time.sleep(remaining_ns / 1_000_000_000)
             if round_id == warmup_rounds:
-                process_before = _process_sample([manager.process.pid, pressure.pid])
+                process_before = _process_sample(observed_pids)
                 metadata_before = _metadata(manager)
                 measured_started = time.monotonic()
             assert pressure.poll() is None, (output / "pressure-source.log").read_text()
-            assert not sampler_errors, sampler_errors
+            observer.check()
             foreground_round(
-                round_id, round_id >= warmup_rounds, scheduled, time.monotonic() - started
+                round_id,
+                round_id >= warmup_rounds,
+                scheduled,
+                (time.monotonic_ns() - foreground_epoch_ns) / 1_000_000_000,
+                scheduled_mono_ns,
             )
             resource_metadata = _metadata(manager)
             assert resource_metadata["index"]["accounted_bytes"] <= result["budgets"]["index_bytes"]
@@ -638,17 +673,18 @@ def run(
                 json.dumps(
                     {
                         "round": round_id,
-                        "process": _process_sample([manager.process.pid, pressure.pid]),
+                        "process": _process_sample(observed_pids),
                         "metadata": resource_metadata,
                     }
                 )
                 + "\n"
             )
-        remaining = started + (warmup_rounds + samples) * cadence_ms / 1000 - time.monotonic()
-        if remaining > 0:
-            time.sleep(remaining)
+        foreground_end_ns = foreground_epoch_ns + (warmup_rounds + samples) * cadence_ms * 1_000_000
+        remaining_ns = foreground_end_ns - time.monotonic_ns()
+        if remaining_ns > 0:
+            time.sleep(remaining_ns / 1_000_000_000)
         wall_seconds = time.monotonic() - measured_started
-        process_after = _process_sample([manager.process.pid, pressure.pid])
+        process_after = _process_sample(observed_pids)
         result_path = output / "pressure-source-result.json"
         _until(lambda: result_path.exists(), [manager])
         pressure_result = json.loads(result_path.read_text())
@@ -713,8 +749,7 @@ def run(
         result["etcd_revision_delta"] = after_revision - before_revision
         result["payload_oracle_sha256"] = payload_oracle.hexdigest()
         result["key_oracle_sha256"] = key_oracle.hexdigest()
-        stop_sampler()
-        assert not sampler_errors, sampler_errors
+        result["observer_exit"] = observer.finish()
         validation_error = None
         try:
             result["exposure"] = _pressure_exposure(
@@ -724,6 +759,7 @@ def run(
                 pressure_cadence_ms,
                 cadence_ms,
                 pressure_window_shift,
+                observer_sample_ms,
             )
         except AssertionError as error:
             validation_error = error
@@ -803,6 +839,14 @@ def main():
     parser.add_argument("--cadence-ms", type=int, default=1000)
     parser.add_argument("--pressure-cadence-ms", type=int, default=17)
     parser.add_argument("--observer-sample-ms", type=int, default=25)
+    parser.add_argument(
+        "--observer-mode",
+        choices=("in-process", "helper-process"),
+        default="in-process",
+    )
+    parser.add_argument("--observer-phase-offset-ms", type=float, default=0.0)
+    parser.add_argument("--foreground-phase-offset-ms", type=float, default=12.5)
+    parser.add_argument("--observer-start-lead-ms", type=int, default=500)
     parser.add_argument("--diagnostic-timeline-limit", type=int, default=0)
     parser.add_argument("--pressure-keys", type=int, default=2048)
     parser.add_argument("--pressure-active-keys", type=int, default=1536)
@@ -818,6 +862,10 @@ def main():
         parser.error("--order-index cannot be negative")
     if args.pressure_cadence_ms <= 0 or args.observer_sample_ms <= 0:
         parser.error("pressure and observer cadences must be positive")
+    if args.observer_phase_offset_ms < 0 or args.foreground_phase_offset_ms < 0:
+        parser.error("observer and foreground phase offsets cannot be negative")
+    if args.observer_start_lead_ms < 100:
+        parser.error("--observer-start-lead-ms must be at least 100")
     if not 0 <= args.diagnostic_timeline_limit <= 65_536:
         parser.error("diagnostic timeline limit must be between 0 and 65536")
     if args.pressure_active_keys <= args.pressure_window_shift:
@@ -849,6 +897,10 @@ def main():
             args.pressure_cadence_ms,
             args.observer_sample_ms,
             args.diagnostic_timeline_limit,
+            args.observer_mode,
+            args.observer_phase_offset_ms,
+            args.foreground_phase_offset_ms,
+            args.observer_start_lead_ms,
         )
     except BaseException as error:
         (args.output / "failure.txt").write_text(repr(error) + "\n")

@@ -216,7 +216,14 @@ def _hashes(medium, round_id, pages):
     ]
 
 
-def _discover_storage_namespaces(tmp_path, identities, pages, block_bytes):
+def _discover_storage_namespaces(
+    tmp_path,
+    identities,
+    pages,
+    block_bytes,
+    *,
+    manager_python_paths: tuple[str, ...] | None = None,
+):
     import torch
 
     from orbitkv import CacheManagerClient
@@ -229,6 +236,7 @@ def _discover_storage_namespaces(tmp_path, identities, pages, block_bytes):
         http_port=find_available_port(),
         bootstrap_socket=f"/tmp/orbitkv-s29-probe-{port}.sock",
         log_path=tmp_path / "namespace-probe-manager.log",
+        runtime_python_paths=manager_python_paths,
     )
     clients = []
     tensors = []
