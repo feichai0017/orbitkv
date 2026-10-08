@@ -13,5 +13,7 @@ extend-ignore-re = ['\b0x[0-9a-fA-F]+[uUlL]*\b', '`[0-9a-f]{7,40}`']
 consts = "consts"
 
 [default.extend-identifiers]
+# PyTorch tensor construction API.
+arange = "arange"
 # POSIX msghdr field: ancillary data length.
 msg_controllen = "msg_controllen"
