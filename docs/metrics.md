@@ -212,6 +212,17 @@ GDS counters apply only to cuFile operations and do not prove native GDS.
   counted for several owners. Use the pool metric for actual allocator occupancy.
 - **orbitkv_query_speculative_reserved_bytes** tracks the speculative share under
   the same lock; compare it with one quarter of the query budget.
+- **orbitkv_query_reserved_peak_bytes** retains the maximum concurrent conservative
+  reservation since this Manager's budget was created, including warm-up.
+- **orbitkv_query_instance_reserved_peak_bytes** retains the largest concurrent
+  reservation of any single instance over that same lifetime. It is neither the
+  sum of per-instance historical peaks nor a per-engine labelled series. Both
+  peaks are updated under the admission owner's existing lock, survive release
+  and unregister, and reset only with a new budget. Scrapes read atomic peaks
+  without acquiring the admission lock. Recording uses atomics, without emitting
+  request events or retaining instance labels.
+  They measure ownership charges, not physical allocator/HBM usage. The pressure
+  gate rejects missing/reset peaks and checks both configured byte limits.
 - **orbitkv_query_reserved_bytes_by_phase** separates `warming`, `preloading`,
   `prepared`, `preparing`, `ready`, and `restoring`. Phase samples are diagnostic:
   collection can overlap a transition, so their sum is not an atomic budget

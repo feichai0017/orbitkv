@@ -24,6 +24,8 @@ fn bytes_remain_charged_until_all_consumers_finish() {
         budget.reserve("b", "state", 81, QueryMode::Demand),
         QueryAdmission::TooLarge
     ));
+    assert_eq!(budget.total_peak.load(Ordering::Relaxed), 100);
+    assert_eq!(budget.instance_peak.load(Ordering::Relaxed), 70);
     assert!(first.ready(71).is_err());
     first.ready(40).unwrap();
     let gpu = first.clone();
@@ -34,6 +36,13 @@ fn bytes_remain_charged_until_all_consumers_finish() {
     assert_eq!(budget.usage.lock().total, 30);
     drop(second);
     assert_eq!(budget.usage.lock().total, 0);
+    assert!(budget.usage.lock().instances.is_empty());
+    assert_eq!(budget.total_peak.load(Ordering::Relaxed), 100);
+    assert_eq!(budget.instance_peak.load(Ordering::Relaxed), 70);
+    let next = reserve(&budget, "a", 80);
+    assert_eq!(budget.total_peak.load(Ordering::Relaxed), 100);
+    assert_eq!(budget.instance_peak.load(Ordering::Relaxed), 80);
+    drop(next);
     assert!(budget.usage.lock().instances.is_empty());
 }
 
@@ -154,4 +163,113 @@ fn owned_lookahead_can_overlap_foreground_only_within_both_budgets() {
     assert_eq!(budget.usage.lock().total, 100);
     drop((foreground, prepared, remaining_foreground));
     assert_eq!(budget.usage.lock().total, 0);
+}
+
+#[test]
+fn exported_peaks_cover_scrape_gaps_without_blocking_admission_or_retaining_owners() {
+    let result = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "query::tests::query_peak_metrics_child",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env("ORBITKV_QUERY_PEAK_METRICS_CHILD", "1")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+}
+
+#[test]
+#[ignore = "Invoked in a fresh process by the budget metrics export test"]
+fn query_peak_metrics_child() {
+    if std::env::var("ORBITKV_QUERY_PEAK_METRICS_CHILD").as_deref() != Ok("1") {
+        return;
+    }
+    let registry = prometheus::Registry::new();
+    let reader = opentelemetry_prometheus::exporter()
+        .with_registry(registry.clone())
+        .build()
+        .unwrap();
+    let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
+        .with_reader(reader)
+        .build();
+    global::set_meter_provider(provider.clone());
+    let budget = QueryBudget::new(100, 80).unwrap();
+    let weak = Arc::downgrade(&budget.total_peak);
+
+    let locked = budget.usage.lock();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let collector_registry = registry.clone();
+    let collector = std::thread::spawn(move || tx.send(collector_registry.gather()).unwrap());
+    let observed = rx.recv_timeout(std::time::Duration::from_secs(5));
+    drop(locked);
+    collector.join().unwrap();
+    assert!(
+        observed.is_ok(),
+        "scraping must not wait for admission's mutex"
+    );
+    assert_exported_peaks(&registry, 0, 0);
+
+    let first = reserve(&budget, "a", 70);
+    let second = reserve(&budget, "a", 10);
+    let other = reserve(&budget, "b", 20);
+    assert!(matches!(
+        budget.reserve("b", "state", 1, QueryMode::Demand),
+        QueryAdmission::Busy
+    ));
+    first.ready(40).unwrap();
+    let consumer = first.clone();
+    consumer.restoring();
+    drop((first, second, other));
+    drop(consumer);
+    assert!(budget.usage.lock().instances.is_empty());
+    assert_exported_peaks(&registry, 100, 80);
+    drop(budget);
+    assert!(
+        weak.upgrade().is_none(),
+        "metric callbacks must not keep a budget alive"
+    );
+    let replacement = QueryBudget::new(100, 80).unwrap();
+    assert_exported_peaks(&registry, 0, 0);
+    drop(replacement);
+    provider.shutdown().unwrap();
+}
+
+fn assert_exported_peaks(registry: &prometheus::Registry, total: u64, instance: u64) {
+    let values: HashMap<_, _> = registry
+        .gather()
+        .iter()
+        .filter_map(|family| {
+            let name = family.name();
+            if !matches!(
+                name,
+                "orbitkv_query_reserved_peak_bytes" | "orbitkv_query_instance_reserved_peak_bytes"
+            ) {
+                return None;
+            }
+            assert_eq!(family.get_metric().len(), 1);
+            let metric = &family.get_metric()[0];
+            assert!(
+                metric
+                    .get_label()
+                    .iter()
+                    .all(|label| !label.name().contains("instance"))
+            );
+            Some((name.to_string(), metric.get_gauge().value() as u64))
+        })
+        .collect();
+    assert_eq!(
+        values.get("orbitkv_query_reserved_peak_bytes"),
+        Some(&total)
+    );
+    assert_eq!(
+        values.get("orbitkv_query_instance_reserved_peak_bytes"),
+        Some(&instance)
+    );
 }

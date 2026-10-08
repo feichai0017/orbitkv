@@ -95,9 +95,13 @@ samples Manager resources once per second without loading Torch, CUDA or OrbitKV
 The gate requires a completion gap below 30 seconds while each engine has
 admitted work, positive physical read/write and save/load bytes, final ownership
 drain and normal cleanup. Configure
-and report global and per-instance query limits separately; only global/pool
-reservation peaks are currently observable. No timed cache flush, restart,
-cache-policy change or Python state coordinator is introduced.
+and report global and per-instance query limits separately. The admission owner
+now retains exact global and maximum-single-instance reservation peaks since
+Manager budget creation, including warm-up; the gate reads them after drain so
+short reservations between sampler ticks are still covered. Pool peaks remain
+sampled. These new counters and guards are implemented but do not retroactively
+qualify old frozen cells. No timed cache flush, restart, cache-policy change or
+Python state coordinator is introduced.
 
 Two short untraced direct cells pass 44 and 43 requests, physical io_uring reads
 and writes, sampled bounds, final drain and unchanged installed files. They are

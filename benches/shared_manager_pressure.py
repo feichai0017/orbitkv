@@ -24,6 +24,10 @@ from .runtime import ROOT, free_port
 from .workload import generate
 
 ENGINES = ("vllm", "sglang")
+RESERVATION_PEAKS = (
+    "orbitkv_query_reserved_peak_bytes",
+    "orbitkv_query_instance_reserved_peak_bytes",
+)
 DRAIN = (
     "orbitkv_query_reserved_bytes",
     "orbitkv_inflight_bytes",
@@ -221,6 +225,24 @@ def validate_resources(args, before, after, peaks):
     ):
         if name not in peaks or peaks[name] > limit:
             raise ValueError(f"Resource peak absent or over budget: {name}")
+    for name, limit in zip(
+        RESERVATION_PEAKS,
+        (args.query_mib * 1024**2, args.instance_query_mib * 1024**2),
+        strict=True,
+    ):
+        previous, peak = before.get(name), after.get(name)
+        if (
+            previous is None
+            or peak is None
+            or not math.isfinite(previous)
+            or not math.isfinite(peak)
+            or not 0 <= previous <= peak <= limit
+            or peak < peaks.get(name, 0)
+            or (
+                name == RESERVATION_PEAKS[0] and peak < peaks.get("orbitkv_query_reserved_bytes", 0)
+            )
+        ):
+            raise ValueError(f"Owner reservation peak missing, reset or over budget: {name}")
     changes = delta(before, after)
     for name in (
         "orbitkv_save_bytes_total",
@@ -433,7 +455,7 @@ def run(args):
                 ["nvidia-smi", "--query-gpu=name,uuid,driver_version", "--format=csv,noheader"],
                 text=True,
             ),
-            "capacity_scope": "Configured limits and sampled peaks, not instantaneous maxima",
+            "capacity_scope": "Owner lifetime global/single-instance query reservation maxima; sampled physical pool usage",
             "timing_scope": "Client streaming TTFT to nonempty text and request completion",
         },
     )
@@ -602,6 +624,8 @@ def run(args):
                     "engines": summary,
                     "manager_delta": changes,
                     "sampled_peaks": observation["peaks"],
+                    "owner_reservation_peaks": {name: after[name] for name in RESERVATION_PEAKS},
+                    "owner_peak_scope": "Since Manager budget creation, including warm-up; maximum across all instances, no instance labels",
                     "resource_samples": observation["samples"],
                 },
             )

@@ -6,8 +6,9 @@ mod tier_attribution;
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use opentelemetry::KeyValue;
+use opentelemetry::{KeyValue, global};
 use parking_lot::Mutex;
 
 use crate::metrics::core_metrics;
@@ -66,6 +67,8 @@ pub(crate) struct QueryBudget {
     global: u64,
     per_instance: u64,
     usage: Mutex<Usage>,
+    total_peak: Arc<AtomicU64>,
+    instance_peak: Arc<AtomicU64>,
 }
 
 pub enum QueryAdmission {
@@ -91,10 +94,37 @@ impl QueryBudget {
         if global == 0 || per_instance == 0 || per_instance > global || global > i64::MAX as u64 {
             return Err("query byte limits must satisfy 0 < instance <= global <= i64::MAX".into());
         }
+        let total_peak = Arc::new(AtomicU64::new(0));
+        let instance_peak = Arc::new(AtomicU64::new(0));
+        let meter = global::meter("orbitkv-core");
+        let weak = Arc::downgrade(&total_peak);
+        meter
+            .u64_observable_gauge("orbitkv_query_reserved_peak_bytes")
+            .with_description("Maximum concurrent conservative query bytes since budget creation")
+            .with_unit("bytes")
+            .with_callback(move |observer| {
+                if let Some(peak) = weak.upgrade() {
+                    observer.observe(peak.load(Ordering::Relaxed), &[]);
+                }
+            })
+            .build();
+        let weak = Arc::downgrade(&instance_peak);
+        meter
+            .u64_observable_gauge("orbitkv_query_instance_reserved_peak_bytes")
+            .with_description("Maximum concurrent conservative query bytes of any one instance since budget creation")
+            .with_unit("bytes")
+            .with_callback(move |observer| {
+                if let Some(peak) = weak.upgrade() {
+                    observer.observe(peak.load(Ordering::Relaxed), &[]);
+                }
+            })
+            .build();
         Ok(Arc::new(Self {
             global,
             per_instance,
             usage: Mutex::new(Usage::default()),
+            total_peak,
+            instance_peak,
         }))
     }
 
@@ -132,6 +162,9 @@ impl QueryBudget {
             return QueryAdmission::Busy;
         }
         usage.total += bytes;
+        self.total_peak.fetch_max(usage.total, Ordering::Relaxed);
+        self.instance_peak
+            .fetch_max(instance_used + bytes, Ordering::Relaxed);
         core_metrics().query_reserved_bytes.add(bytes as i64, &[]);
         *usage.instances.entry(instance.into()).or_default() += bytes;
         let phase = if warming {

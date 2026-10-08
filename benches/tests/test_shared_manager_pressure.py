@@ -26,6 +26,7 @@ def args():
         prompt_tokens=64,
         output_tokens=2,
         query_mib=384,
+        instance_query_mib=192,
         host_mib=512,
     )
 
@@ -149,7 +150,22 @@ def test_incomplete_or_unsafe_evidence_rejected(corruption):
         pressure.validate_window(args(), rows, window, require_oracle=True)
 
 
-@pytest.mark.parametrize("corruption", [None, "budget", "leak", "no_ssd", "missing_peak"])
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        None,
+        "budget",
+        "leak",
+        "no_ssd",
+        "missing_peak",
+        "instance_peak",
+        "owner_peak",
+        "missing_owner",
+        "reset_owner",
+        "unsampled_peak",
+        "inconsistent_current",
+    ],
+)
 def test_real_route_evidence_and_resource_bounds(corruption):
     after = dict.fromkeys(pressure.DRAIN, 0)
     after.update(
@@ -160,8 +176,22 @@ def test_real_route_evidence_and_resource_bounds(corruption):
             "orbitkv_ssd_prefetch_bytes_total": 4096,
         }
     )
+    before = dict.fromkeys(pressure.RESERVATION_PEAKS, 0)
+    after.update(dict.fromkeys(pressure.RESERVATION_PEAKS, 4096))
     peaks = {"orbitkv_query_reserved_bytes": 4096, "orbitkv_pool_used_bytes": 4096}
-    if corruption == "budget":
+    if corruption == "instance_peak":
+        after[pressure.RESERVATION_PEAKS[1]] = 193 * 1024**2
+    elif corruption == "owner_peak":
+        after[pressure.RESERVATION_PEAKS[0]] = 385 * 1024**2
+    elif corruption == "missing_owner":
+        after.pop(pressure.RESERVATION_PEAKS[1])
+    elif corruption == "reset_owner":
+        before[pressure.RESERVATION_PEAKS[0]] = 8192
+    elif corruption == "unsampled_peak":
+        peaks[pressure.RESERVATION_PEAKS[0]] = 8192
+    elif corruption == "inconsistent_current":
+        peaks["orbitkv_query_reserved_bytes"] = 8192
+    elif corruption == "budget":
         peaks["orbitkv_query_reserved_bytes"] = 385 * 1024**2
     elif corruption == "leak":
         after["orbitkv_ssd_read_pinned_bytes"] = 4096
@@ -171,10 +201,10 @@ def test_real_route_evidence_and_resource_bounds(corruption):
         peaks.pop("orbitkv_pool_used_bytes")
     if corruption:
         with pytest.raises(ValueError):
-            pressure.validate_resources(args(), {}, after, peaks)
+            pressure.validate_resources(args(), before, after, peaks)
     else:
         assert (
-            pressure.validate_resources(args(), {}, after, peaks)[
+            pressure.validate_resources(args(), before, after, peaks)[
                 "orbitkv_ssd_prefetch_bytes_total"
             ]
             == 4096

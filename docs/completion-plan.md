@@ -1415,6 +1415,24 @@ node/service ownership and discovery-file lifetimes around GPU registration and
 a subsequent client attach, establish the cause and independently review a repair,
 then freeze a new sustained cohort. No diagnostic upgrades the support envelope.
 
+The subsequent single syscall-attribution diagnostic also does not reproduce
+the failure: 86 requests match exact native input/text/token controls, eight
+services and three tracers exit zero, and installed files remain unchanged.
+Its selected file/lock traces do not identify a deletion actor; tracing may
+affect scheduling. The earlier failure remains unresolved. Complete evidence:
+`/root/orbitkv-artifacts/s5-ipc-causal-20261008/`.
+
+**Budget peak observation implemented; qualification open (2026-10-08):**
+the existing QueryBudget admission owner now retains lifetime global and
+maximum-single-instance concurrent reservation peaks under its existing lock.
+Observable metrics retain peaks through release without instance labels or a
+second state owner. The pressure gate requires both peaks after drain, checks
+the configured global/per-instance limits and rejects a reset or missing value.
+This covers short reservations between sampler ticks; it does not identify an
+engine's own maximum, measure physical pinned/HBM allocation or qualify fairness.
+A new installed-artifact boundary gate and independent review remain required;
+old cohorts and the unresolved startup failure retain their original status.
+
 This delivers one same-host deployment profile, not all of S5.5. Independent review,
 sustained restore pressure/fairness, isolated containers,
 physical cross-host/rank combinations, native P/D faults and S3-dependent

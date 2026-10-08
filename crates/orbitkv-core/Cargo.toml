@@ -49,6 +49,9 @@ orbitkv-transfer = { path = "../orbitkv-transfer", default-features = false, opt
 mea.workspace = true
 
 [dev-dependencies]
+opentelemetry_sdk.workspace = true
+opentelemetry-prometheus.workspace = true
+prometheus.workspace = true
 criterion.workspace = true
 cudarc.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
