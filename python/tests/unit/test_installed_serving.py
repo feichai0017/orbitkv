@@ -61,3 +61,35 @@ def test_unexpected_exit_retained_without_masking_body_failure(monkeypatch, tmp_
     else:
         assert cleanup["primary_failure"] is None
     assert not cleanup["remaining_processes"] and not cleanup["forced_kill"]
+
+
+@pytest.mark.parametrize("corruption", ["unrelated", "missing_previous", "nonfinite", "negative"])
+def test_drain_rejects_invalid_or_disappearing_gauges(monkeypatch, corruption):
+    snapshots = [
+        {"orbitkv_query_reserved_bytes": 0, "orbitkv_ssd_read_pinned_bytes": 4096},
+        {"orbitkv_query_reserved_bytes": 0, "orbitkv_ssd_read_pinned_bytes": 0},
+    ]
+    if corruption == "unrelated":
+        snapshots = [{"unrelated_metric": 0}]
+    elif corruption == "missing_previous":
+        snapshots[1].pop("orbitkv_ssd_read_pinned_bytes")
+    elif corruption == "nonfinite":
+        snapshots[0]["orbitkv_query_reserved_bytes"] = float("nan")
+    else:
+        snapshots[0]["orbitkv_ssd_read_pinned_bytes"] = -1
+    values = iter(snapshots)
+    monkeypatch.setattr(installed_serving, "fetch_orbitkv_metrics", lambda _: next(values))
+    monkeypatch.setattr(installed_serving.time, "sleep", lambda _: None)
+    with pytest.raises(AssertionError, match="resource-drain gauges"):
+        installed_serving.wait_for_drain(1)
+
+
+def test_drain_preserves_lazy_unused_route_metrics(monkeypatch):
+    snapshots = [
+        {"orbitkv_query_reserved_bytes": 0, "orbitkv_inflight_bytes": 4096},
+        {"orbitkv_query_reserved_bytes": 0, "orbitkv_inflight_bytes": 0},
+    ]
+    values = iter(snapshots)
+    monkeypatch.setattr(installed_serving, "fetch_orbitkv_metrics", lambda _: next(values))
+    monkeypatch.setattr(installed_serving.time, "sleep", lambda _: None)
+    assert installed_serving.wait_for_drain(1) == snapshots[-1]

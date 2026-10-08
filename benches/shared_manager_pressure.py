@@ -35,7 +35,6 @@ DRAIN = (
     "orbitkv_ssd_write_queue_pending",
     "orbitkv_ssd_prefetch_inflight",
     "orbitkv_ssd_read_pinned_bytes",
-    "orbitkv_ssd_gpu_staging_bytes",
 )
 
 
@@ -217,8 +216,11 @@ def validate_window(args, rows, window, require_oracle=False):
 
 def validate_resources(args, before, after, peaks):
     for name in DRAIN:
-        if after.get(name, 0) != 0:
+        if after.get(name) != 0:
             raise ValueError(f"Undrained or absent resource: {name}")
+    staging = "orbitkv_ssd_gpu_staging_bytes"
+    if any(staging in values for values in (before, after, peaks)) and after.get(staging) != 0:
+        raise ValueError(f"Undrained or absent cuFile resource: {staging}")
     for name, limit in (
         ("orbitkv_query_reserved_bytes", args.query_mib * 1024**2),
         ("orbitkv_pool_used_bytes", args.host_mib * 1024**2),

@@ -156,6 +156,10 @@ def test_incomplete_or_unsafe_evidence_rejected(corruption):
         None,
         "budget",
         "leak",
+        "missing_drain",
+        "staging_leak",
+        "staging_missing",
+        "staging_nonfinite",
         "no_ssd",
         "missing_peak",
         "instance_peak",
@@ -195,6 +199,14 @@ def test_real_route_evidence_and_resource_bounds(corruption):
         peaks["orbitkv_query_reserved_bytes"] = 385 * 1024**2
     elif corruption == "leak":
         after["orbitkv_ssd_read_pinned_bytes"] = 4096
+    elif corruption == "missing_drain":
+        after.pop("orbitkv_ssd_read_pinned_bytes")
+    elif corruption == "staging_leak":
+        after["orbitkv_ssd_gpu_staging_bytes"] = 4096
+    elif corruption == "staging_missing":
+        peaks["orbitkv_ssd_gpu_staging_bytes"] = 4096
+    elif corruption == "staging_nonfinite":
+        after["orbitkv_ssd_gpu_staging_bytes"] = float("nan")
     elif corruption == "no_ssd":
         after["orbitkv_ssd_prefetch_bytes_total"] = 0
     elif corruption == "missing_peak":

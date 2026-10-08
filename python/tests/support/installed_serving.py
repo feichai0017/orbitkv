@@ -2,6 +2,7 @@
 
 import contextlib
 import json
+import math
 import os
 import signal
 import subprocess
@@ -113,9 +114,16 @@ def service(command, url, env, directory, name):
 
 def wait_for_drain(http_port: int) -> dict[str, float]:
     deadline = time.monotonic() + 30
+    required = {"orbitkv_query_reserved_bytes"}
     while True:
         metrics = fetch_orbitkv_metrics(http_port)
-        if not any(metrics.get(name, 0) for name in DRAIN_GAUGES):
+        required.update(name for name in DRAIN_GAUGES if name in metrics)
+        missing = required.difference(metrics)
+        assert not missing, f"Missing resource-drain gauges: {sorted(missing)}"
+        assert all(math.isfinite(metrics[name]) and metrics[name] >= 0 for name in required), (
+            f"Invalid resource-drain gauges: {metrics}"
+        )
+        if all(metrics[name] == 0 for name in required):
             return metrics
         assert time.monotonic() < deadline, metrics
         time.sleep(0.1)
