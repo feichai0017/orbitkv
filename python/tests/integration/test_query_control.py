@@ -6,6 +6,7 @@ an installed wheel. Source-only collection does not import Torch or the extensio
 
 import os
 import sys
+import time
 
 import pytest
 
@@ -17,7 +18,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.gpu]
 
 @pytest.mark.parametrize("enabled", [False, True], ids=["disabled", "enabled"])
 def test_installed_query_target_export_preserves_registration_and_channel(enabled, tmp_path):
-    from orbitkv import CacheManagerClient
+    from orbitkv import BlockHashes, CacheManagerClient, QueryLoading, QueryReady
 
     port, http_port = find_available_port(), find_available_port()
     command = manager_command(sys.executable, port, http_port, "dram", tmp_path)
@@ -60,6 +61,16 @@ def test_installed_query_target_export_preserves_registration_and_channel(enable
                 with pytest.raises(ValueError, match="query control is not enabled"):
                     client.export_query_target("registered", "query-control-binding", 1, 1)
             assert client.health()[0]
+            hashes = BlockHashes([bytes([19]) * 32])
+            deadline = time.monotonic() + 10
+            while True:
+                result = client.query_prefetch("registered", hashes, req_id="local-control")
+                if not isinstance(result, QueryLoading):
+                    assert isinstance(result, QueryReady)
+                    assert result.num_hit_blocks == 0 and not result.lease
+                    break
+                assert time.monotonic() < deadline, "registered local query did not drain"
+                time.sleep(0.001)
         finally:
             context.unregister_context()
             client.close()
