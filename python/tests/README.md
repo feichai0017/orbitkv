@@ -400,3 +400,25 @@ independent native lifetime evidence before opening support. Retired fork-only
 fault gates and results remain at immutable commit `9aee895e` and its external
 handoff. Do not count those as official-release passes. Preserve failures,
 controls, wheel/engine hashes and raw runs outside the checkout.
+
+
+### Static local LoRA installed model gate
+
+`release/test_static_lora.py` runs separately in each official engine environment:
+
+```bash
+python -m pytest -m release_smoke tests/release/test_static_lora.py -k vllm \
+  --model /path/to/Qwen3-8B --basetemp /external/artifacts/static-lora-vllm
+# Use -k sglang from the SGLang 0.5.21 environment for its cell.
+```
+
+The gate requires an installed complete wheel and the dense Qwen3 fixture family.
+It creates deterministic nonzero local PEFT adapters outside the checkout, checks
+base/A/B against native model controls, preserves native HBM hits, restores every
+selection through actual io_uring SSD after engine restart, and checks that
+same-name/path changed adapter bytes miss old state. Selected output token IDs
+and text must match exactly; selected-token log probabilities allow absolute
+0.005 with zero relative tolerance. A/B must each change native probabilities
+from the base by more than 0.001. Package RECORD hashes and owned process cleanup
+are checked. This qualifies fixed artifacts in one process deployment, not
+runtime LoRA loading, sessions, hybrid models, graph or cross-host serving.

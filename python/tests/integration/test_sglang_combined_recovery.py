@@ -60,9 +60,13 @@ def test_three_component_recovery(channel_server, monkeypatch, temporal_state):
         "sglang.srt.runtime_context.get_disagg",
         lambda: SimpleNamespace(disaggregation_mode="null"),
     )
+    monkeypatch.setattr(
+        "sglang.srt.runtime_context.get_lora", lambda: SimpleNamespace(enable_lora=False)
+    )
     monkeypatch.setenv("ORBITKV_SGLANG_ENDPOINT", f"unix://{channel_server.bootstrap_socket}")
     monkeypatch.setattr(
-        "orbitkv.sglang.linker.derive_namespace", lambda *args: f"combined-{uuid.uuid4().hex}"
+        "orbitkv.sglang.linker.derive_namespace",
+        lambda *args, **kwargs: f"combined-{uuid.uuid4().hex}",
     )
     cache.layer_transfer_counter = _LayerDoneCounter(
         GpuLayout.from_pool(

@@ -58,6 +58,63 @@ or cancellation of native DMA. SGLang's ordinary `flush_cache` continues to clea
 HBM and retain same-weight external reuse; released skipped-flush weight updates
 remain unsupported. The completion plan records qualification separately.
 
+## Immutable static LoRA
+
+Static adapter support is independently accepted for a fixed local PEFT adapter
+set on official vLLM 0.31.0 and SGLang 0.5.21, dense TP=1/PP=1 eager with
+direct transfers and io_uring SSD. The installed-model evidence is tracked in S5.3.
+At startup OrbitKV hashes each adapter's configuration and weights and binds the complete named set and LoRA
+computation configuration to the external cache namespace. Engine prefix hashes
+still distinguish the base model and individual adapters. Replacing weights at
+the same name/path between process restarts changes the namespace. Changing any
+adapter or adding one invalidates reuse for the whole declared set, including the
+base model; this is conservative deployment isolation, not independent adapter
+version migration. `ORBITKV_MODEL_FINGERPRINT` never substitutes for adapter bytes.
+
+For vLLM, declare the same adapters in the released loader and the connector:
+
+```bash
+vllm serve /path/to/immutable-model --enable-prefix-caching --enable-lora \
+  --lora-modules fixed=/path/to/immutable-adapter \
+  --kv-transfer-config '{"kv_connector":"OrbitKVConnector","kv_role":"kv_both","kv_connector_module_path":"orbitkv.vllm","kv_connector_extra_config":{"orbitkv.static_lora_adapters":[{"name":"fixed","path":"/path/to/immutable-adapter"}]}}'
+```
+
+The public `on_new_request` callback validates name/path and fixed bidirectional
+integer ID bindings before native HBM lookup. It rejects undeclared selections,
+`load_inplace`, tensorizer, 3D adapters and resumable requests. The runtime HTTP
+update flag must remain disabled. A violated request contract stops EngineCore;
+it is not a graceful per-request HTTP rejection.
+
+For SGLang, OrbitKV reads normalized startup adapter references and effective
+LoRA options from the official `runtime_context.get_lora()` configuration bag.
+`ServerArgs` retains raw inputs, so `--lora-paths` can enable LoRA while its raw
+`enable_lora` remains unset. Use the released loader as follows:
+
+```bash
+ORBITKV_STATIC_LORA=1 ORBITKV_SGLANG_ENDPOINT=unix:///tmp/orbitkv-50055.sock \
+  sglang serve --model-path /path/to/immutable-model --page-size 64 \
+  --lora-paths fixed=/path/to/immutable-adapter \
+  --enable-unified-cache-external-linker --radix-cache-backend orbitkv
+```
+
+The existing wrapper checks declared adapter UIDs before external lookup,
+including complete HBM matches; the existing pending-admission Hook also checks
+requests before computation. Caller `extra_key` is disallowed in this profile:
+SGLang concatenates it with the adapter UID, so a base-model user key could
+otherwise alias an adapter. Use `cache_salt` for request isolation. Radix-cache
+sessions and streaming sessions are rejected because their retained pages can
+bypass matching when adapters change. The pre-capture and admission Hooks remain
+required; this does not close the public-lifecycle migration.
+
+Keep adapter files, symlink targets and loaded bindings unchanged for the entire
+engine lifetime. Startup loader configuration must match the declaration. Do
+not call engine SDK/RPC add, remove, reload, in-memory tensor loading or weight
+updates while this profile runs. Those calls can bypass cache callbacks; OrbitKV
+does not intercept them or establish safe dynamic invalidation. Stop the engine,
+change artifacts/configuration and restart to update the deployed adapter set.
+Remote adapters, dynamic LoRA, live base-weight updates, resumable/session
+requests and broader model/topology profiles remain unsupported or unqualified.
+
 ## LMCache and FlexKV reference
 
 Use release source, not an unversioned example, when comparing integrations:

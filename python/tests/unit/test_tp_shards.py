@@ -91,6 +91,7 @@ def _vllm_config(*, extra_overrides=None, **parallel_overrides):
             }
         ),
         kv_transfer_config=kv_transfer_config,
+        lora_config=None,
         additional_config={},
         use_v2_model_runner=False,
     )

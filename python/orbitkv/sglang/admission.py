@@ -8,6 +8,8 @@ from typing import Any
 
 from orbitkv.logging_utils import get_connector_logger, trace_transfer
 
+from .config import validate_lora_request
+
 
 def enqueue_request(original: Callable, scheduler: Any, req: Any, *args: Any, **kwargs: Any) -> Any:
     result = original(scheduler, req, *args, **kwargs)
@@ -86,6 +88,7 @@ def admit_request(original: Callable, adder: Any, req: Any, *args: Any, **kwargs
     wrapper = getattr(adder.tree_cache, "linker", None)
     linker = getattr(wrapper, "cache_linker", None)
     if isinstance(linker, OrbitKVLinker):
+        validate_lora_request(req, linker._static_lora_ids)
         from sglang.srt.managers.schedule_policy import AddReqResult
 
         match_limit = req._compute_max_prefix_len(len(req.full_untruncated_fill_ids))

@@ -77,8 +77,11 @@ def test_hybrid_recovery_requires_and_restores_complete_state(channel_server, mo
     namespace = f"hybrid-proof-{uuid.uuid4().hex}"
     cache = SimpleNamespace(layer_transfer_counter=_LayerDoneCounter(layout))
     params = SimpleNamespace(token_to_kv_pool_allocator=SimpleNamespace(get_kvcache=lambda: cache))
-    monkeypatch.setattr("orbitkv.sglang.linker.derive_namespace", lambda *args: namespace)
+    monkeypatch.setattr("orbitkv.sglang.linker.derive_namespace", lambda *args, **kwargs: namespace)
     monkeypatch.setenv("ORBITKV_SGLANG_ENDPOINT", f"unix://{channel_server.bootstrap_socket}")
+    monkeypatch.setattr(
+        "sglang.srt.runtime_context.get_lora", lambda: SimpleNamespace(enable_lora=False)
+    )
     linker = OrbitKVLinker(None, params)
     keys = [f"prefix-{i}" for i in range(4)]
     state_keys = keys[-1:] if kind == "recurrent" else keys[-2:]

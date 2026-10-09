@@ -90,6 +90,36 @@ def artifact_identity(model: str, revision: str | None = None) -> dict[str, str]
     return {"repository": model, "revision": revision}
 
 
+def static_adapter_identity(adapters: tuple[tuple[str, str], ...]) -> dict[str, dict[str, str]]:
+    """Fingerprint a declared immutable local adapter set at engine startup.
+
+    Native engines distinguish selections by name/path or their derived UID.
+    This manifest additionally separates deployments after same-path weight
+    replacement. Files and adapter bindings must remain fixed for the process.
+    """
+    identities = {}
+    for name, location in adapters:
+        if not isinstance(name, str) or not name or name in identities:
+            raise ValueError("static LoRA adapters require unique non-empty names")
+        if not isinstance(location, str) or not location:
+            raise ValueError("static LoRA adapters require local directory paths")
+        path = Path(location).expanduser()
+        if not path.is_dir() or not (path / "adapter_config.json").is_file():
+            raise ValueError(f"static LoRA adapter requires local adapter_config.json: {location}")
+        if not any(
+            (path / filename).is_file()
+            for filename in (
+                "adapter_model.safetensors",
+                "adapter_model.bin",
+            )
+        ):
+            raise ValueError(f"static LoRA adapter has no local adapter weights: {location}")
+        identities[name] = artifact_identity(location)
+    if not identities:
+        raise ValueError("OrbitKV requires a non-empty immutable static LoRA adapter set")
+    return identities
+
+
 def model_identity(
     model: str,
     *,

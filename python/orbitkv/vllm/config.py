@@ -10,7 +10,12 @@ from enum import Enum
 from importlib.metadata import version
 from typing import TYPE_CHECKING
 
-from orbitkv.identity import model_config_identity, model_identity, state_namespace
+from orbitkv.identity import (
+    model_config_identity,
+    model_identity,
+    state_namespace,
+    static_adapter_identity,
+)
 from orbitkv.logging_utils import get_connector_logger
 
 if TYPE_CHECKING:
@@ -142,6 +147,7 @@ class ConnectorContext:
     # Token span of one `Request.block_hashes` entry; `None` means one per
     # scheduler block.
     hash_block_size: int | None = None
+    static_loras: tuple[tuple[str, str], ...] = ()
 
     @property
     def read_enabled(self) -> bool:
@@ -284,6 +290,39 @@ def resolve_instance_id(vllm_config, dp_rank_suffix: bool = True) -> str:
     return instance_id
 
 
+def resolve_static_loras(vllm_config) -> tuple[tuple[str, str], ...]:
+    transfer = getattr(vllm_config, "kv_transfer_config", None)
+    configured = (
+        transfer.get_from_extra_config("orbitkv.static_lora_adapters", None)
+        if transfer is not None
+        else None
+    )
+    if vllm_config.lora_config is None:
+        if configured is not None:
+            raise ValueError("orbitkv.static_lora_adapters requires --enable-lora")
+        return ()
+    if not isinstance(configured, list) or not configured:
+        raise ValueError(
+            "OrbitKV requires immutable adapter identities; dynamic LoRA is unsupported. "
+            "Declare orbitkv.static_lora_adapters for fixed local adapters."
+        )
+    if os.environ.get("VLLM_ALLOW_RUNTIME_LORA_UPDATING", "0") != "0":
+        raise ValueError("OrbitKV static LoRA does not support runtime adapter updates")
+    adapters = []
+    names = set()
+    for item in configured:
+        if not isinstance(item, dict) or set(item) != {"name", "path"}:
+            raise ValueError("orbitkv.static_lora_adapters entries require only name and path")
+        name, path = item["name"], item["path"]
+        if not isinstance(name, str) or not name or name in names:
+            raise ValueError("static LoRA adapters require unique non-empty names")
+        if not isinstance(path, str) or not path:
+            raise ValueError("static LoRA adapters require local directory paths")
+        names.add(name)
+        adapters.append((name, path))
+    return tuple(adapters)
+
+
 def derive_namespace(
     vllm_config,
     tp_size: int,
@@ -291,16 +330,15 @@ def derive_namespace(
     pcp_world_size: int = 1,
     cross_layer_blocks: bool = False,
     hash_block_size: int | None = None,
+    static_loras: tuple[tuple[str, str], ...] | None = None,
 ) -> str:
     """Resolve the model computation and cache representation once per connector."""
     model_config = vllm_config.model_config
     cache_config = vllm_config.cache_config
     additional_config = getattr(vllm_config, "additional_config", None) or {}
 
-    if vllm_config.lora_config is not None:
-        raise ValueError(
-            "OrbitKV requires immutable adapter identities; dynamic LoRA is unsupported"
-        )
+    if static_loras is None:
+        static_loras = resolve_static_loras(vllm_config)
     artifacts = model_identity(
         model_config.model,
         revision=model_config.revision,
@@ -315,6 +353,11 @@ def derive_namespace(
         "hash_algorithm": cache_config.prefix_caching_hash_algo,
         "hash_seed": os.environ.get("PYTHONHASHSEED"),
     }
+    if vllm_config.lora_config is not None:
+        computation["static_lora"] = {
+            "configuration": vllm_config.lora_config.compute_hash(),
+            "adapters": static_adapter_identity(static_loras),
+        }
     factors = {
         "dtype": str(model_config.dtype),
         "kv_cache_layout": cache_config.kv_cache_layout,

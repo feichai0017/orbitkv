@@ -27,7 +27,7 @@ from orbitkv import (
 from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
 from orbitkv.logging_utils import TRANSFER_TRACING, trace_transfer
 
-from .config import derive_namespace, resolve_transfer_backend
+from .config import derive_namespace, resolve_static_loras, resolve_transfer_backend
 from .events import _LayerDoneCounter
 
 logger = logging.getLogger(__name__)
@@ -69,7 +69,14 @@ class OrbitKVLinker(UnifiedCacheLinker):
         self.layer_done_counter = counter
         self.layout = counter.layout
         self.page_size = self.layout.page_size
-        self.namespace = derive_namespace(server_args, params, self.layout)
+        from sglang.srt.runtime_context import get_lora
+
+        lora_config = get_lora()
+        static_loras = resolve_static_loras(server_args, lora_config)
+        self._static_lora_ids = frozenset(ref.lora_id for ref in static_loras)
+        self.namespace = derive_namespace(
+            server_args, params, self.layout, lora_config=lora_config, static_loras=static_loras
+        )
         self.recovery = RecoveryContract(
             self.namespace,
             self.page_size,

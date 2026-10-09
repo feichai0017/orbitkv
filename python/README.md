@@ -131,7 +131,10 @@ ORBITKV_SGLANG_ENDPOINT=unix:///tmp/orbitkv-50055.sock \
 Keep the Manager alive, restart the engine and repeat a multi-block prompt to
 verify an external restore. SSD contents are recreated when the Manager restarts.
 The engine remains responsible for HBM and scheduling. Automatic request
-preparation is experimental and disabled by default.
+preparation is experimental and disabled by default. A fixed local LoRA set can
+use the [static adapter identity profile](../docs/adapters.md#immutable-static-lora);
+it requires immutable files and prohibits runtime adapter mutation and sessions.
+The completion plan records its installed-model qualification.
 
 ## Development
 

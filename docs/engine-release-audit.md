@@ -36,8 +36,10 @@ The remaining interface gaps still exist in these exact release sources:
   timeout. That host fix does not qualify the current device P/D fault profile.
 - SGLang weight updates can skip `flush_cache`; a namespace change only in
   `linker.reset` cannot safely invalidate every live update. Both adapters reject
-  dynamic LoRA. Live-weight invalidation and immutable per-adapter reuse need a
-  consumed engine contract; do not add a silent runtime patch.
+  dynamic LoRA. The later fixed local adapter profile fingerprints startup
+  artifacts; it does not intercept SDK/RPC mutations or qualify dynamic reuse.
+  Live-weight invalidation needs a consumed engine contract; do not add a silent
+  runtime patch.
 
 LMCache 0.5.5 remains the latest released reference checked on this date. The
 older interface inventory below records its 0.30.0/0.5.20 research inputs, not

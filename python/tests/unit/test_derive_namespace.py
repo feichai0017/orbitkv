@@ -15,7 +15,7 @@ from tests.support.unit_stubs import install_connector_unit_stubs
 
 install_connector_unit_stubs()
 
-from orbitkv.vllm.config import derive_namespace  # noqa: E402
+from orbitkv.vllm.config import derive_namespace, resolve_static_loras  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -105,3 +105,52 @@ def test_engine_kv_precision_is_independent_of_weight_quantization():
     original = derive_namespace(cfg, tp_size=1)
     cfg.cache_config.cache_dtype = "auto"
     assert derive_namespace(cfg, tp_size=1) != original
+
+
+def test_static_adapter_contents_and_lora_configuration_are_consumed(tmp_path, monkeypatch):
+    monkeypatch.setenv("ORBITKV_MODEL_FINGERPRINT", "a" * 64)
+    monkeypatch.delenv("VLLM_ALLOW_RUNTIME_LORA_UPDATING", raising=False)
+    adapter = tmp_path / "adapter"
+    adapter.mkdir()
+    (adapter / "adapter_config.json").write_text('{"r":8}')
+    weights = adapter / "adapter_model.safetensors"
+    weights.write_bytes(b"original")
+    cfg = _make_vllm_config()
+    base_namespace = derive_namespace(cfg, tp_size=1)
+    cfg.lora_config = SimpleNamespace(compute_hash=lambda: "lora-bf16")
+    cfg.kv_transfer_config = SimpleNamespace(get_from_extra_config=lambda _, default: default)
+    with pytest.raises(ValueError, match="dynamic LoRA"):
+        derive_namespace(cfg, tp_size=1)
+    cfg.kv_transfer_config.get_from_extra_config = lambda *_: [
+        {"name": "static", "path": str(adapter)}
+    ]
+    original = derive_namespace(cfg, tp_size=1)
+    assert original != base_namespace
+    assert derive_namespace(cfg, tp_size=1) == original
+    weights.write_bytes(b"replaced")
+    assert derive_namespace(cfg, tp_size=1) != original
+    weights.write_bytes(b"original")
+    cfg.lora_config.compute_hash = lambda: "lora-fp16"
+    assert derive_namespace(cfg, tp_size=1) != original
+    monkeypatch.setenv("VLLM_ALLOW_RUNTIME_LORA_UPDATING", "1")
+    with pytest.raises(ValueError, match="runtime"):
+        resolve_static_loras(cfg)
+
+
+@pytest.mark.parametrize(
+    "declared",
+    [
+        [],
+        {},
+        ["adapter"],
+        [{"name": "a"}],
+        [{"name": "a", "path": "/a", "extra": 1}],
+        [{"name": "a", "path": "/a"}, {"name": "a", "path": "/b"}],
+    ],
+)
+def test_malformed_static_adapter_configuration_is_rejected(declared):
+    cfg = _make_vllm_config()
+    cfg.lora_config = object()
+    cfg.kv_transfer_config = SimpleNamespace(get_from_extra_config=lambda *_: declared)
+    with pytest.raises(ValueError):
+        resolve_static_loras(cfg)

@@ -136,6 +136,8 @@ class SchedulerAdapter:
             )
         self._tp_shard_client = TpShardQueryClient(clients)
         self._clients = clients
+        self._lora_bindings: dict[tuple[str, str], int] = {}
+        self._lora_ids: dict[int, tuple[str, str]] = {}
         self._cache_generation: bytes | None = None
         self._generation_hashes: dict[str, tuple[tuple[bytes, ...], tuple[bytes, ...]]] = {}
         self._queued_at: dict[str, float] = {}
@@ -235,7 +237,31 @@ class SchedulerAdapter:
         self._generation_hashes[request.request_id] = (hashes, scoped)
         return scoped
 
+    def _validate_lora(self, request: "Request") -> None:
+        if self._ctx.static_loras and getattr(request, "resumable", False):
+            raise ValueError("OrbitKV static LoRA does not support resumable requests")
+        lora = getattr(request, "lora_request", None)
+        if lora is None:
+            return
+        selection = (lora.lora_name, lora.lora_path)
+        if selection not in self._ctx.static_loras:
+            raise ValueError("OrbitKV request selects an undeclared static LoRA adapter")
+        if lora.load_inplace or lora.tensorizer_config_dict is not None or lora.is_3d_lora_weight:
+            raise ValueError(
+                "OrbitKV static LoRA rejects reload, tensorizer and 3D adapter requests"
+            )
+        adapter_id = lora.lora_int_id
+        if type(adapter_id) is not int or adapter_id <= 0:
+            raise ValueError("OrbitKV static LoRA requires a positive integer adapter ID")
+        if self._lora_ids.get(adapter_id, selection) != selection or (
+            self._lora_bindings.get(selection, adapter_id) != adapter_id
+        ):
+            raise ValueError("OrbitKV static LoRA adapter ID bindings cannot change")
+        self._lora_ids[adapter_id] = selection
+        self._lora_bindings[selection] = adapter_id
+
     def on_new_request(self, request: "Request") -> None:
+        self._validate_lora(request)
         self._queued_at[request.request_id] = time.monotonic()
         trace_transfer("queued", request.request_id, engine="vllm")
         prepare = os.environ.get("ORBITKV_PREPARE_REQUESTS") == "1"
