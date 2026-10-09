@@ -675,7 +675,11 @@ async fn query_drain_fences_admission_before_waiting_and_after_permits_return() 
         Poll::Ready(())
     })
     .await;
-    assert_eq!(capacity.available_permits(), MAX_ACTIVE_QUERIES - 1);
+    assert_eq!(
+        capacity.available_permits(),
+        0,
+        "the drainer reserves free permits while the accepted read still owns its permit"
+    );
     let assert_closed = || {
         for (operation, mode) in [(1, "foreground"), (2, "warmup"), (3, "prepare")] {
             let mut request = request(operation, 1);
