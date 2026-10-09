@@ -109,7 +109,7 @@ def test_drain_preserves_lazy_unused_route_metrics(monkeypatch):
     ],
 )
 def test_native_decode_graph_observations_distinguish_replays(engine, text, expected):
-    assert installed_serving.native_decode_graph_count(engine, text) == expected
+    assert installed_serving.native_runtime_graph_count(engine, text) == expected
 
 
 @pytest.mark.parametrize("engine", ["vllm", "sglang"])
@@ -121,4 +121,4 @@ def test_native_decode_graph_rejects_corrupt_counters(engine, value):
         else f'sglang:cuda_graph_passes_total{{mode="decode_cuda_graph"}} {value}'
     )
     with pytest.raises(AssertionError, match="Invalid native graph count"):
-        installed_serving.native_decode_graph_count(engine, text)
+        installed_serving.native_runtime_graph_count(engine, text)

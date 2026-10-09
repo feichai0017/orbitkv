@@ -227,7 +227,7 @@ def engine_command(engine, python, model, port, transfer_backend="direct", *, cu
     return command, cache_options
 
 
-def native_decode_graph_count(engine, text):
+def native_runtime_graph_count(engine, text):
     if engine == "vllm":
         rows = re.findall(
             r"\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*FULL\s*\|\s*(\S+)\s*\|",
@@ -241,8 +241,8 @@ def native_decode_graph_count(engine, text):
                 value,
             )
             assert int(padded) - int(unpadded) == int(padding), "Invalid native graph padding"
-            # A single-request decode has one unpadded token. Long prefill FULL
-            # observations must not substitute for the requested decode profile.
+            # FULL token counts do not distinguish decode from one-token prefill.
+            # Exclude long prefill; report these as one-token runtime observations.
             if int(unpadded) == 1:
                 count += int(value)
         return count

@@ -17,7 +17,7 @@ from tests.support.installed_serving import (
     compare_output,
     engine_command,
     manager_command,
-    native_decode_graph_count,
+    native_runtime_graph_count,
     probe_installation,
     service,
     wait_for_drain,
@@ -85,7 +85,13 @@ def run_cache_plan(engine, tier, model, directory, env, *, cuda_graph=False):
             response = requests.get(f"{engine_url}/metrics", timeout=5)
             response.raise_for_status()
             text = response.text
-        return {"count": native_decode_graph_count(engine, text), "raw": text}
+        return {
+            "count": native_runtime_graph_count(engine, text),
+            "observation_kind": (
+                "vllm_one_token_full_runtime" if engine == "vllm" else "sglang_decode_graph_passes"
+            ),
+            "raw": text,
+        }
 
     def complete(label, prompt):
         before = graph_snapshot() if cuda_graph else None
@@ -106,7 +112,7 @@ def run_cache_plan(engine, tier, model, directory, env, *, cuda_graph=False):
                 if after["count"] - before["count"] >= 7:
                     break
                 assert time.monotonic() < deadline, (
-                    f"Fewer than seven native decode graph forwards for {label}",
+                    f"Fewer than seven native runtime graph observations for {label}",
                     samples,
                 )
                 time.sleep(0.1)
@@ -250,8 +256,8 @@ def run_cache_plan(engine, tier, model, directory, env, *, cuda_graph=False):
                     "transfer_backend": env["ORBITKV_TRANSFER_BACKEND"],
                     "model": model,
                     "profile": f"dense TP=1 PP=1 {'FULL decode graph' if cuda_graph else 'eager'} same-host",
-                    "decode_graph_required": cuda_graph,
-                    "decode_graph_progress": {
+                    "graph_runtime_required": cuda_graph,
+                    "native_graph_progress": {
                         label: samples[-1]["count"] - samples[0]["count"]
                         for label, samples in graph_observations.items()
                     },
