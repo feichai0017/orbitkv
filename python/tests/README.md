@@ -422,3 +422,25 @@ and text must match exactly; selected-token log probabilities allow absolute
 from the base by more than 0.001. Package RECORD hashes and owned process cleanup
 are checked. This qualifies fixed artifacts in one process deployment, not
 runtime LoRA loading, sessions, hybrid models, graph or cross-host serving.
+
+### Explicit released decode-graph recovery
+
+The installed-wheel gate accepts `--release-cuda-graph`. It selects official
+vLLM V1 `FULL` mode with capture sizes 1/2/4 or SGLang native decode `full`
+with prefill disabled. Each eight-token response must add at least seven released
+one-token FULL runtime observations (vLLM) or decode-graph passes (SGLang).
+Capture logs and eager forwards cannot satisfy this gate. Results include every
+raw output, graph observation and native/cache byte boundary. Graph qualification
+and remaining profile limits are tracked in S5.3 of the completion plan.
+
+```bash
+/path/to/official-engine/bin/python -m pytest -q -m release_smoke \
+  tests/release/test_installed_wheel.py -k 'vllm and ssd' \
+  --release-cuda-graph --orbitkv-transfer-backend kernel \
+  --model /path/to/immutable-dense-model --basetemp /external/graph-kernel-cell
+```
+
+Run SGLang in its own official environment with `-k 'sglang and ssd'`; run direct
+and kernel separately. Long prefills can stay eager; this gate does not qualify
+full prefill capture, hybrid or native P/D fault lifetimes. It uses an installed
+wheel and retains the normal release gate's RECORD, restart, HBM and SSD checks.

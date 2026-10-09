@@ -93,3 +93,32 @@ def test_drain_preserves_lazy_unused_route_metrics(monkeypatch):
     monkeypatch.setattr(installed_serving, "fetch_orbitkv_metrics", lambda _: next(values))
     monkeypatch.setattr(installed_serving.time, "sleep", lambda _: None)
     assert installed_serving.wait_for_drain(1) == snapshots[-1]
+
+
+@pytest.mark.parametrize(
+    "engine,text,expected",
+    [
+        ("vllm", "Capturing CUDA graphs (FULL) 100% - Mode: FULL", 0),
+        ("vllm", "| 1 | 1 | 0 | NONE | 7 |", 0),
+        ("vllm", "| 769 | 769 | 0 | FULL | 9 |", 0),
+        ("vllm", "| 1 | 1 | 0 | FULL | 7 |\n| 1 | 2 | 1 | FULL | 8 |", 15),
+        ("sglang", 'sglang:cuda_graph_passes_total{mode="prefill_cuda_graph"} 9', 0),
+        ("sglang", 'sglang:cuda_graph_passes_total{mode="decode_none"} 9', 0),
+        ("sglang", 'sglang:cuda_graph_passes_total{rank="0",mode="decode_cuda_graph"} 7', 7),
+        ("sglang", "", 0),
+    ],
+)
+def test_native_decode_graph_observations_distinguish_replays(engine, text, expected):
+    assert installed_serving.native_decode_graph_count(engine, text) == expected
+
+
+@pytest.mark.parametrize("engine", ["vllm", "sglang"])
+@pytest.mark.parametrize("value", ["NaN", "+Inf", "-1", "0.5"])
+def test_native_decode_graph_rejects_corrupt_counters(engine, value):
+    text = (
+        f"| 1 | 1 | 0 | FULL | {value} |"
+        if engine == "vllm"
+        else f'sglang:cuda_graph_passes_total{{mode="decode_cuda_graph"}} {value}'
+    )
+    with pytest.raises(AssertionError, match="Invalid native graph count"):
+        installed_serving.native_decode_graph_count(engine, text)

@@ -1452,6 +1452,14 @@ Do not delete consumed safety behavior based on these proposals.
   and representation boundaries; see [restrictions](adapters.md#immutable-static-lora).
   Parent failures, independent raw runs and review are preserved outside Git at
   `/root/orbitkv-artifacts/s5-static-adapter-identity-20261009/`.
+- **Explicit decode-graph qualification in progress (2026-10-09):** the maintained
+  installed-wheel gate adds a native FULL decode profile and requires released
+  runtime replay observations for every generated request, alongside its actual
+  restart/partial/SSD byte and output controls. The frozen scope is same-host H20,
+  dense TP=1/PP=1, io_uring SSD, direct and kernel; prefill capture, hybrid and
+  native transfer faults remain separate. Tests or capture logs alone do not
+  qualify this profile. Contract and evidence:
+  `/root/orbitkv-artifacts/s5-graph-cache-qualification-20261009/`.
 - **Qualification open:** Full + SWA + temporal recurrent native serving, page
   reuse under preemption, cancellation, engine restart and each advertised graph
   mode. Exact synthetic GPU recovery does not establish native model support.
