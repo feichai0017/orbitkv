@@ -343,17 +343,59 @@ async fn real_query_control_replays_claims_and_fences_replaced_registrations() {
             let control = QueryControlService::new(
                 endpoint.clone(),
                 Arc::clone(&engine),
-                hll,
+                Arc::clone(&hll),
                 Handle::current(),
             );
-            let target = control
-                .export(SessionRequest {
-                    instance_id: "registered".into(),
-                    namespace: format!("tp-shard-{shard}"),
-                    tp_size: 1,
-                    world_size: 1,
-                })
+            let lifecycle = crate::cache::lifecycle::LifecycleService::new(
+                Arc::clone(&engine),
+                crate::registry::RegistryHandle::spawn(crate::registry::CudaTensorRegistry::empty()),
+            );
+            let socket = directory.path().join(format!("local-{shard}.sock"));
+            let mut local_endpoint = crate::endpoint::ProcessEndpoint::start(
+                format!("orbitkv/test/query-control/{shard}"),
+                91,
+                socket.clone(),
+                1 << 20,
+                1 << 16,
+                Arc::clone(&engine),
+                Handle::current(),
+                hll,
+                Arc::new(tokio::sync::Notify::new()),
+                lifecycle.clone(),
+                0,
+                None,
+                usize::MAX,
+                Some(control.clone()),
+            )
+            .unwrap();
+            let local_channel = tokio::task::spawn_blocking(move || {
+                let channel = orbitkv_channel::ChannelClient::connect(
+                    socket,
+                    orbitkv_channel::CallOptions::default(),
+                )
                 .unwrap();
+                let reply = channel
+                    .lifecycle(
+                        orbitkv_channel::lifecycle::LifecycleCommand::ExportQueryTarget,
+                        &SessionRequest {
+                            instance_id: "registered".into(),
+                            namespace: format!("tp-shard-{shard}"),
+                            tp_size: 1,
+                            world_size: 1,
+                        }
+                        .encode_to_vec(),
+                    )
+                    .unwrap();
+                assert!(reply.fds.is_empty());
+                let target = RegisteredQueryTarget::decode(reply.payload.as_slice()).unwrap();
+                channel
+                    .lifecycle(orbitkv_channel::lifecycle::LifecycleCommand::Health, &[])
+                    .unwrap();
+                (channel, target)
+            })
+            .await
+            .unwrap();
+            let (local_channel, target) = local_channel;
             let (stop, stopped) = tokio::sync::oneshot::channel();
             let service = control.clone();
             let server = tokio::spawn(async move {
@@ -660,6 +702,12 @@ async fn real_query_control_replays_claims_and_fences_replaced_registrations() {
                 .await
                 .unwrap();
             engine.flush_all().await;
+            local_channel.close();
+            local_endpoint.stop_admission_and_drain_publishes().await;
+            local_endpoint.stop_queries_and_drain().await.unwrap();
+            local_endpoint.stop_lifecycle_and_drain_connections().await;
+            lifecycle.shutdown().await.unwrap();
+            local_endpoint.stop();
             stop.send(()).unwrap();
             server.await.unwrap();
             nodes.push(tensor);
