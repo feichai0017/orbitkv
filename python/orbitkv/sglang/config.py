@@ -24,15 +24,15 @@ def resolve_transfer_backend() -> str:
     return backend
 
 
-def resolve_static_loras(server_args: Any) -> tuple[Any, ...]:
-    if not server_args.enable_lora:
+def resolve_static_loras(server_args: Any, lora_config: Any) -> tuple[Any, ...]:
+    if not lora_config.enable_lora:
         return ()
     if os.environ.get("ORBITKV_STATIC_LORA") != "1":
         raise ValueError(
             "OrbitKV requires immutable adapter identities; dynamic LoRA is unsupported. "
             "Set ORBITKV_STATIC_LORA=1 only for fixed startup --lora-paths."
         )
-    refs = tuple(getattr(server_args, "lora_paths", ()) or ())
+    refs = tuple(lora_config.lora_paths or ())
     if not refs:
         raise ValueError("OrbitKV static LoRA requires startup --lora-paths")
     ids = [getattr(ref, "lora_id", None) for ref in refs]
@@ -56,10 +56,13 @@ def validate_lora_request(req: Any, static_ids: frozenset[str]) -> None:
 
 
 def derive_namespace(
-    server_args: Any, params: Any, layout: GpuLayout, *, static_loras: tuple[Any, ...] | None = None
+    server_args: Any,
+    params: Any,
+    layout: GpuLayout,
+    *,
+    lora_config: Any,
+    static_loras: tuple[Any, ...],
 ) -> str:
-    if static_loras is None:
-        static_loras = resolve_static_loras(server_args)
     from sglang.srt.runtime_context import get_parallel
 
     parallel = get_parallel()
@@ -86,14 +89,14 @@ def derive_namespace(
             )
         },
     }
-    if server_args.enable_lora:
+    if lora_config.enable_lora:
         computation["static_lora"] = {
             "adapters": static_adapter_identity(
                 tuple((ref.lora_name, ref.lora_path) for ref in static_loras)
             ),
             "native_ids": sorted((ref.lora_name, ref.lora_id) for ref in static_loras),
             "configuration": {
-                name: getattr(server_args, name, None)
+                name: getattr(lora_config, name, None)
                 for name in (
                     "lora_backend",
                     "max_lora_rank",
@@ -104,7 +107,7 @@ def derive_namespace(
                     "lora_strict_loading",
                 )
             },
-            "target_modules": sorted(getattr(server_args, "lora_target_modules", ()) or ()),
+            "target_modules": sorted(lora_config.lora_target_modules or ()),
         }
     scale_path = getattr(server_args, "quantization_param_path", None)
     representation = {

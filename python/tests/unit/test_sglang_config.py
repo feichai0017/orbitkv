@@ -53,16 +53,16 @@ def test_static_sglang_requires_explicit_fixed_refs_and_no_session_bypass(monkey
     args = SimpleNamespace(enable_lora=True, lora_paths=[ref], enable_session_radix_cache=False)
     monkeypatch.delenv("ORBITKV_STATIC_LORA", raising=False)
     with pytest.raises(ValueError, match="dynamic LoRA"):
-        resolve_static_loras(args)
+        resolve_static_loras(args, args)
     monkeypatch.setenv("ORBITKV_STATIC_LORA", "1")
-    assert resolve_static_loras(args) == (ref,)
+    assert resolve_static_loras(args, args) == (ref,)
     args.enable_session_radix_cache = True
     with pytest.raises(ValueError, match="session"):
-        resolve_static_loras(args)
+        resolve_static_loras(args, args)
     args.enable_session_radix_cache = False
     args.lora_paths = [ref, ref]
     with pytest.raises(ValueError, match="unique"):
-        resolve_static_loras(args)
+        resolve_static_loras(args, args)
 
 
 @pytest.mark.parametrize("uid", [None, "a", "b"])
@@ -70,3 +70,14 @@ def test_static_lora_rejects_streaming_session_before_it_can_reuse_adapter_pages
     req = SimpleNamespace(lora_id=uid, extra_key=uid, session=object())
     with pytest.raises(ValueError, match="streaming sessions"):
         validate_lora_request(req, frozenset({"a", "b"}))
+
+
+def test_static_sglang_uses_resolved_lora_state_when_raw_enable_is_unspecified(monkeypatch):
+    monkeypatch.setenv("ORBITKV_STATIC_LORA", "1")
+    args = SimpleNamespace(enable_lora=None, lora_paths=["fixed=/adapter"])
+    ref = SimpleNamespace(lora_id="resolved-uid", lora_name="fixed", lora_path="/adapter")
+    resolved = SimpleNamespace(enable_lora=True, lora_paths=[ref])
+    assert resolve_static_loras(args, resolved) == (ref,)
+    validate_lora_request(
+        SimpleNamespace(lora_id=ref.lora_id, extra_key=ref.lora_id), frozenset({ref.lora_id})
+    )

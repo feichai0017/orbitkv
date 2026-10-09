@@ -26,16 +26,18 @@ def test_external_scale_contents_and_kv_dtype_isolate_cache(monkeypatch, tmp_pat
         kv_cache_dtype="fp8_e4m3",
         quantization_param_path=str(scales),
     )
+    lora = SimpleNamespace(enable_lora=False)
+    refs = ()
     params = SimpleNamespace(pp_rank=0, pp_size=1, attn_cp_rank=0, attn_cp_size=1)
     layout = SimpleNamespace(page_size=64, pools={})
-    original = derive_namespace(args, params, layout)
-    assert derive_namespace(args, params, layout) == original
+    original = derive_namespace(args, params, layout, lora_config=lora, static_loras=refs)
+    assert derive_namespace(args, params, layout, lora_config=lora, static_loras=refs) == original
     # Same filename and size; the model override must not hide changed scales.
     scales.write_text('{"k": 2.0, "v": 1.0}')
-    assert derive_namespace(args, params, layout) != original
+    assert derive_namespace(args, params, layout, lora_config=lora, static_loras=refs) != original
     scales.write_text('{"k": 1.0, "v": 1.0}')
     args.kv_cache_dtype = "auto"
-    assert derive_namespace(args, params, layout) != original
+    assert derive_namespace(args, params, layout, lora_config=lora, static_loras=refs) != original
 
 
 def test_static_adapter_namespace_consumes_content_uid_and_lora_backend(monkeypatch, tmp_path):
@@ -52,9 +54,9 @@ def test_static_adapter_namespace_consumes_content_uid_and_lora_backend(monkeypa
     weights.write_bytes(b"original")
     ref = SimpleNamespace(lora_name="fixed", lora_path=str(adapter), lora_id="native-uid")
     args = SimpleNamespace(
-        enable_lora=True,
-        lora_paths=[ref],
-        lora_backend="triton",
+        enable_lora=None,
+        lora_paths=["fixed=/raw-adapter"],
+        lora_backend="csgmv",
         dtype="bfloat16",
         attention_backend="flashinfer",
         prefill_attention_backend=None,
@@ -65,12 +67,16 @@ def test_static_adapter_namespace_consumes_content_uid_and_lora_backend(monkeypa
     )
     params = SimpleNamespace(pp_rank=0, pp_size=1, attn_cp_rank=0, attn_cp_size=1)
     layout = SimpleNamespace(page_size=64, pools={})
-    original = derive_namespace(args, params, layout)
+    lora = SimpleNamespace(
+        enable_lora=True, lora_paths=[ref], lora_backend="triton", lora_target_modules={"q_proj"}
+    )
+    refs = (ref,)
+    original = derive_namespace(args, params, layout, lora_config=lora, static_loras=refs)
     weights.write_bytes(b"replaced")
-    assert derive_namespace(args, params, layout) != original
+    assert derive_namespace(args, params, layout, lora_config=lora, static_loras=refs) != original
     weights.write_bytes(b"original")
-    args.lora_backend = "torch_native"
-    assert derive_namespace(args, params, layout) != original
-    args.lora_backend = "triton"
+    lora.lora_backend = "torch_native"
+    assert derive_namespace(args, params, layout, lora_config=lora, static_loras=refs) != original
+    lora.lora_backend = "triton"
     ref.lora_id = "different-native-uid"
-    assert derive_namespace(args, params, layout) != original
+    assert derive_namespace(args, params, layout, lora_config=lora, static_loras=refs) != original

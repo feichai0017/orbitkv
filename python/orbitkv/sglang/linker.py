@@ -69,10 +69,13 @@ class OrbitKVLinker(UnifiedCacheLinker):
         self.layer_done_counter = counter
         self.layout = counter.layout
         self.page_size = self.layout.page_size
-        static_loras = resolve_static_loras(server_args)
+        from sglang.srt.runtime_context import get_lora
+
+        lora_config = get_lora()
+        static_loras = resolve_static_loras(server_args, lora_config)
         self._static_lora_ids = frozenset(ref.lora_id for ref in static_loras)
         self.namespace = derive_namespace(
-            server_args, params, self.layout, static_loras=static_loras
+            server_args, params, self.layout, lora_config=lora_config, static_loras=static_loras
         )
         self.recovery = RecoveryContract(
             self.namespace,
