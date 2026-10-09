@@ -13,6 +13,7 @@ use tokio::net::UnixStream;
 use tokio::sync::watch;
 
 use crate::cache::lifecycle::{ControlError, LifecycleService};
+use crate::cache::query_control::QueryControlService;
 use crate::proto::engine::{RegisterContextRequest, SessionRequest, UnregisterRequest};
 
 pub(crate) async fn serve(
@@ -20,6 +21,7 @@ pub(crate) async fn serve(
     epoch: u64,
     lifecycle: LifecycleService,
     mut shutdown: watch::Receiver<bool>,
+    query_control: Option<QueryControlService>,
 ) {
     let connection = stream.try_clone().ok();
     let mut owners = HashMap::new();
@@ -52,7 +54,14 @@ pub(crate) async fn serve(
             }
             #[cfg(test)]
             super::test_pause::pause("lifecycle_after_request").await;
-            let result = dispatch(command, &payload, &lifecycle, &mut owners).await;
+            let result = dispatch(
+                command,
+                &payload,
+                &lifecycle,
+                &mut owners,
+                query_control.as_ref(),
+            )
+            .await;
             let (code, body, arenas) = match result {
                 Ok((body, arenas)) => (0, body, arenas),
                 Err(error) => (error.code, error.message.into_bytes(), Vec::new()),
@@ -113,8 +122,20 @@ async fn dispatch(
     payload: &[u8],
     lifecycle: &LifecycleService,
     owners: &mut HashMap<String, u64>,
+    query_control: Option<&QueryControlService>,
 ) -> Result<(Vec<u8>, Vec<orbitkv_core::PayloadArena>), ControlError> {
     match command {
+        LifecycleCommand::ExportQueryTarget => {
+            let request = SessionRequest::decode(payload)
+                .map_err(|error| ControlError::invalid_argument(error.to_string()))?;
+            let control = query_control.ok_or_else(|| {
+                ControlError::invalid_argument("registered query control is not enabled")
+            })?;
+            let target = control
+                .export(request)
+                .map_err(|error| ControlError::invalid_argument(error.message()))?;
+            return Ok((target.encode_to_vec(), Vec::new()));
+        }
         LifecycleCommand::Health => {
             if !payload.is_empty() {
                 return Err(ControlError::invalid_argument(

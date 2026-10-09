@@ -421,3 +421,29 @@ DRAM/SSD/peer restores, request cancellation, preemption, restart and advertised
 eager/graph modes. Record actual transfer bytes and resource drain, not output alone.
 TP/PP/attention-DP/EP, heterogeneous P/D and containers each need explicit cells.
 Latest releases are the upgrade reference; unrun cells remain open.
+
+### Registered TP query-control transport
+
+The experimental `--enable-query-control` Manager option enables a bounded
+query-interest service on `--addr` for trusted processes on the same host.
+Both the bound and advertised addresses must be loopback with nonzero ports;
+invalid endpoints are rejected before CUDA initialization. The transport does not
+provide local multi-user authentication or encrypted port forwarding. Cross-host
+activation requires an authenticated encrypted transport and separate qualification.
+It is disabled by default and does not require etcd. `CacheManagerClient.export_query_target()` exports opaque
+sealed-registration authority over authenticated local UDS, for engine handshake
+metadata. Network interest cannot register/unregister GPU mappings. Explicit Claim
+retains the same result for reply-loss retries; Close/expiry releases unconsumed
+shares and leaves accepted native work with its completion owner.
+
+Each interest admits at most 128 operation identities over its lifetime. Terminal
+identities remain retained for replay fencing, and Claim does not retire interest
+admission. Consumers must open a fresh interest per lookup and close it after
+native ownership handoff/completion; idle expiry is a bounded failure fallback.
+
+This transport primitive is independently accepted for the trusted same-host
+loopback authority and lease scope. The official vLLM handshake and Rust
+common-prefix coordinator are still missing; current scheduler TP queries still
+require access to every node-local UDS. No cross-host native TP model, HA or S3
+fault qualification is implied. See S5.5 in the completion plan for the next
+bounded delivery and hardware gates.

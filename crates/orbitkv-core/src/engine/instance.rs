@@ -402,6 +402,16 @@ pub(crate) struct GpuRegistration {
     pub(crate) layer_groups: HashMap<String, u32>,
 }
 
+/// Authority for querying one completed GPU registration, invalidated on replacement.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QueryRegistration {
+    pub generation: [u8; 16],
+    pub namespace: String,
+    pub storage_namespace: String,
+    pub tp_size: usize,
+    pub world_size: usize,
+}
+
 /// Instance context for a model inference process.
 ///
 /// An `InstanceContext` represents a single inference instance (e.g., one
@@ -410,6 +420,7 @@ pub(crate) struct GpuRegistration {
 pub struct InstanceContext {
     /// Unique instance identifier.
     id: String,
+    generation: uuid::Uuid,
 
     /// Namespace for model isolation (e.g., model name or tenant ID).
     namespace: String,
@@ -447,6 +458,7 @@ impl InstanceContext {
 
         Ok(Self {
             id,
+            generation: uuid::Uuid::new_v4(),
             namespace,
             tp_size,
             world_size,
@@ -455,6 +467,26 @@ impl InstanceContext {
                 gpu_contexts: HashMap::new(),
                 topology: None,
             }),
+        })
+    }
+
+    pub(crate) fn generation(&self) -> [u8; 16] {
+        *self.generation.as_bytes()
+    }
+
+    pub(crate) fn query_registration(&self) -> Result<QueryRegistration, EngineError> {
+        let topology = self.sealed_topology()?;
+        if topology.num_groups() != 1 {
+            return Err(EngineError::InvalidArgument(
+                "query control requires one cache group".into(),
+            ));
+        }
+        Ok(QueryRegistration {
+            generation: *self.generation.as_bytes(),
+            namespace: self.namespace.clone(),
+            storage_namespace: topology.cache_namespace.clone(),
+            tp_size: self.tp_size,
+            world_size: self.world_size,
         })
     }
 

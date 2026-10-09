@@ -659,3 +659,63 @@ fn prepared_results_remain_owned_until_claim_or_expiry_without_further_polling()
     );
     assert_eq!(queries.capacity.available_permits(), MAX_ACTIVE_QUERIES);
 }
+
+#[tokio::test]
+#[ignore = "requires a CUDA pinned pool for Manager query drain ownership"]
+async fn query_drain_fences_admission_before_waiting_and_after_permits_return() {
+    let engine = engine();
+    let hll = tracker();
+    let runtime = Handle::current();
+    let queries = Arc::new(parking_lot::Mutex::new(PendingQueries::default()));
+    let capacity = Arc::clone(&queries.lock().capacity);
+    let accepted_read = Arc::clone(&capacity).try_acquire_owned().unwrap();
+    let mut drain = Box::pin(PendingQueries::stop_and_drain(&queries, &engine));
+    std::future::poll_fn(|cx| {
+        assert!(drain.as_mut().poll(cx).is_pending());
+        Poll::Ready(())
+    })
+    .await;
+    assert_eq!(
+        capacity.available_permits(),
+        0,
+        "the drainer reserves free permits while the accepted read still owns its permit"
+    );
+    let assert_closed = || {
+        for (operation, mode) in [(1, "foreground"), (2, "warmup"), (3, "prepare")] {
+            let mut request = request(operation, 1);
+            request.warmup = mode == "warmup";
+            request.prepare = mode == "prepare";
+            let mut queries = queries.lock();
+            let error = queries
+                .execute(1, QueryCommand::Submit(request), &engine, &runtime, &hll)
+                .err()
+                .expect("shutdown must reject all new admission");
+            assert!(
+                error.to_string().contains("query admission stopped"),
+                "{mode}: {error}"
+            );
+            assert!(queries.pending.is_empty());
+            assert!(queries.sessions.is_empty());
+        }
+    };
+    assert_closed();
+    drop(accepted_read);
+    drain.as_mut().await.unwrap();
+    assert_eq!(capacity.available_permits(), MAX_ACTIVE_QUERIES);
+    assert_closed();
+    for operation in [1, 4] {
+        let mut queries = queries.lock();
+        assert!(
+            queries
+                .execute(
+                    1,
+                    QueryCommand::Submit(request(operation, 1)),
+                    &engine,
+                    &runtime,
+                    &hll
+                )
+                .is_err()
+        );
+        assert!(queries.sessions.is_empty());
+    }
+}

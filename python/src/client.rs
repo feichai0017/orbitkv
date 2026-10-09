@@ -18,7 +18,7 @@ use prost::Message;
 use pyo3::{
     exceptions::{PyTimeoutError, PyValueError},
     prelude::*,
-    types::PySlice,
+    types::{PyBytes, PySlice},
 };
 
 use crate::local_restore::{LocalCompletions, LocalRestore, LocalRestoreWorker};
@@ -488,6 +488,32 @@ impl PyCacheManagerClient {
             local.insert(key, Arc::new(worker));
             Ok((true, String::new()))
         })
+    }
+
+    /// Export sealed node-local query authority for released engine handshake metadata.
+    fn export_query_target(
+        &self,
+        py: Python<'_>,
+        instance_id: String,
+        namespace: String,
+        tp_size: u32,
+        world_size: u32,
+    ) -> PyResult<Py<PyBytes>> {
+        let reply = py
+            .detach(|| {
+                self.inner.channel().lifecycle(
+                    LifecycleCommand::ExportQueryTarget,
+                    &SessionRequest {
+                        instance_id,
+                        namespace,
+                        tp_size,
+                        world_size,
+                    }
+                    .encode_to_vec(),
+                )
+            })
+            .map_err(client_error)?;
+        Ok(PyBytes::new(py, &reply.payload).unbind())
     }
 
     fn health(&self, py: Python<'_>) -> PyResult<(bool, String)> {

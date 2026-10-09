@@ -1,4 +1,3 @@
-mod pending;
 mod restore;
 mod session;
 
@@ -32,6 +31,7 @@ use crate::cache::operations::{
     PublishInput, PublishLayerInput, QueryOutcome, RestoreInput, RestoreLeaseInput,
     execute_publish, execute_release, execute_restore,
 };
+use crate::cache::{pending, query_control::QueryControlService};
 
 const BOOTSTRAP_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const LIVENESS_POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -53,6 +53,8 @@ pub(crate) struct ProcessEndpoint {
     active_publishes: Arc<ActiveTasks>,
     lifecycle_connections: Arc<ActiveTasks>,
     lifecycle_shutdown: watch::Sender<bool>,
+    queries: Arc<parking_lot::Mutex<pending::PendingQueries>>,
+    engine: Arc<OrbitKVEngine>,
 }
 
 struct ActiveTasks {
@@ -207,6 +209,7 @@ impl ProcessEndpoint {
         read_batch_bytes: u64,
         read_timeout: Option<Duration>,
         read_max_batches: usize,
+        query_control: Option<QueryControlService>,
     ) -> Result<Self, ProcessEndpointError> {
         // A dead Manager's clients can keep its iceoryx2 service alive.
         // Publish a fresh incarnation through the stable bootstrap socket.
@@ -221,6 +224,16 @@ impl ProcessEndpoint {
         )?;
         bootstrap.set_nonblocking(true)?;
 
+        let queries = query_control.as_ref().map_or_else(
+            || Arc::new(parking_lot::Mutex::new(pending::PendingQueries::default())),
+            |control| Arc::clone(&control.queries),
+        );
+        {
+            let mut queries = queries.lock();
+            queries.read_batch_bytes = read_batch_bytes;
+            queries.read_timeout = read_timeout;
+            queries.read_max_batches = read_max_batches;
+        }
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
         let active_publishes = Arc::new(ActiveTasks::default());
@@ -230,6 +243,8 @@ impl ProcessEndpoint {
         let (lifecycle_shutdown, _) = watch::channel(false);
         let thread_lifecycle_shutdown = lifecycle_shutdown.clone();
         let thread_service = service_name.clone();
+        let endpoint_queries = Arc::clone(&queries);
+        let endpoint_engine = Arc::clone(&engine);
         let thread = thread::Builder::new()
             .name("orbitkv-channel-control".to_string())
             .spawn(move || {
@@ -241,10 +256,6 @@ impl ProcessEndpoint {
                 );
                 let mut sessions = HashMap::new();
                 let mut grants = HashMap::new();
-                let mut queries = pending::PendingQueries::default();
-                queries.read_batch_bytes = read_batch_bytes;
-                queries.read_timeout = read_timeout;
-                queries.read_max_batches = read_max_batches;
                 let mut next_bootstrap_poll = Instant::now();
                 let mut next_liveness_poll = Instant::now();
                 while !thread_stop.load(Ordering::Acquire) {
@@ -263,6 +274,7 @@ impl ProcessEndpoint {
                             session_epoch,
                             &thread_lifecycle_shutdown,
                             &thread_lifecycle_connections,
+                            query_control.clone(),
                         );
                         next_bootstrap_poll = now + BOOTSTRAP_POLL_INTERVAL;
                     }
@@ -275,7 +287,9 @@ impl ProcessEndpoint {
                             }
                         });
                         grants.retain(|token, _| sessions.contains_key(token));
-                        queries.retain_sessions(&engine, |token| sessions.contains_key(&token));
+                        queries.lock().retain_sessions(&engine, |token| {
+                            token % 2 == 0 || sessions.contains_key(&token)
+                        });
                         next_liveness_poll = now + LIVENESS_POLL_INTERVAL;
                     }
 
@@ -300,7 +314,7 @@ impl ProcessEndpoint {
                                 &engine,
                                 &runtime,
                                 &hll_tracker,
-                                &mut queries,
+                                &mut queries.lock(),
                                 &mut request_shutdown,
                             ))
                         }
@@ -333,6 +347,8 @@ impl ProcessEndpoint {
             active_publishes,
             lifecycle_connections,
             lifecycle_shutdown,
+            queries: endpoint_queries,
+            engine: endpoint_engine,
         })
     }
 
@@ -350,6 +366,10 @@ impl ProcessEndpoint {
         {
             error!("Process channel thread panicked during shutdown");
         }
+    }
+
+    pub(crate) async fn stop_queries_and_drain(&self) -> Result<(), EngineError> {
+        pending::PendingQueries::stop_and_drain(&self.queries, &self.engine).await
     }
 
     pub(crate) async fn stop_admission_and_drain_publishes(&self) {
@@ -387,6 +407,7 @@ fn accept_pending_sessions(
     epoch: u64,
     lifecycle_shutdown: &watch::Sender<bool>,
     lifecycle_connections: &Arc<ActiveTasks>,
+    query_control: Option<QueryControlService>,
 ) {
     loop {
         match bootstrap.try_accept() {
@@ -424,9 +445,10 @@ fn accept_pending_sessions(
                     Ok(stream) => {
                         let lifecycle = lifecycle.clone();
                         let shutdown = lifecycle_shutdown.subscribe();
+                        let query_control = query_control.clone();
                         runtime.spawn(async move {
                             let _active = active;
-                            session::serve(stream, epoch, lifecycle, shutdown).await;
+                            session::serve(stream, epoch, lifecycle, shutdown, query_control).await;
                         });
                     }
                     Err(error) => {

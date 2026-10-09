@@ -267,3 +267,52 @@ message InventoryServerFrame {
 service Inventory {
   rpc InventorySession(stream InventoryClientFrame) returns (stream InventoryServerFrame);
 }
+
+// Query interest is separate from GPU lifecycle and peer transfer authorization.
+// Targets are exported only over the authenticated node-local lifecycle socket.
+service CacheQueryControl {
+  rpc OpenInterest(OpenQueryInterestRequest) returns (QueryInterest);
+  rpc Execute(QueryControlExecuteRequest) returns (QueryControlResponse);
+  rpc Claim(QueryControlClaimRequest) returns (QueryControlResponse);
+  rpc Cancel(QueryControlCancelRequest) returns (QueryControlEmpty);
+  rpc Close(QueryInterest) returns (QueryControlEmpty);
+}
+message RegisteredQueryTarget {
+  uint32 version = 1;
+  string endpoint = 2;
+  string instance_id = 3;
+  string namespace = 4;
+  string storage_namespace = 5;
+  uint32 tp_size = 6;
+  uint32 world_size = 7;
+  bytes manager_incarnation = 8;
+  bytes registration_generation = 9;
+  bytes capability = 10;
+}
+message OpenQueryInterestRequest {
+  RegisteredQueryTarget target = 1;
+  bytes coordinator_incarnation = 2;
+}
+message QueryInterest {
+  bytes id = 1;
+  bytes manager_incarnation = 2;
+}
+message QueryControlExecuteRequest {
+  QueryInterest interest = 1;
+  bytes command = 2;
+}
+message QueryControlClaimRequest {
+  QueryInterest interest = 1;
+  uint64 operation_id = 2;
+  uint64 revision = 3;
+  bytes lease = 4;
+}
+message QueryControlCancelRequest {
+  QueryInterest interest = 1;
+  uint64 operation_id = 2;
+  uint64 revision = 3;
+}
+message QueryControlResponse {
+  bytes payload = 1;
+}
+message QueryControlEmpty {}

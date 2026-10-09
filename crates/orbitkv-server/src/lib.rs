@@ -62,8 +62,12 @@ pub struct Cli {
     pub addr: SocketAddr,
 
     /// Membership endpoint advertised to peers when it differs from --addr.
-    #[arg(long, requires = "etcd_endpoints")]
+    #[arg(long)]
     pub peer_advertise_addr: Option<SocketAddr>,
+
+    /// Enable registered TP query control for trusted processes over loopback.
+    #[arg(long, default_value_t = false)]
+    pub enable_query_control: bool,
 
     /// CUDA devices to initialize (comma-separated, e.g., "0,1,2,3").
     /// If not specified, auto-detects and initializes all available GPUs.
@@ -299,6 +303,26 @@ pub struct Cli {
     /// Per-client descriptor slot capacity.
     #[arg(long, default_value = "64kb", value_parser = parse_memory_size)]
     pub descriptor_slot_size: usize,
+}
+
+impl Cli {
+    fn query_control_address(&self) -> Result<Option<SocketAddr>, String> {
+        if !self.enable_query_control {
+            return Ok(None);
+        }
+        let advertised = self.peer_advertise_addr.unwrap_or(self.addr);
+        if !self.addr.ip().is_loopback()
+            || self.addr.port() == 0
+            || !advertised.ip().is_loopback()
+            || advertised.port() == 0
+        {
+            return Err(
+                "--enable-query-control requires loopback --addr and --peer-advertise-addr with nonzero ports; query control is restricted to trusted same-host processes"
+                    .into(),
+            );
+        }
+        Ok(Some(advertised))
+    }
 }
 
 fn parse_hll_bucket_bits(s: &str) -> Result<u8, String> {
@@ -557,6 +581,7 @@ fn init_metrics(
 /// Main entry point for the Cache Manager.
 pub fn run() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
+    let query_control_address = cli.query_control_address()?;
     orbitkv_common::logging::init_stdout_colored(&cli.log_level);
     info!(
         "Starting orbitkv-cache-manager v{}",
@@ -797,6 +822,14 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         )?);
         let lifecycle = cache::lifecycle::LifecycleService::new(Arc::clone(&engine), registry);
         let (service_name, session_epoch, bootstrap_socket, arena_size, slot_size) = channel_config;
+        let query_control = query_control_address.map(|address| {
+            cache::query_control::QueryControlService::new(
+                format!("http://{address}"),
+                Arc::clone(&engine),
+                Arc::clone(&hll_tracker),
+                runtime_handle.clone(),
+            )
+        });
         let mut channel_endpoint = endpoint::ProcessEndpoint::start(
             service_name,
             session_epoch,
@@ -811,7 +844,9 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             cli.query_read_batch as u64,
             (cli.query_read_timeout_ms != 0).then(|| Duration::from_millis(cli.query_read_timeout_ms)),
             if cli.query_read_max_batches == 0 { usize::MAX } else { cli.query_read_max_batches },
+            query_control.clone(),
         )?;
+        if let Some(control) = &query_control { control.start_reaper(); }
 
         // Spawn background GC task for stale inflight blocks and expired transfer locks
         {
@@ -885,43 +920,47 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             }
         };
 
-        if membership_view.is_some() {
-            let service = P2pTransferService::new(Arc::clone(&engine));
-            info!("Cache Manager peer control listening on {}", cli.addr);
-
-            const MAX_GRPC_MESSAGE_SIZE: usize = 64 * 1024 * 1024; // 64 MiB
-
-            let grpc_service = EngineServer::new(service)
-                .max_decoding_message_size(MAX_GRPC_MESSAGE_SIZE)
-                .max_encoding_message_size(MAX_GRPC_MESSAGE_SIZE);
-            let inventory_service = InventoryServer::new(
-                inventory_runtime
-                    .as_ref()
-                    .ok_or("missing distributed inventory runtime")?
-                    .service(),
-            )
-            .max_decoding_message_size(1024 * 1024)
-            .max_encoding_message_size(1024 * 1024);
-
-            if let Err(err) = Server::builder()
+        if membership_view.is_some() || query_control.is_some() {
+            const MAX_GRPC_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
+            let peer_service = membership_view.as_ref().map(|_| {
+                EngineServer::new(P2pTransferService::new(Arc::clone(&engine)))
+                    .max_decoding_message_size(MAX_GRPC_MESSAGE_SIZE)
+                    .max_encoding_message_size(MAX_GRPC_MESSAGE_SIZE)
+            });
+            let inventory_service = inventory_runtime.as_ref().map(|inventory| {
+                InventoryServer::new(inventory.service())
+                    .max_decoding_message_size(1024 * 1024)
+                    .max_encoding_message_size(1024 * 1024)
+            });
+            let query_service = query_control.clone().map(|control| {
+                proto::engine::cache_query_control_server::CacheQueryControlServer::new(control)
+                    .max_decoding_message_size(128 * 1024)
+                    .max_encoding_message_size(128 * 1024)
+            });
+            info!("Cache Manager control listening on {}", cli.addr);
+            if let Err(error) = Server::builder()
                 .http2_keepalive_interval(Some(GRPC_SERVER_HTTP2_KEEPALIVE_INTERVAL))
                 .http2_keepalive_timeout(Some(GRPC_SERVER_HTTP2_KEEPALIVE_TIMEOUT))
                 .concurrency_limit_per_connection(16)
-                .add_service(grpc_service)
-                .add_service(inventory_service)
+                .add_optional_service(peer_service)
+                .add_optional_service(inventory_service)
+                .add_optional_service(query_service)
                 .serve_with_shutdown(cli.addr, shutdown_signal)
                 .await
             {
-                error!("Server error: {err}");
-                return Err(err.into());
+                if let Some(control) = &query_control { control.stop(); }
+                error!("Server error: {error}");
+                return Err(error.into());
             }
         } else {
-            info!("Standalone Cache Manager ready; peer control is disabled");
+            info!("Standalone Cache Manager ready; network control is disabled");
             shutdown_signal.await;
         }
+        if let Some(control) = &query_control { control.stop(); }
 
         info!("Cache Manager stopped");
         channel_endpoint.stop_admission_and_drain_publishes().await;
+        channel_endpoint.stop_queries_and_drain().await?;
         channel_endpoint
             .stop_lifecycle_and_drain_connections()
             .await;

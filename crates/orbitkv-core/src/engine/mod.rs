@@ -444,16 +444,17 @@ impl OrbitKVEngine {
 
     /// Unregister an instance and release all associated resources.
     pub fn unregister_instance(&self, instance_id: &str) -> Result<(), EngineError> {
-        let removed = self
+        let mut instances = self
             .instances
             .write()
-            .expect("instances write lock poisoned")
-            .remove(instance_id);
-
-        if removed.is_none() {
-            return Err(EngineError::InstanceMissing(instance_id.to_string()));
-        }
+            .map_err(|_| EngineError::Poisoned("instances"))?;
+        let removed = instances
+            .remove(instance_id)
+            .ok_or_else(|| EngineError::InstanceMissing(instance_id.to_string()))?;
+        // No replacement registration may appear between removal and old lease retirement.
         self.query_leases.release_instance(instance_id);
+        drop(instances);
+        drop(removed);
         info!("Unregistered instance: {}", instance_id);
         Ok(())
     }
@@ -466,10 +467,10 @@ impl OrbitKVEngine {
             .expect("instances write lock poisoned");
         let ids: Vec<String> = instances.keys().cloned().collect();
         instances.clear();
-        drop(instances);
         for id in &ids {
             self.query_leases.release_instance(id);
         }
+        drop(instances);
         if !ids.is_empty() {
             info!("Unregistered all instances: {:?}", ids);
         }
@@ -506,6 +507,23 @@ impl OrbitKVEngine {
                 .map_err(EngineError::TopologyMismatch)?;
         }
         Ok(())
+    }
+
+    /// Test a previously exported sealed-registration generation without copying its layout.
+    pub fn has_query_registration(&self, instance_id: &str, generation: &[u8]) -> bool {
+        self.instances.read().is_ok_and(|instances| {
+            instances
+                .get(instance_id)
+                .is_some_and(|instance| instance.generation().as_slice() == generation)
+        })
+    }
+
+    /// Snapshot the exact sealed registration authorized by local lifecycle metadata.
+    pub fn query_registration(
+        &self,
+        instance_id: &str,
+    ) -> Result<instance::QueryRegistration, EngineError> {
+        self.get_instance(instance_id)?.query_registration()
     }
 
     /// Return the namespace associated with a registered instance.
