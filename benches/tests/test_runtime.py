@@ -1,6 +1,7 @@
 """Service teardown must retain caller-owned GPU exports until actual exit."""
 
 import contextlib
+import json
 import signal
 import subprocess
 from types import SimpleNamespace
@@ -71,3 +72,7 @@ def test_server_reaps_before_caller_releases_exports_even_after_kill_timeouts_an
     assert sent[0] == (Process.pid, signal.SIGTERM)
     assert all(item == (Process.pid, signal.SIGKILL) for item in sent[1:])
     assert handler["current"] is signal.default_int_handler
+    cleanup = json.loads((tmp_path / "manager.cleanup.json").read_text())
+    assert cleanup["pid"] == Process.pid
+    assert cleanup["exit_code"] == 0 and cleanup["reaped"]
+    assert cleanup["forced_kill"] == (len(sent) > 1)

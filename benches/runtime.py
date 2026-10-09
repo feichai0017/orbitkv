@@ -6,6 +6,7 @@ import contextlib
 import errno
 import hashlib
 import importlib.metadata
+import json
 import os
 import secrets
 import signal
@@ -73,10 +74,10 @@ def server(
             raise TimeoutError(f"Server startup timed out: {log}")
         yield process
     finally:
-        stop_owned_process(process)
+        stop_owned_process(process, log.with_suffix(".cleanup.json"))
 
 
-def stop_owned_process(process: subprocess.Popen) -> None:
+def stop_owned_process(process: subprocess.Popen, cleanup: Path | None = None) -> None:
     """Reap the service before callers can release exported GPU allocations."""
     interrupted = False
 
@@ -92,6 +93,7 @@ def stop_owned_process(process: subprocess.Popen) -> None:
         signal.signal(signal.SIGINT, defer_interrupt)
     graceful = True
     warned = False
+    exit_code = None
     try:
         while True:
             try:
@@ -99,7 +101,7 @@ def stop_owned_process(process: subprocess.Popen) -> None:
                 # in a driver has exited. Keep this scope alive until wait reaps it.
                 with contextlib.suppress(ProcessLookupError):
                     os.killpg(process.pid, signal.SIGTERM if graceful else signal.SIGKILL)
-                process.wait(timeout=30 if graceful else 10)
+                exit_code = process.wait(timeout=30 if graceful else 10)
                 break
             except subprocess.TimeoutExpired:
                 if not graceful and not warned:
@@ -119,6 +121,20 @@ def stop_owned_process(process: subprocess.Popen) -> None:
     finally:
         if defer_sigint:
             signal.signal(signal.SIGINT, previous)
+        if cleanup is not None:
+            cleanup.write_text(
+                json.dumps(
+                    {
+                        "pid": process.pid,
+                        "exit_code": exit_code,
+                        "forced_kill": not graceful,
+                        "reaped": exit_code is not None,
+                        "interrupted": interrupted,
+                    },
+                    indent=2,
+                )
+                + "\n"
+            )
     if interrupted:
         raise KeyboardInterrupt
 

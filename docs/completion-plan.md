@@ -1618,6 +1618,15 @@ fork-only factory, callback, default configuration or CI dependency may remain.
 
 ### S5.5 — Deployment matrix and upstream maintenance
 
+**Matched eager controls and service-exit evidence implemented (2026-10-10);
+model comparison qualification open:** the installed benchmark now consumes
+the official eager configuration of both selected releases and records the
+execution policy. Service cleanup exports the actual reaped leader exit code,
+forced-kill status and interruption separately. Benchmark contract tests pass;
+whole-process/GPU cleanup and released-backend model controls remain runtime
+gates. These measurement changes do not change production cache policy, transfer
+backend defaults or S2/S5 qualification.
+
 **Serving comparison readiness implemented; runtime qualification open
 (2026-10-09):** `benches.single_node --installed-artifact` selects installed
 packages and the bundled Manager, rejects a missing/source-shadowed OrbitKV

@@ -34,6 +34,11 @@ def main() -> None:
     )
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument(
+        "--enforce-eager",
+        action="store_true",
+        help="Disable engine Graph execution explicitly for matched eager controls",
+    )
+    parser.add_argument(
         "--installed-artifact",
         action="store_true",
         help="Use installed packages and the wheel's Manager; reject a source OrbitKV import",

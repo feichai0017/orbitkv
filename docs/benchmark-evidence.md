@@ -19,7 +19,7 @@ selected external `--ssd-dir` mount. Criterion measurements require an external
 ```bash
 .venv/vllm-release/bin/python -m benches.single_node \
   --engine vllm --backend orbitkv --model /path/to/immutable-model \
-  --installed-artifact \
+  --installed-artifact --enforce-eager \
   --output /var/tmp/orbitkv-bench/vllm-dram-001
 
 python -m benches.report /var/tmp/orbitkv-bench/vllm-dram-001 \
@@ -55,6 +55,14 @@ hybrid, P/D and Graph profiles need their own qualification. Use separate clean
 installed environments and freeze the resolved dependencies and all installed
 engine/cache files before and after each run. `--installed-artifact` keeps source
 adapters out of the child import path; it does not install or qualify dependencies.
+Use `--enforce-eager` for eager controls: it selects vLLM's released eager flag
+and disables both SGLang Graph phases through their released configuration.
+Omitting it retains each engine's default execution policy, recorded separately
+in the manifest. Run the benchmark from a Git checkout so the recorded revision
+identifies the consumed harness. Each service emits a `*.cleanup.json` containing
+the reaped leader's exit code and whether SIGKILL was needed; also check descendants,
+ports, sockets and GPU owners before accepting a run. A reaped leader alone does
+not establish that its workers or exported allocations have drained.
 
 | Backend | Purpose | Capacity control |
 | --- | --- | --- |
