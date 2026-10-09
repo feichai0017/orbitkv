@@ -5,16 +5,24 @@ request lifecycles. Start with the [single-node quickstart](single-node.md).
 The [completion plan](completion-plan.md#release-baseline-and-reference-policy)
 records release targets and upgrade gates. The package and source pins are
 vLLM **0.31.0** and SGLang **0.5.21**. Released callback contracts pass on A100;
-all four installed-wheel dense eager DRAM/io_uring cells pass locally;
-independent acceptance and broader qualification remain open. Historical
+ordinary-cache/restart and shared-Manager pressure have scoped independent
+acceptance; broader model, lifecycle and deployment qualification remains open. Historical
 0.30.0 eager/graph evidence does not qualify 0.31.0. Historical 0.29.0 model/topology evidence is not
 automatically transferred to the new release.
 
 The [installed-wheel gate](releases.md#validate-before-publishing) checks the
 selected official versions with cold/native-HBM/full/partial reuse and
 DRAM/io_uring SSD recovery. It rejects editable/source imports and changed
-installed files. Its dense TP=1/PP=1 eager profile is separate from graph, P/D
-and failure-lifetime qualification; see S5.2 for current acceptance status.
+installed files. Its default dense TP=1/PP=1 eager profile is independently
+qualified separately from P/D and failure lifetime. The explicit
+`--release-cuda-graph` profile also passes independent H20 qualification on both
+official engines with direct/kernel io_uring SSD: dense Qwen3-8B, serial batch=1,
+eight-token FULL decode, native HBM, full/partial restart recovery and vLLM idle
+reset. It requires native runtime Graph observations, not capture logs. This does
+not qualify adapters with Graph, capture batch sizes 2/4, prefill Graph, long
+decode, concurrency/preemption/cancellation, hybrid or other topology profiles.
+See [S5.3](completion-plan.md#s53--public-lifecycle-and-hybrid-state-contracts)
+for exact scope and immutable external evidence.
 The [shared-Manager gate](../python/tests/README.md#two-engines-sharing-one-manager)
 also passes locally for two simultaneous official engines and individual graceful
 restarts in DRAM/io_uring SSD. The final wheel also passes H20 direct/kernel
