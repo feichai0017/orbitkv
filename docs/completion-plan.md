@@ -1464,7 +1464,7 @@ Do not delete consumed safety behavior based on these proposals.
   alone cannot pass. Full/partial restores and vLLM reset-generation reuse each
   load 113,246,208 bytes through completed io_uring reads. All 32 outer services
   exit zero without helper force; applicable query/SSD drain gauges are zero,
-  installed RECORDs and 84 frozen inputs are unchanged, and owned postflight is
+  installed RECORD snapshots and 84 frozen inputs are unchanged, and owned postflight is
   empty. Native shutdown traces/child teardown warnings remain preserved; these
   are not S3 termination proof. Default eager stays unchanged. Preset capture
   sizes 2/4 do not qualify those runtime batches; long decode across save-block
