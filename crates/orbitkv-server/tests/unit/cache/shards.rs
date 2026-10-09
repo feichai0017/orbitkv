@@ -381,3 +381,105 @@ async fn replacement_revision_and_cancellation_drain_every_known_interest() {
     stop.send(()).unwrap();
     task.await.unwrap();
 }
+
+#[tokio::test]
+async fn replacement_busy_keeps_operation_retired_after_old_close() {
+    let (target, source, stop, task) = source_target(3, false, false).await;
+    let owner = ShardQueries::new(Handle::current());
+    install(&owner, 1, vec![target]);
+    let pressure = owner
+        .capacity
+        .clone()
+        .acquire_many_owned((CAPACITY - 2) as u32)
+        .await
+        .unwrap();
+    owner.execute(1, query(1, 1, 1)).unwrap();
+    let earlier = ready(
+        &owner,
+        QueryTicket {
+            operation_id: 1,
+            revision: 1,
+        },
+    )
+    .await;
+    source.loading.store(true, Ordering::Release);
+    owner.execute(1, query(2, 1, 4)).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while source.state.lock().open < 2 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(owner.capacity.available_permits(), 0);
+    assert_eq!(
+        owner.execute(1, query(2, 2, 1)).unwrap().outcome,
+        QueryOutcomeCode::Busy
+    );
+    for revision in [1, 2] {
+        assert!(
+            owner
+                .execute(
+                    1,
+                    QueryCommand::Poll(QueryTicket {
+                        operation_id: 2,
+                        revision,
+                    })
+                )
+                .is_err()
+        );
+    }
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while owner.capacity.available_permits() != 1 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+    drop(pressure);
+    for revision in [1, 2] {
+        assert_eq!(
+            owner.execute(1, query(2, revision, 4)).unwrap_err().code(),
+            Code::FailedPrecondition
+        );
+    }
+    {
+        let state = source.state.lock();
+        assert_eq!(state.open, 2);
+        assert_eq!(state.closed, 1);
+    }
+    assert_eq!(
+        owner
+            .execute(
+                1,
+                QueryCommand::Poll(QueryTicket {
+                    operation_id: 1,
+                    revision: 1,
+                })
+            )
+            .unwrap()
+            .control_id,
+        earlier.control_id
+    );
+    source.loading.store(false, Ordering::Release);
+    owner.execute(1, query(3, 1, 1)).unwrap();
+    let response = ready(
+        &owner,
+        QueryTicket {
+            operation_id: 3,
+            revision: 1,
+        },
+    )
+    .await;
+    assert_eq!(response.num_hit_blocks, 1);
+    owner.release(1, &response.control_id).unwrap();
+    owner.release(1, &earlier.control_id).unwrap();
+    owner.stop_and_drain().await.unwrap();
+    assert_eq!(owner.capacity.available_permits(), CAPACITY);
+    {
+        let state = source.state.lock();
+        assert_eq!(state.open, state.closed);
+    }
+    stop.send(()).unwrap();
+    task.await.unwrap();
+}

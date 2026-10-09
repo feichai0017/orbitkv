@@ -307,6 +307,7 @@ impl ShardQueries {
                 .is_some_and(|previous| previous.ticket != ticket)
             {
                 session.operations.remove(&ticket.operation_id);
+                session.retired = session.retired.max(ticket.operation_id);
             }
             if !session.operations.contains_key(&ticket.operation_id) {
                 if session.operations.len() >= PER_SESSION {
