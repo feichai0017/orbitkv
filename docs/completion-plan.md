@@ -1439,7 +1439,8 @@ Do not delete consumed safety behavior based on these proposals.
   vLLM 0.31.0 and SGLang 0.5.21 on H20, dense Qwen3-8B, TP=1/PP=1 eager,
   direct transfers and overlay io_uring SSD. Base/A/B cold requests miss;
   native HBM hits add no external query or load. Each restart restores
-  113,246,208 physical SSD bytes and exact native outputs/selected logprobs.
+  113,246,208 bytes through completed io_uring SSD reads and exact native
+  outputs/selected logprobs.
   Replacing A at the same name/path produces a cold miss with zero old-domain
   load. Installed engine/OrbitKV RECORD files and all frozen inputs stay unchanged;
   every outer service exits zero and owned GPU/process/socket postflight is empty.
