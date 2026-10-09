@@ -136,6 +136,10 @@ def test_two_manager_native_common_prefix_restores_exact_node_payload(tier, tmp_
         assert ready.num_hit_blocks == 2 and len(ready.leases) == 2
         assert all(len(lease) == 16 and any(lease) for lease in ready.leases)
         assert len(ready.control_id) == 16 and any(ready.control_id)
+        evidence["coordinator-ready"] = fetch_orbitkv_metrics(http[0])
+        assert evidence["coordinator-ready"]["orbitkv_shard_query_submissions_total"] >= 2
+        assert evidence["coordinator-ready"]["orbitkv_shard_query_active"] == 1
+        assert evidence["coordinator-ready"]["orbitkv_shard_query_holds"] == 1
         for context in contexts:
             context.get_kv_cache().zero_()
         torch.cuda.synchronize()

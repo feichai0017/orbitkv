@@ -184,7 +184,7 @@ impl ShardQueries {
         }).build();
         let weak = Arc::downgrade(&book);
         opentelemetry::global::meter("orbitkv-server")
-            .u64_observable_counter("orbitkv_shard_query_submissions_total")
+            .u64_observable_counter("orbitkv_shard_query_submissions")
             .with_callback(move |observer| {
                 if let Some(book) = weak.upgrade() {
                     observer.observe(book.lock().submitted, &[]);

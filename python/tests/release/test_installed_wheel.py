@@ -255,6 +255,9 @@ def run_cache_plan(engine, tier, model, directory, env, *, cuda_graph=False, que
                     start
                 ].get("orbitkv_ssd_cufile_read_bytes_total", 0), snapshots
         if query_control:
+            (directory / "query-control-final.json").write_text(
+                json.dumps({"snapshots": snapshots, "final": final}, indent=2) + "\n"
+            )
             assert final["orbitkv_shard_query_submissions_total"] > 0
             assert (
                 "registered query handshake configured: nodes=1 ranks=1"
