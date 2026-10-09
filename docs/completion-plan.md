@@ -1474,7 +1474,12 @@ Do not delete consumed safety behavior based on these proposals.
   `/root/orbitkv-artifacts/s5-graph-cache-qualification-20261009/reviewer/FINAL-REVIEW.md`.
 - **Registered TP query-control transport in review (2026-10-09):** the
   Manager adds opt-in capability-authorized Submit/Poll/Claim/Cancel/Close on its
-  existing control listener. Authenticated local lifecycle export binds a target
+  existing control listener, restricted to trusted same-host loopback endpoints.
+  Both bind and advertise addresses are validated before CUDA initialization;
+  cross-host activation requires protected transport and separate qualification.
+  Each interest retains at most 128 operation identities for its lifetime; callers
+  need a fresh interest per lookup and explicit close after native handoff.
+  Authenticated local lifecycle export binds a target
   to Manager incarnation, sealed registration generation, namespace/layout and
   local consumer count. Local and remote reads share `PendingQueries` admission;
   retained replies require explicit, idempotent claim. Registration generations

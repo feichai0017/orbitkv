@@ -425,13 +425,21 @@ Latest releases are the upgrade reference; unrun cells remain open.
 ### Registered TP query-control transport
 
 The experimental `--enable-query-control` Manager option enables a bounded
-query-interest service on `--addr`; use a concrete `--peer-advertise-addr` when
-workers must advertise another reachable address. It is disabled by default and
-does not require etcd. `CacheManagerClient.export_query_target()` exports opaque
+query-interest service on `--addr` for trusted processes on the same host.
+Both the bound and advertised addresses must be loopback with nonzero ports;
+invalid endpoints are rejected before CUDA initialization. The transport does not
+provide local multi-user authentication or encrypted port forwarding. Cross-host
+activation requires an authenticated encrypted transport and separate qualification.
+It is disabled by default and does not require etcd. `CacheManagerClient.export_query_target()` exports opaque
 sealed-registration authority over authenticated local UDS, for engine handshake
 metadata. Network interest cannot register/unregister GPU mappings. Explicit Claim
 retains the same result for reply-loss retries; Close/expiry releases unconsumed
 shares and leaves accepted native work with its completion owner.
+
+Each interest admits at most 128 operation identities over its lifetime. Terminal
+identities remain retained for replay fencing, and Claim does not retire interest
+admission. Consumers must open a fresh interest per lookup and close it after
+native ownership handoff/completion; idle expiry is a bounded failure fallback.
 
 This is a transport primitive in review. The official vLLM handshake and Rust
 common-prefix coordinator are still missing; current scheduler TP queries still

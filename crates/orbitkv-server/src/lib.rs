@@ -65,7 +65,7 @@ pub struct Cli {
     #[arg(long)]
     pub peer_advertise_addr: Option<SocketAddr>,
 
-    /// Enable capability-authorized prefix query control for registered TP shards.
+    /// Enable registered TP query control for trusted processes over loopback.
     #[arg(long, default_value_t = false)]
     pub enable_query_control: bool,
 
@@ -303,6 +303,26 @@ pub struct Cli {
     /// Per-client descriptor slot capacity.
     #[arg(long, default_value = "64kb", value_parser = parse_memory_size)]
     pub descriptor_slot_size: usize,
+}
+
+impl Cli {
+    fn query_control_address(&self) -> Result<Option<SocketAddr>, String> {
+        if !self.enable_query_control {
+            return Ok(None);
+        }
+        let advertised = self.peer_advertise_addr.unwrap_or(self.addr);
+        if !self.addr.ip().is_loopback()
+            || self.addr.port() == 0
+            || !advertised.ip().is_loopback()
+            || advertised.port() == 0
+        {
+            return Err(
+                "--enable-query-control requires loopback --addr and --peer-advertise-addr with nonzero ports; query control is restricted to trusted same-host processes"
+                    .into(),
+            );
+        }
+        Ok(Some(advertised))
+    }
 }
 
 fn parse_hll_bucket_bits(s: &str) -> Result<u8, String> {
@@ -561,6 +581,7 @@ fn init_metrics(
 /// Main entry point for the Cache Manager.
 pub fn run() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
+    let query_control_address = cli.query_control_address()?;
     orbitkv_common::logging::init_stdout_colored(&cli.log_level);
     info!(
         "Starting orbitkv-cache-manager v{}",
@@ -801,18 +822,14 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         )?);
         let lifecycle = cache::lifecycle::LifecycleService::new(Arc::clone(&engine), registry);
         let (service_name, session_epoch, bootstrap_socket, arena_size, slot_size) = channel_config;
-        let query_control = if cli.enable_query_control {
-            let address = cli.peer_advertise_addr.unwrap_or(cli.addr);
-            if address.ip().is_unspecified() || address.port() == 0 {
-                return Err("query control requires a concrete advertised address".into());
-            }
-            Some(cache::query_control::QueryControlService::new(
+        let query_control = query_control_address.map(|address| {
+            cache::query_control::QueryControlService::new(
                 format!("http://{address}"),
                 Arc::clone(&engine),
                 Arc::clone(&hll_tracker),
                 runtime_handle.clone(),
-            ))
-        } else { None };
+            )
+        });
         let mut channel_endpoint = endpoint::ProcessEndpoint::start(
             service_name,
             session_epoch,

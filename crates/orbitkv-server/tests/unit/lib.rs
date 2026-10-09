@@ -286,3 +286,42 @@ fn parse_hll_windows_rejects_duplicate_durations() {
 
     assert!(err.contains("duplicate HLL window duration"), "{err}");
 }
+
+#[test]
+fn query_control_requires_loopback_before_runtime_initialization() {
+    for (bind, advertised, enabled, accepted) in [
+        ("127.0.0.1:50055", None, true, true),
+        ("[::1]:50055", None, true, true),
+        ("127.0.0.2:50055", Some("127.0.0.3:50056"), true, true),
+        ("[::1]:50055", Some("[::1]:50056"), true, true),
+        ("0.0.0.0:50055", Some("127.0.0.1:50055"), true, false),
+        ("[::]:50055", Some("[::1]:50055"), true, false),
+        ("192.0.2.1:50055", Some("127.0.0.1:50055"), true, false),
+        ("127.0.0.1:50055", Some("192.0.2.1:50055"), true, false),
+        ("[::1]:50055", Some("[2001:db8::1]:50055"), true, false),
+        ("127.0.0.1:0", Some("127.0.0.1:50055"), true, false),
+        ("127.0.0.1:50055", Some("127.0.0.1:0"), true, false),
+        ("0.0.0.0:50055", Some("192.0.2.1:50055"), false, true),
+    ] {
+        let mut args = vec!["orbitkv-cache-manager", "--addr", bind];
+        if let Some(advertised) = advertised {
+            args.extend(["--peer-advertise-addr", advertised]);
+        }
+        if enabled {
+            args.push("--enable-query-control");
+        }
+        let cli = Cli::try_parse_from(args).unwrap();
+        let address = cli.query_control_address();
+        assert_eq!(
+            address.is_ok(),
+            accepted,
+            "{bind}, {advertised:?}, {enabled}"
+        );
+        if accepted {
+            assert_eq!(
+                address.unwrap(),
+                enabled.then(|| advertised.unwrap_or(bind).parse().unwrap())
+            );
+        }
+    }
+}
