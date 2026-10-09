@@ -274,9 +274,17 @@ impl OrbitKVEngine {
             .group_block_bytes(group_id)?
             .checked_mul(blocks as u64)
             .ok_or_else(|| EngineError::InvalidArgument("query bytes overflow".into()))?;
-        Ok(self
-            .query_budget
-            .reserve(instance_id, &topology.cache_namespace, bytes, mode))
+        Ok(
+            match self
+                .query_budget
+                .reserve(instance_id, &topology.cache_namespace, bytes, mode)
+            {
+                QueryAdmission::Admitted(reservation) => {
+                    QueryAdmission::Admitted(reservation.bind_registration(instance.generation()))
+                }
+                admission => admission,
+            },
+        )
     }
 
     /// Move preparation ownership into the result lease and then GPU consumers.
@@ -287,8 +295,16 @@ impl OrbitKVEngine {
         blocks: Vec<RestoreSource>,
     ) -> Result<QueryLeaseId, EngineError> {
         let instance_id = reservation.instance();
-        let instance = self.get_instance(instance_id)?;
-        if instance.sealed_topology()?.cache_namespace != reservation.namespace() {
+        let instances = self
+            .instances
+            .read()
+            .map_err(|_| EngineError::Poisoned("instances"))?;
+        let instance = instances
+            .get(instance_id)
+            .ok_or_else(|| EngineError::InstanceMissing(instance_id.into()))?;
+        if reservation.registration_generation() != Some(instance.generation())
+            || instance.sealed_topology()?.cache_namespace != reservation.namespace()
+        {
             return Err(EngineError::InvalidArgument(
                 "query instance registration changed".into(),
             ));

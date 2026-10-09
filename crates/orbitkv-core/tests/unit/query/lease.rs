@@ -180,3 +180,48 @@ fn disconnect_releases_ready_interest_but_not_a_gpu_consumers_reservation() {
         crate::QueryAdmission::Admitted(_)
     ));
 }
+
+#[test]
+fn registration_fence_rejects_old_leases_before_consuming_any_share() {
+    let manager = QueryLeaseManager::default();
+    let budget = crate::query::QueryBudget::new(4096, 4096).unwrap();
+    let crate::query::QueryAdmission::Admitted(reservation) = budget.reserve(
+        "instance",
+        "same-layout",
+        32,
+        crate::query::QueryMode::Demand,
+    ) else {
+        panic!("reservation must fit")
+    };
+    let reservation = reservation.bind_registration([1; 16]);
+    let token = manager.create(
+        "instance",
+        vec![RestoreSource::Memory(Arc::new(SealedBlock::from_slots(
+            vec![],
+        )))],
+        2,
+        Some((
+            crate::query::QueryOwner {
+                session: 2,
+                operation: 1,
+                revision: 1,
+            },
+            reservation,
+        )),
+    );
+    manager
+        .validate_registration(std::iter::once(&token), [1; 16])
+        .unwrap();
+    assert!(
+        manager
+            .validate_registration(std::iter::once(&token), [2; 16])
+            .is_err()
+    );
+    assert_eq!(
+        manager.inner.leases.lock().unwrap()[&token].remaining_consumers,
+        2
+    );
+    manager
+        .validate_registration(std::iter::once(&token), [1; 16])
+        .unwrap();
+}

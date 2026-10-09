@@ -80,7 +80,7 @@ pub enum QueryAdmission {
 /// Accounting is conservative: two owners of the same pages each reserve bytes.
 /// The pinned allocator separately measures physical memory shared by owners.
 #[derive(Clone)]
-pub struct QueryReservation(Arc<Reservation>);
+pub struct QueryReservation(Arc<Reservation>, Option<[u8; 16]>);
 
 struct Reservation {
     budget: Arc<QueryBudget>,
@@ -182,12 +182,15 @@ impl QueryBudget {
             Phase::Preparing
         };
         account(bytes as i64, phase);
-        QueryAdmission::Admitted(QueryReservation(Arc::new(Reservation {
-            budget: Arc::clone(self),
-            instance: instance.into(),
-            namespace: namespace.into(),
-            state: Mutex::new((bytes, phase)),
-        })))
+        QueryAdmission::Admitted(QueryReservation(
+            Arc::new(Reservation {
+                budget: Arc::clone(self),
+                instance: instance.into(),
+                namespace: namespace.into(),
+                state: Mutex::new((bytes, phase)),
+            }),
+            None,
+        ))
     }
 }
 
@@ -198,6 +201,15 @@ fn account(bytes: i64, phase: Phase) {
 }
 
 impl QueryReservation {
+    pub(crate) fn bind_registration(mut self, generation: [u8; 16]) -> Self {
+        self.1 = Some(generation);
+        self
+    }
+
+    pub(crate) fn registration_generation(&self) -> Option<[u8; 16]> {
+        self.1
+    }
+
     pub(crate) fn instance(&self) -> &str {
         &self.0.instance
     }

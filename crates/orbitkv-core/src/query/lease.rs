@@ -119,6 +119,31 @@ impl QueryLeaseManager {
         }
     }
 
+    pub(crate) fn validate_registration<'a>(
+        &self,
+        tokens: impl Iterator<Item = &'a QueryLeaseId>,
+        generation: [u8; 16],
+    ) -> Result<(), EngineError> {
+        let leases = self
+            .inner
+            .leases
+            .lock()
+            .map_err(|_| EngineError::Poisoned("query leases"))?;
+        for token in tokens {
+            let lease = leases
+                .get(token)
+                .ok_or_else(|| EngineError::Storage("query lease is unknown or expired".into()))?;
+            if let Some((_, reservation)) = &lease.ownership
+                && reservation.registration_generation() != Some(generation)
+            {
+                return Err(EngineError::InvalidArgument(
+                    "query lease registration changed".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Validate the whole batch before consuming any lease share. The validator
     /// runs under the lease lock and must not perform I/O or re-enter this manager.
     pub(crate) fn consume_batch<T>(

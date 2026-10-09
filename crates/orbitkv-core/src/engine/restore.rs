@@ -146,8 +146,16 @@ impl OrbitKVEngine {
         loads: &[(QueryLeaseId, Vec<Vec<Option<usize>>>)],
     ) -> Result<RestoreExecution, EngineError> {
         let decode_ready_started = std::time::Instant::now();
-        let instance = self.get_instance(instance_id)?;
+        let instances = self
+            .instances
+            .read()
+            .map_err(|_| EngineError::Poisoned("instances"))?;
+        let instance = instances
+            .get(instance_id)
+            .ok_or_else(|| EngineError::InstanceMissing(instance_id.into()))?;
         let topology = instance.sealed_topology()?;
+        self.query_leases
+            .validate_registration(loads.iter().map(|(lease, _)| lease), instance.generation())?;
         let gpu = instance
             .get_gpu(device_id)
             .ok_or_else(|| EngineError::WorkerMissing(instance_id.to_string(), device_id))?;
@@ -206,6 +214,7 @@ impl OrbitKVEngine {
             loads,
             &layouts,
         )?;
+        drop(instances);
         trace_drop!(lookup);
         trace_scope!("load.build_tasks");
         if let Some((plans, bytes, fragments)) = prepared.raw {

@@ -1472,6 +1472,20 @@ Do not delete consumed safety behavior based on these proposals.
   capture, hybrid and physical topology profiles remain separate. Frozen contract,
   raw evidence and scoped review:
   `/root/orbitkv-artifacts/s5-graph-cache-qualification-20261009/reviewer/FINAL-REVIEW.md`.
+- **Registered TP query-control transport in review (2026-10-09):** the
+  Manager adds opt-in capability-authorized Submit/Poll/Claim/Cancel/Close on its
+  existing control listener. Authenticated local lifecycle export binds a target
+  to Manager incarnation, sealed registration generation, namespace/layout and
+  local consumer count. Local and remote reads share `PendingQueries` admission;
+  retained replies require explicit, idempotent claim. Registration generations
+  also fence late query completion and final lease consumption. Shutdown cancels
+  interest and waits for submitted query work before lifecycle/storage drain.
+  This transport does not implement scheduler common-prefix coordination or
+  consume the official worker handshake yet; current TP scheduler still requires
+  local UDS access to every shard. The source/protocol controls and real CUDA
+  byte gate are separate from the forthcoming installed-artifact and adapter
+  qualification. Source, freeze and review:
+  `/root/orbitkv-artifacts/s5-tp-query-control-20261009/`.
 - **Qualification open:** Full + SWA + temporal recurrent native serving, page
   reuse under preemption, cancellation, engine restart and each advertised graph
   mode. Exact synthetic GPU recovery does not establish native model support.

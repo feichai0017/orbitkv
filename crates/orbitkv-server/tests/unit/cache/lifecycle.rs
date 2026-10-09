@@ -41,6 +41,7 @@ async fn process_channel_lifecycle_and_cache_control_need_no_grpc() {
         0,
         None,
         usize::MAX,
+        None,
     )
     .unwrap();
     let (first, second) = tokio::task::spawn_blocking(move || {
@@ -160,6 +161,7 @@ async fn lifecycle_shutdown_latches_while_an_accepted_request_finishes() {
         0,
         None,
         usize::MAX,
+        None,
     )
     .unwrap();
     let client = Arc::new(

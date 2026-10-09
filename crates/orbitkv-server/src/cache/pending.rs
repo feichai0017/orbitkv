@@ -1,8 +1,8 @@
 //! Own versioned query operations without blocking the process dispatcher.
 use std::collections::HashMap;
-use std::future::{Future, poll_fn};
+use std::future::Future;
 use std::sync::{Arc, Mutex};
-use std::task::Poll;
+use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
 
 use crate::metric::hll::MultiWindowHllTracker;
@@ -145,6 +145,34 @@ impl PendingQueries {
                 false
             }
         });
+    }
+
+    pub(crate) async fn stop_and_drain(
+        queries: &Arc<parking_lot::Mutex<Self>>,
+        engine: &OrbitKVEngine,
+    ) -> Result<(), EngineError> {
+        let capacity = {
+            let mut queries = queries.lock();
+            queries.pending.clear();
+            for token in queries.sessions.keys() {
+                engine.release_query_session(*token);
+            }
+            queries.sessions.clear();
+            Arc::clone(&queries.capacity)
+        };
+        // Submitted reads retain their permits until native completion, even
+        // when cancellation removes their result receiver.
+        let _drained = capacity
+            .acquire_many_owned(MAX_ACTIVE_QUERIES as u32)
+            .await
+            .map_err(|_| EngineError::Storage("query admission closed before drain".into()))?;
+        Ok(())
+    }
+
+    pub(crate) fn close_session(&mut self, token: u64, engine: &OrbitKVEngine) {
+        self.pending.retain(|(session, _), _| *session != token);
+        self.sessions.remove(&token);
+        engine.release_query_session(token);
     }
 
     pub(crate) fn cancel(&mut self, token: u64, ticket: QueryTicket, engine: &OrbitKVEngine) {
@@ -504,7 +532,8 @@ impl PendingQueries {
         runtime: &Handle,
     ) -> Option<QueryReply> {
         let mut query = Box::pin(query);
-        match runtime.block_on(poll_fn(|cx| Poll::Ready(query.as_mut().poll(cx)))) {
+        let _entered = runtime.enter();
+        match query.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
             Poll::Ready(reply) => {
                 if self.pending[&key].request.prepare {
                     let (sender, receiver) = oneshot::channel();
@@ -535,5 +564,5 @@ impl PendingQueries {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/endpoint/pending.rs"]
+#[path = "../../tests/unit/cache/pending.rs"]
 mod tests;

@@ -38,6 +38,7 @@ fn start_endpoint() -> (ProcessEndpoint, PathBuf, Arc<Notify>) {
         0,
         None,
         usize::MAX,
+        None,
     )
     .unwrap();
     (endpoint, socket, shutdown)

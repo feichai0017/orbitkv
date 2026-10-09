@@ -421,3 +421,20 @@ DRAM/SSD/peer restores, request cancellation, preemption, restart and advertised
 eager/graph modes. Record actual transfer bytes and resource drain, not output alone.
 TP/PP/attention-DP/EP, heterogeneous P/D and containers each need explicit cells.
 Latest releases are the upgrade reference; unrun cells remain open.
+
+### Registered TP query-control transport
+
+The experimental `--enable-query-control` Manager option enables a bounded
+query-interest service on `--addr`; use a concrete `--peer-advertise-addr` when
+workers must advertise another reachable address. It is disabled by default and
+does not require etcd. `CacheManagerClient.export_query_target()` exports opaque
+sealed-registration authority over authenticated local UDS, for engine handshake
+metadata. Network interest cannot register/unregister GPU mappings. Explicit Claim
+retains the same result for reply-loss retries; Close/expiry releases unconsumed
+shares and leaves accepted native work with its completion owner.
+
+This is a transport primitive in review. The official vLLM handshake and Rust
+common-prefix coordinator are still missing; current scheduler TP queries still
+require access to every node-local UDS. No cross-host native TP model, HA or S3
+fault qualification is implied. See S5.5 in the completion plan for the next
+bounded delivery and hardware gates.

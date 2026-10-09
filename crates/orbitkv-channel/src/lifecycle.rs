@@ -13,7 +13,7 @@ use rustix::net::{
 pub const LIFECYCLE_HEADER_BYTES: usize = 20;
 pub const MAX_LIFECYCLE_PAYLOAD: usize = 64 * 1024 * 1024;
 const MAGIC: u32 = 0x4f52_424c;
-const VERSION: u16 = 4;
+const VERSION: u16 = 5;
 
 /// Payload arenas are attached only to successful GPU registration replies.
 pub const MAX_LIFECYCLE_FDS: usize = 64;
@@ -111,6 +111,7 @@ pub enum LifecycleCommand {
     Register = 2,
     Unregister = 3,
     Session = 4,
+    ExportQueryTarget = 5,
 }
 
 impl TryFrom<u16> for LifecycleCommand {
@@ -122,6 +123,7 @@ impl TryFrom<u16> for LifecycleCommand {
             2 => Ok(Self::Register),
             3 => Ok(Self::Unregister),
             4 => Ok(Self::Session),
+            5 => Ok(Self::ExportQueryTarget),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "unknown lifecycle command",
