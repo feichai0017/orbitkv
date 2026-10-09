@@ -1623,9 +1623,20 @@ model comparison qualification open:** the installed benchmark now consumes
 the official eager configuration of both selected releases and records the
 execution policy. Service cleanup exports the actual reaped leader exit code,
 forced-kill status and interruption separately. Benchmark contract tests pass;
-whole-process/GPU cleanup and released-backend model controls remain runtime
-gates. These measurement changes do not change production cache policy, transfer
-backend defaults or S2/S5 qualification.
+the dedicated Forge H20 controls pass for native HBM, native CPU offload/HiCache
+and OrbitKV on both selected releases, plus vLLM LMCache 0.5.5. All 21 successful
+request outputs match the cold references and matched backends; post-run installed
+file hashes remain unchanged. SGLang LMCache startup is blocked by its missing
+released `lmcache_mp_metadata` module; the existing upstream MP fix is not in
+0.5.5. Each cell's cleanup retains literal service exit codes and reaped workers:
+SGLang's own shutdown kills its engine process tree, so its leader exit is -9,
+not zero, without a harness SIGKILL. These are readiness controls with one sample
+per phase, unqualified sampler overhead and possible shape/JIT warmup; formal
+order-alternated serving comparisons remain open. Inputs, failures, raw cells
+and postflight evidence are at
+`/root/orbitkv-artifacts/s4-serving-cold-read-20261010/`;
+independent review remains open. These measurement changes do not change
+production cache policy, transfer backend defaults or S2/S5 qualification.
 
 **Serving comparison readiness implemented; runtime qualification open
 (2026-10-09):** `benches.single_node --installed-artifact` selects installed
@@ -1637,9 +1648,10 @@ and rejected package origins. This changes the measurement launcher only.
 The next comparison uses each official selected engine separately: native HBM,
 native CPU offload/HiCache, OrbitKV and the LMCache 0.5.5 MP target, with matched
 model, GPU/host budgets, requests and independent order-alternated runs.
-Fresh official environments and model artifacts on the two H20 hosts still need
-freezing and startup/output controls before a serving campaign. Local legacy
-environments at `/root/orbitkv/.venv/{vllm,sglang}-release` resolve to
+Fresh official environments and immutable Qwen3-8B artifacts on the two H20 hosts
+are frozen and have the scoped startup/output controls above. Formal warmup,
+sampler overhead, repeated run order and sustained serving gates remain open.
+Local legacy environments at `/root/orbitkv/.venv/{vllm,sglang}-release` resolve to
 0.29.0/0.5.20 and must not be relabeled as 0.31.0/0.5.21 evidence. The sustained
 decode-time-per-token field is an aggregate proxy; per-token ITL distributions
 and SLO goodput instrumentation remain open. Distributed LMCache needs
@@ -1882,9 +1894,25 @@ readiness and descriptive timing evidence are at
 with complete raw host mirrors and the frozen plan beside it.
 This descriptive timing substage does not launch a formal
 isolation/HA campaign, expand support, close S5 or change production policy.
-The next measured execution gap is cold TENT READ startup; isolate segment,
-connection and progress costs before a production change. CUDA optimization
-requires separate device-event DMA/kernel measurements and a matched KDA
+**First native READ stages measured (2026-10-10), independent review open:**
+`benches.tent_stage` uses the same frozen TENT libraries with private CPU mmap
+buffers. Ten fresh consumers across both directions complete 110 full 8 MiB
+payload oracles; twelve endpoints exit zero and their recorded PIDs disappear.
+Cold READ is 165.613–211.246 ms, with more than 99% between submit return and
+terminal observation. Warm READ medians are 0.181/0.187 ms. The cheap open call
+does not exclude lazy metadata discovery, QP bootstrap or worker scheduling
+inside the completion interval. CPU buffers, polling and n=5 per direction do
+not establish model latency, a transport defect, tail qualification or GPU-direct
+destination recovery. The final source/consumer control protocol additionally
+passes a six-READ byte/drain smoke; all native libraries remain unchanged.
+Raw cohorts and prior preparation failures are at
+`/root/orbitkv-artifacts/s4-serving-cold-read-20261010/`.
+
+The next measured execution gap is TENT's first post-submit completion path;
+separate lazy metadata/QP/bootstrap and worker scheduling before a production
+candidate. Keep buffer registration and source authorization outside speculative
+warmup, and require matched first-recovery controls for any promoted change.
+CUDA optimization requires separate device-event DMA/kernel measurements and a matched KDA
 comparison; client restore timing alone does not establish a kernel bottleneck.
 See [the maintained methodology](shared-cache-qualification.md#full-manager-remote-dram-path-timing).
 

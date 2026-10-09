@@ -79,6 +79,17 @@ combination before measurement. Its
 documents the server/configuration boundary. A launcher option or successful
 import does not prove model serving or compatible native kernels.
 
+The selected SGLang 0.5.21 MP integration imports
+`lmcache.integration.sglang.lmcache_mp_metadata`, absent from the released
+LMCache 0.5.5 wheel. Its official startup control is blocked. The
+[current upstream quickstart](https://docs.lmcache.ai/getting_started/quickstart.html)
+requires the unified MP changes in
+[SGLang #38652](https://github.com/sgl-project/sglang/pull/38652) and
+[LMCache #4828](https://github.com/LMCache/LMCache/pull/4828); the latter merged
+after the 0.5.5 release. Keep that comparison cell unavailable until a consumed
+official release contains the required module. Do not patch installed engines
+or substitute an upstream main checkout for a release comparison.
+
 Freeze model/tokenizer content hashes, tokenized prompts, output length, seed,
 arrival/concurrency pattern, page/chunk size, GPU KV bytes, host/SSD capacity,
 NUMA placement and eager/Graph mode. Record actual effective cache capacity,
@@ -125,6 +136,16 @@ preheated transfer. Test packed and fragmented layouts, message-size crossover,
 one/two/four NIC selections, NUMA placement and concurrent clients/GPU pairs.
 Registration or a transport's internal counter alone does not prove physical
 GPUDirect RDMA; retain NIC counters, payload checks and negative route controls.
+
+`benches.tent_stage` exposes a private CPU-mmap READ diagnostic through the
+pinned C ABI. Its open/allocate/submit/terminal/free intervals separate the API
+boundaries; lazy metadata and QP initialization may still occur after submit.
+The one-millisecond polling backoff is part of the observation. SHA validation
+is outside native timing. Require fresh consumer processes for cold samples,
+exact payload checks, accepted batch free and source stop after all readers
+drain. See [the protocol](../benches/README.md#native-tent-first-read-diagnostic).
+This cannot establish Manager or model latency, physical GPUDirect RDMA, or
+native requester-crash reclamation.
 
 NVLink is a same-host GPU fabric. Hardware link status is readiness evidence,
 not measured payload bandwidth or proof that TENT selects a local path. Verify

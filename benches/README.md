@@ -10,6 +10,7 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | --- | --- |
 | `client.py` | Admitted-query polling overhead with a held byte budget; no storage or model compute in the timed loop |
 | `communication.py` | Real Query miss/hit, Publish D2H, Restore submit-to-ready and empty-restore controls using matching external artifacts |
+| `tent_stage.py` | Frozen native C ABI CPU-buffer READ stages; explicit source/consumer control and terminal batch drain |
 | `cpu_codec.rs` | Production scalar/AVX2/AVX-512/auto CPU FP8 conversion with an independent oracle before timing |
 | `cost_observations.py` | Same-binary off/on observation overhead, three reversed-order pairs on both engines |
 | `metadata.py` | Explicit full-Manager 0/2/5 ms metadata coalescing comparison using frozen binaries |
@@ -35,6 +36,34 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | `tests/` | CPU-only checks for measurement and report correctness |
 | `artifacts.py` | Validate external output locations, including symlink resolution |
 | `reproduce_preparation.sh` | Repeated preparation controls with an explicit external output root |
+
+### Native TENT first READ diagnostic
+
+Run `python -m benches.tent_stage --bind HOST_ADDRESS --native-lib /frozen/native-lib
+--role source` on the source and the same command with `--role consumer` on a
+different host. Freeze libraries, the RDMA-only TENT configuration, NIC allowlist,
+program and workload before launch; capture each endpoint's stdout/stderr in an
+external artifact directory. A controller must keep both stdin pipes open and
+parse the JSON `ready` record containing the registered CPU address and endpoint.
+Send the consumer a JSON line with `operation: "read"`, a unique `id`, the source
+`endpoint` and `address`, and `iterations` between 1 and 1000. Every READ clears
+the destination and verifies the entire deterministic payload SHA-256.
+
+The returned stages cover open, batch allocation, submit, terminal-status wait
+and accepted free. Buffer clearing and SHA validation are outside `native_read_ms`.
+Polling spins for the first millisecond and then waits one millisecond between
+polls; these observations include that polling delay. Metadata, QP bootstrap and
+worker scheduling can occur lazily after submit and are not separately identified
+by this C ABI boundary. Use a fresh consumer process for each first-READ sample.
+
+Send `operation: "stop"` to the consumer after `read_complete`, require `stopped`
+and a reaped zero exit, then stop the source after every reader has drained.
+Timeout/cancellation never releases an uncompleted batch. Control-pipe loss
+retains registered buffers; source protocol errors await explicit source stop.
+Do not force-kill an isolated owner and infer DMA completion from that signal.
+Check recorded PIDs, RPC listeners, NIC counters and native-library hashes before
+accepting cleanup. This benchmark excludes Manager grants/indexes, pinned pools,
+GPU destination writes, serving, GDS and S3 crash-reclamation qualification.
 
 ### S2.10 metadata performance qualification
 
