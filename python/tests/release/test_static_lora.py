@@ -194,7 +194,7 @@ def test_static_adapters_keep_native_hits_and_separate_changed_contents(engine, 
                     query_counter = "orbitkv_hll_total_requests"
                     assert math.isfinite(cold_metrics[query_counter])
                     assert math.isfinite(hot_metrics[query_counter])
-                    assert cold_metrics[query_counter] >= 0
+                    assert cold_metrics[query_counter] > 0
                     assert hot_metrics[query_counter] == cold_metrics[query_counter]
                     assert hot_metrics.get("orbitkv_load_bytes_total", 0) == cold_metrics.get(
                         "orbitkv_load_bytes_total", 0

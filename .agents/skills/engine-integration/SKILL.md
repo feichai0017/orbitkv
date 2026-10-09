@@ -56,6 +56,16 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
   do not advertise active-request reset, persistent cluster-wide invalidation
   or live weight changes that bypass the callback. SGLang ordinary flush keeps
   same-weight external reuse and is not a universal weight-update notification.
+- Fixed local PEFT adapters require startup content fingerprints and effective
+  LoRA settings in the deployment namespace. Keep native base/adapter hashes
+  intact; reject resumable/session paths and caller extra-key aliases that bypass
+  safe matching. This immutable profile does not intercept engine SDK/RPC
+  add/remove/reload or live-weight updates; change artifacts only after stopping
+  the engine.
+- SGLang 0.5.21 preserves raw `ServerArgs` and publishes resolved configuration
+  separately. Consume `runtime_context.get_lora()` for effective enable, startup
+  LoRARef UIDs, backend and target modules, as its native loader/registry do.
+  `--lora-paths` does not make the raw `enable_lora` field true.
 - Run native model composition and lifetime gates separately. Output/restart
   does not prove cancellation, partial-submit, delayed-ACK or page-reuse safety.
   Earlier fork passes remain upstream contribution evidence, not release support.

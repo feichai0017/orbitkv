@@ -39,7 +39,7 @@ record submitted, merged and released as different states.
 | S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. Independent final review accepts the second frozen S2.10 same-host formal handoff: all 25 cells are valid and five 16-owner ordinary visibility runs pass 50 ms, while both DRAM and SSD isolation fail the frozen per-pair/CI contract. S2.10b lifecycle, low-overhead observation and 14-cell diagnosis are complete. Independent review accepts the diagnostic archive but blocks a production repair: the dominant measured tail is after native return at the Python observer boundary, while no repeatable Manager, metadata-lock, completion-notification or SSD-owner shift is established. The supported envelope stays four owners and all prior formal campaigns remain immutable. Physical cross-host cache/HA, independent etcd failure domains and native GDS are qualification blocked on missing hardware; final serving, RDMA and S3-dependent cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
-| S5 | Partial: the S5.1 release/interface audit is independently accepted at `38f8dbb2`. Official 0.31.0/0.5.21 installed ordinary-cache/restart and bounded native P/D model gates pass locally. The final wheel and intact H20 cohort are independently accepted for ordinary-cache GPU recovery and 900-second direct/kernel two-engine shared-Manager io_uring pressure gates with exact native outputs, bounded reservations and normal drain. Recovered original review records and missing reviewer raw files are explicitly documented below. Idle process-scoped vLLM external reset is independently accepted at `6d874384`. Public lifecycle migration, immutable adapter/live-weight identity, cross-host TP fan-out and broader lifetime/deployment qualification remain open. |
+| S5 | Partial: the S5.1 release/interface audit is independently accepted at `38f8dbb2`. Official 0.31.0/0.5.21 installed ordinary-cache/restart and bounded native P/D model gates pass locally. The final wheel and intact H20 cohort are independently accepted for ordinary-cache GPU recovery and 900-second direct/kernel two-engine shared-Manager io_uring pressure gates with exact native outputs, bounded reservations and normal drain. Recovered original review records and missing reviewer raw files are explicitly documented below. Idle process-scoped vLLM external reset is independently accepted at `6d874384`. Immutable local PEFT adapter identity is independently accepted at `47fea821` for dense TP=1/PP=1 eager official-engine reuse. Public lifecycle migration, dynamic adapter/live-weight identity, cross-host TP fan-out and broader lifetime/deployment qualification remain open. |
 | S6 | Partial: observations/limited choices exist; unified executed decisions remain open. |
 | S7 | Open: consumed retention/checkpoint compiler beyond recovery validation. |
 | S8 | Partial: existing wheel workflow; final images, artifact gates and publication remain open. |
@@ -1123,7 +1123,7 @@ or broader profile.
 | --- | --- | --- |
 | S5.1 | Release/interface inventory independently accepted at `38f8dbb2`; official engine pins remain 0.31.0/0.5.21 | Track upstream interfaces separately from released support |
 | S5.2 | Scoped ordinary dense cache/restart and shared-Manager pressure accepted; see S5.5 evidence | Broader model/topology and lifetime profiles remain unqualified |
-| S5.3 | Idle vLLM external reset independently accepted at `6d874384` | Public SGLang lifecycle, immutable adapter/live-weight identity and native hybrid-state contracts remain open |
+| S5.3 | Idle vLLM external reset accepted at `6d874384`; immutable local PEFT adapter identity accepted at `47fea821` | Public SGLang lifecycle, dynamic adapter/live-weight identity and native hybrid-state contracts remain open |
 | S5.4 | Official native P/D cutover implemented with bounded model checks | Independent native fault, transfer cancellation, delayed-ACK and page-reuse qualification depend on S3 |
 | S5.5 | Same-host dense TP=1/PP=1 eager DRAM/io_uring deployment and direct/kernel pressure scoped acceptance | Cross-host TP query coordination is missing code; physical rank/container, isolation and broader deployment gates remain open |
 
@@ -1427,18 +1427,30 @@ Do not delete consumed safety behavior based on these proposals.
   376-file evidence manifest passes. Final scoped review:
   `/root/orbitkv-artifacts/s5-external-reset-20261008/reviewer/FINAL-REVIEW.md`.
   This closes only the idle reset contract, not S5.3 or the whole S5 stage.
-- **Immutable static adapter identity implemented; qualification open:**
-  fixed local PEFT adapter bytes and LoRA configuration now contribute to the
-  complete deployment namespace. Native keys preserve base/adapter separation;
-  same-name/path replacement between restarts changes the external domain.
-  vLLM public admission rejects ID reassignment/reload/unknown adapters and
-  resumable requests. SGLang validates startup UIDs and disallows caller
-  `extra_key`, radix sessions and streaming sessions through its existing
-  wrapper/admission boundaries. Dynamic SDK/RPC mutation and live-weight
-  invalidation still require a consumed engine contract. See
-  [static adapter restrictions](adapters.md#immutable-static-lora).
-  Preserve cache salt, computation identity, multimodal inputs and representation
-  boundaries; reject unsupported combinations instead of sharing unsafe keys.
+- **Immutable static adapter identity independently accepted (2026-10-09):**
+  reviewed production commit `47fea821` binds fixed local PEFT bytes and effective
+  LoRA configuration to the deployment namespace. Native keys retain base/adapter
+  separation; same-name/path replacement between restarts changes the external
+  domain. vLLM public admission enforces declared immutable selections. SGLang
+  consumes the released resolved LoRA configuration and validates UIDs through
+  its existing linker/admission boundaries. Sessions, resumable requests and
+  caller extra-key aliases are rejected in this profile.
+  The final repaired CUDA 13 wheel `dec39b87…` independently passes both official
+  vLLM 0.31.0 and SGLang 0.5.21 on H20, dense Qwen3-8B, TP=1/PP=1 eager,
+  direct transfers and overlay io_uring SSD. Base/A/B cold requests miss;
+  native HBM hits add no external query or load. Each restart restores
+  113,246,208 physical SSD bytes and exact native outputs/selected logprobs.
+  Replacing A at the same name/path produces a cold miss with zero old-domain
+  load. Installed engine/OrbitKV RECORD files and all frozen inputs stay unchanged;
+  every outer service exits zero and owned GPU/process/socket postflight is empty.
+  SGLang's native child teardown and CUDA IPC warnings remain recorded; this does
+  not prove physical DMA termination or that every child avoids SIGKILL.
+  Adapter files, symlink targets and loaded bindings must stay immutable for the
+  entire engine lifetime. Dynamic SDK/RPC changes and live-weight invalidation
+  still require consumed engine contracts. Preserve salt, computation, multimodal
+  and representation boundaries; see [restrictions](adapters.md#immutable-static-lora).
+  Parent failures, independent raw runs and review are preserved outside Git at
+  `/root/orbitkv-artifacts/s5-static-adapter-identity-20261009/`.
 - **Qualification open:** Full + SWA + temporal recurrent native serving, page
   reuse under preemption, cancellation, engine restart and each advertised graph
   mode. Exact synthetic GPU recovery does not establish native model support.

@@ -60,9 +60,10 @@ remain unsupported. The completion plan records qualification separately.
 
 ## Immutable static LoRA
 
-Static adapter support is implemented for a fixed local PEFT adapter set;
-installed-model qualification is tracked in S5.3. At startup OrbitKV hashes each
-adapter's configuration and weights and binds the complete named set and LoRA
+Static adapter support is independently accepted for a fixed local PEFT adapter
+set on official vLLM 0.31.0 and SGLang 0.5.21, dense TP=1/PP=1 eager with
+direct transfers and io_uring SSD. The installed-model evidence is tracked in S5.3.
+At startup OrbitKV hashes each adapter's configuration and weights and binds the complete named set and LoRA
 computation configuration to the external cache namespace. Engine prefix hashes
 still distinguish the base model and individual adapters. Replacing weights at
 the same name/path between process restarts changes the namespace. Changing any
@@ -84,7 +85,10 @@ integer ID bindings before native HBM lookup. It rejects undeclared selections,
 update flag must remain disabled. A violated request contract stops EngineCore;
 it is not a graceful per-request HTTP rejection.
 
-For SGLang, use its normalized startup adapter references:
+For SGLang, OrbitKV reads normalized startup adapter references and effective
+LoRA options from the official `runtime_context.get_lora()` configuration bag.
+`ServerArgs` retains raw inputs, so `--lora-paths` can enable LoRA while its raw
+`enable_lora` remains unset. Use the released loader as follows:
 
 ```bash
 ORBITKV_STATIC_LORA=1 ORBITKV_SGLANG_ENDPOINT=unix:///tmp/orbitkv-50055.sock \
