@@ -17,6 +17,7 @@ from tests.support.installed_serving import (
     compare_output,
     engine_command,
     manager_command,
+    native_runtime_graph_count,
     probe_installation,
     service,
     wait_for_drain,
@@ -32,7 +33,7 @@ pytestmark = [pytest.mark.release_smoke, pytest.mark.gpu]
 @pytest.mark.parametrize("engine", ["vllm", "sglang"])
 @pytest.mark.parametrize("tier", ["dram", "ssd"])
 def test_installed_wheel_recovers_after_engine_restart(
-    engine, tier, model, tmp_path, orbitkv_transfer_backend
+    engine, tier, model, tmp_path, orbitkv_transfer_backend, request
 ):
     assert Path(model).is_dir(), "release gate requires --model with a local dense model"
     env = isolated_environment(dict(os.environ), tmp_path)
@@ -40,8 +41,9 @@ def test_installed_wheel_recovers_after_engine_restart(
     before = probe_installation(
         sys.executable, engine, env, tmp_path, "installed-before", native=True
     )
+    cuda_graph = request.config.getoption("--release-cuda-graph")
     try:
-        run_cache_plan(engine, tier, model, tmp_path, env)
+        run_cache_plan(engine, tier, model, tmp_path, env, cuda_graph=cuda_graph)
     finally:
         after = probe_installation(sys.executable, engine, env, tmp_path, "installed-after")
         assert before["distributions"] == after["distributions"], (
@@ -49,7 +51,7 @@ def test_installed_wheel_recovers_after_engine_restart(
         )
 
 
-def run_cache_plan(engine, tier, model, directory, env):
+def run_cache_plan(engine, tier, model, directory, env, *, cuda_graph=False):
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(model, local_files_only=True, trust_remote_code=True)
@@ -61,16 +63,59 @@ def run_cache_plan(engine, tier, model, directory, env):
     manager_url = f"http://127.0.0.1:{http_port}"
     engine_url = f"http://127.0.0.1:{engine_port}"
     env["VLLM_SERVER_DEV_MODE"] = "1"
+    if cuda_graph:
+        env["VLLM_LOG_STATS_INTERVAL"] = "1"
+        env["VLLM_LOGGING_LEVEL"] = "DEBUG"
     command, cache_options = engine_command(
-        engine, sys.executable, model, engine_port, env["ORBITKV_TRANSFER_BACKEND"]
+        engine,
+        sys.executable,
+        model,
+        engine_port,
+        env["ORBITKV_TRANSFER_BACKEND"],
+        cuda_graph=cuda_graph,
     )
     manager_args = manager_command(sys.executable, port, http_port, tier, directory)
-    phases = {}
+    phases, graph_observations = {}, {}
+    active_log = directory / f"{engine}-native.log"
+
+    def graph_snapshot():
+        if engine == "vllm":
+            text = active_log.read_text()
+        else:
+            response = requests.get(f"{engine_url}/metrics", timeout=5)
+            response.raise_for_status()
+            text = response.text
+        return {
+            "count": native_runtime_graph_count(engine, text),
+            "observation_kind": (
+                "vllm_one_token_full_runtime" if engine == "vllm" else "sglang_decode_graph_passes"
+            ),
+            "raw": text,
+        }
 
     def complete(label, prompt):
+        before = graph_snapshot() if cuda_graph else None
         result = generate(engine, engine_url, model, prompt)
         phases[label] = result
         (directory / "responses.json").write_text(json.dumps(phases, indent=2) + "\n")
+        if cuda_graph:
+            samples = [before]
+            graph_observations[label] = samples
+            deadline = time.monotonic() + 15
+            while True:
+                after = graph_snapshot()
+                samples.append(after)
+                (directory / "graph-observations.json").write_text(
+                    json.dumps(graph_observations, indent=2) + "\n"
+                )
+                assert after["count"] >= before["count"], "Native graph counter regressed"
+                if after["count"] - before["count"] >= 7:
+                    break
+                assert time.monotonic() < deadline, (
+                    f"Fewer than seven native runtime graph observations for {label}",
+                    samples,
+                )
+                time.sleep(0.1)
         return result
 
     with service(command, engine_url, env, directory, f"{engine}-native"):
@@ -81,6 +126,7 @@ def run_cache_plan(engine, tier, model, directory, env):
     env["ORBITKV_SGLANG_ENDPOINT"] = f"unix:///tmp/orbitkv-{port}.sock"
     snapshots = {}
     with service(manager_args, manager_url, env, directory, "manager"):
+        active_log = directory / f"{engine}-cold.log"
         with service(command + cache_options, engine_url, env, directory, f"{engine}-cold"):
             cold = complete("cache-cold", tokens)
             compare_output(engine, cold, baseline_cold)
@@ -105,6 +151,7 @@ def run_cache_plan(engine, tier, model, directory, env):
             evict_dram_after_ssd_writes(http_port)
             assert fetch_orbitkv_metrics(http_port).get("orbitkv_cache_resident_bytes", 0) == 0
         snapshots["before_restart"] = wait_for_drain(http_port)
+        active_log = directory / f"{engine}-restart.log"
         with service(command + cache_options, engine_url, env, directory, f"{engine}-restart"):
             full = complete("cache-full-after-restart", tokens)
             compare_output(engine, full, baseline_warm)
@@ -208,7 +255,12 @@ def run_cache_plan(engine, tier, model, directory, env):
                     "tier": tier,
                     "transfer_backend": env["ORBITKV_TRANSFER_BACKEND"],
                     "model": model,
-                    "profile": "dense TP=1 PP=1 eager same-host",
+                    "profile": f"dense TP=1 PP=1 {'FULL decode graph' if cuda_graph else 'eager'} same-host",
+                    "graph_runtime_required": cuda_graph,
+                    "native_graph_progress": {
+                        label: samples[-1]["count"] - samples[0]["count"]
+                        for label, samples in graph_observations.items()
+                    },
                     "model_config_sha256": hashlib.sha256(
                         (Path(model) / "config.json").read_bytes()
                     ).hexdigest(),

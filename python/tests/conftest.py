@@ -69,6 +69,12 @@ def pytest_addoption(parser):
         help="Installed official SGLang interpreter for the shared-Manager release gate",
     )
     parser.addoption(
+        "--release-cuda-graph",
+        action="store_true",
+        default=False,
+        help="Installed-wheel gate: require released FULL decode graph replays",
+    )
+    parser.addoption(
         "--vllm-multi-connector",
         action="store_true",
         default=False,

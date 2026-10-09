@@ -407,6 +407,7 @@ controls, wheel/engine hashes and raw runs outside the checkout.
 `release/test_static_lora.py` runs separately in each official engine environment:
 
 ```bash
+cd python
 python -m pytest -m release_smoke tests/release/test_static_lora.py -k vllm \
   --model /path/to/Qwen3-8B --basetemp /external/artifacts/static-lora-vllm
 # Use -k sglang from the SGLang 0.5.21 environment for its cell.
@@ -422,3 +423,29 @@ and text must match exactly; selected-token log probabilities allow absolute
 from the base by more than 0.001. Package RECORD hashes and owned process cleanup
 are checked. This qualifies fixed artifacts in one process deployment, not
 runtime LoRA loading, sessions, hybrid models, graph or cross-host serving.
+
+### Explicit released decode-graph recovery
+
+The installed-wheel gate accepts `--release-cuda-graph`. It selects official
+vLLM V1 `FULL` mode with capture sizes 1/2/4 or SGLang native decode `full`
+with prefill disabled. Each eight-token response must add at least seven released
+one-token FULL runtime observations (vLLM) or decode-graph passes (SGLang).
+vLLM does not label those rows as prefill/decode: eligible one-token prefill can
+contribute, so this is not a claim of seven pure decode replays or Graph on every
+decode iteration. New snapshots identify the engine-specific observation kind.
+Capture logs and eager forwards cannot satisfy this gate. Results include every
+raw output, graph observation and native/cache byte boundary. Graph qualification
+and remaining profile limits are tracked in S5.3 of the completion plan.
+
+```bash
+cd python
+/path/to/official-engine/bin/python -m pytest -q -m release_smoke \
+  tests/release/test_installed_wheel.py -k 'vllm and ssd' \
+  --release-cuda-graph --orbitkv-transfer-backend kernel \
+  --model /path/to/immutable-dense-model --basetemp /external/graph-kernel-cell
+```
+
+Run SGLang in its own official environment with `-k 'sglang and ssd'`; run direct
+and kernel separately. Long prefills can stay eager; this gate does not qualify
+full prefill capture, hybrid or native P/D fault lifetimes. It uses an installed
+wheel and retains the normal release gate's RECORD, restart, HBM and SSD checks.

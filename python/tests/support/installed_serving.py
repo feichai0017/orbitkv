@@ -4,6 +4,7 @@ import contextlib
 import json
 import math
 import os
+import re
 import signal
 import subprocess
 import time
@@ -129,7 +130,7 @@ def wait_for_drain(http_port: int) -> dict[str, float]:
         time.sleep(0.1)
 
 
-def engine_command(engine, python, model, port, transfer_backend="direct"):
+def engine_command(engine, python, model, port, transfer_backend="direct", *, cuda_graph=False):
     if engine == "vllm":
         command = [
             str(python),
@@ -148,7 +149,6 @@ def engine_command(engine, python, model, port, transfer_backend="direct"):
             "4",
             "--gpu-memory-utilization",
             "0.4",
-            "--enforce-eager",
             "--seed",
             "42",
             "--enable-prefix-caching",
@@ -191,7 +191,6 @@ def engine_command(engine, python, model, port, transfer_backend="direct"):
             "0.4",
             "--page-size",
             "64",
-            "--disable-cuda-graph",
             "--random-seed",
             "42",
             "--enable-deterministic-inference",
@@ -201,7 +200,66 @@ def engine_command(engine, python, model, port, transfer_backend="direct"):
             "--radix-cache-backend",
             "orbitkv",
         ]
+    if engine == "vllm":
+        command += ["--shutdown-timeout", "30"]
+        if cuda_graph:
+            command += [
+                "--compilation-config",
+                json.dumps(
+                    {"mode": 0, "cudagraph_mode": "FULL", "cudagraph_capture_sizes": [1, 2, 4]}
+                ),
+                "--cudagraph-metrics",
+            ]
+        else:
+            command.append("--enforce-eager")
+    elif cuda_graph:
+        command += [
+            "--cuda-graph-backend-decode",
+            "full",
+            "--cuda-graph-max-bs-decode",
+            "4",
+            "--cuda-graph-backend-prefill",
+            "disabled",
+            "--enable-metrics",
+        ]
+    else:
+        command.append("--disable-cuda-graph")
     return command, cache_options
+
+
+def native_runtime_graph_count(engine, text):
+    if engine == "vllm":
+        rows = re.findall(
+            r"\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*FULL\s*\|\s*(\S+)\s*\|",
+            text,
+        )
+        count = 0
+        for unpadded, padded, padding, value in rows:
+            value = float(value)
+            assert math.isfinite(value) and value >= 0 and value.is_integer(), (
+                "Invalid native graph count",
+                value,
+            )
+            assert int(padded) - int(unpadded) == int(padding), "Invalid native graph padding"
+            # FULL token counts do not distinguish decode from one-token prefill.
+            # Exclude long prefill; report these as one-token runtime observations.
+            if int(unpadded) == 1:
+                count += int(value)
+        return count
+    count = 0
+    for labels, value in re.findall(
+        r"^sglang:cuda_graph_passes_total\{([^}]*)\}\s+(\S+)\s*$", text, re.MULTILINE
+    ):
+        labels = dict(re.findall(r'(\w+)="([^"]*)"', labels))
+        if labels.get("mode") != "decode_cuda_graph":
+            continue
+        value = float(value)
+        assert math.isfinite(value) and value >= 0 and value.is_integer(), (
+            "Invalid native graph count",
+            value,
+        )
+        count += int(value)
+    return count
 
 
 def manager_command(python, port, http_port, tier, directory):

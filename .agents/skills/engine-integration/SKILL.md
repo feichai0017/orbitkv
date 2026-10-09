@@ -66,6 +66,12 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
   separately. Consume `runtime_context.get_lora()` for effective enable, startup
   LoRARef UIDs, backend and target modules, as its native loader/registry do.
   `--lora-paths` does not make the raw `enable_lora` field true.
+- Explicit FULL decode Graph cache recovery is independently qualified only for
+  the recorded H20 dense TP1/PP1 serial batch-1 eight-token direct/kernel io_uring
+  profile on both official releases. Use `--release-cuda-graph` in the installed
+  gate and require native runtime observations; capture-only logs do not qualify.
+  Preset sizes 2/4, long decode/save boundaries, adapters with Graph, concurrency,
+  preemption/cancellation, prefill capture and physical topology remain separate.
 - Run native model composition and lifetime gates separately. Output/restart
   does not prove cancellation, partial-submit, delayed-ACK or page-reuse safety.
   Earlier fork passes remain upstream contribution evidence, not release support.

@@ -97,8 +97,6 @@ def test_static_adapters_keep_native_hits_and_separate_changed_contents(engine, 
             "2",
             "--max-lora-rank",
             "8",
-            "--shutdown-timeout",
-            "30",
             "--lora-modules",
             *[f"{name}={path}" for name, path in adapters.items()],
         ]
