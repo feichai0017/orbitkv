@@ -88,6 +88,7 @@ pub(crate) struct PendingQueries {
     sessions: HashMap<u64, Session>,
     capacity: Arc<Semaphore>,
     warming: Arc<Semaphore>,
+    stopping: bool,
     pub(crate) read_batch_bytes: u64,
     pub(crate) read_timeout: Option<Duration>,
     pub(crate) read_max_batches: usize,
@@ -99,6 +100,7 @@ impl Default for PendingQueries {
             sessions: HashMap::new(),
             capacity: Arc::new(Semaphore::new(MAX_ACTIVE_QUERIES)),
             warming: Arc::new(Semaphore::new(MAX_ACTIVE_WARMUPS)),
+            stopping: false,
             read_batch_bytes: 0,
             read_timeout: None,
             read_max_batches: usize::MAX,
@@ -153,6 +155,7 @@ impl PendingQueries {
     ) -> Result<(), EngineError> {
         let capacity = {
             let mut queries = queries.lock();
+            queries.stopping = true;
             queries.pending.clear();
             for token in queries.sessions.keys() {
                 engine.release_query_session(*token);
@@ -201,6 +204,9 @@ impl PendingQueries {
         runtime: &Handle,
         hll: &Arc<Mutex<MultiWindowHllTracker>>,
     ) -> Result<Option<QueryReply>, EngineError> {
+        if self.stopping {
+            return Err(invalid("query admission stopped"));
+        }
         let ticket = match command {
             QueryCommand::Poll(ticket) => ticket,
             QueryCommand::Claim {

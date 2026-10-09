@@ -108,6 +108,91 @@ fn operation_book_is_bounded_without_evicting_live_identity() {
     assert_eq!(interest.submitted.len(), MAX_OPERATIONS);
 }
 #[test]
+fn busy_and_early_cancellation_retire_replays_without_canceling_newer_admission() {
+    for admitted in [false, true] {
+        let mut interest = interest();
+        let first = query(1);
+        let encoded = first.encode().unwrap();
+        if admitted {
+            // The control book has admitted Submit even if shared PendingQueries
+            // has no capacity and returns Busy without keeping an operation.
+            interest.admit(&first, &encoded).unwrap();
+        }
+        let ticket = QueryTicket {
+            operation_id: 1,
+            revision: 1,
+        };
+        interest.cancel(ticket).unwrap();
+        interest.cancel(ticket).unwrap();
+        for command in [first.clone(), QueryCommand::Poll(ticket)] {
+            assert_eq!(
+                interest
+                    .admit(&command, &command.encode().unwrap())
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::FailedPrecondition
+            );
+        }
+        let QueryCommand::Submit(mut second) = first else {
+            unreachable!()
+        };
+        second.ticket.revision = 2;
+        let second = QueryCommand::Submit(second);
+        assert!(interest.admit(&second, &second.encode().unwrap()).is_err());
+        assert_eq!(interest.submitted.len(), 1);
+    }
+    let mut interest = interest();
+    let first = query(1);
+    interest.admit(&first, &first.encode().unwrap()).unwrap();
+    let QueryCommand::Submit(mut second) = first else {
+        unreachable!()
+    };
+    second.ticket.revision = 2;
+    let newer = second.ticket;
+    let second = QueryCommand::Submit(second);
+    interest.admit(&second, &second.encode().unwrap()).unwrap();
+    interest
+        .cancel(QueryTicket {
+            operation_id: 1,
+            revision: 1,
+        })
+        .unwrap();
+    interest.admit(&second, &second.encode().unwrap()).unwrap();
+    let poll = QueryCommand::Poll(newer);
+    interest.admit(&poll, &poll.encode().unwrap()).unwrap();
+}
+
+#[test]
+fn cancellation_tombstones_share_the_bounded_operation_book() {
+    let mut interest = interest();
+    for operation_id in 1..=MAX_OPERATIONS as u64 {
+        interest
+            .cancel(QueryTicket {
+                operation_id,
+                revision: 1,
+            })
+            .unwrap();
+    }
+    assert_eq!(
+        interest
+            .cancel(QueryTicket {
+                operation_id: MAX_OPERATIONS as u64 + 1,
+                revision: 1
+            })
+            .unwrap_err()
+            .code(),
+        tonic::Code::ResourceExhausted
+    );
+    interest
+        .cancel(QueryTicket {
+            operation_id: 1,
+            revision: 1,
+        })
+        .unwrap();
+    assert_eq!(interest.submitted.len(), MAX_OPERATIONS);
+}
+
+#[test]
 fn node_identity_rejects_truncated_or_nil_ids() {
     for bytes in [vec![], vec![0; 15], vec![0; 16], vec![1; 17]] {
         assert_eq!(
@@ -491,6 +576,17 @@ async fn real_query_control_replays_claims_and_fences_replaced_registrations() {
             else {
                 panic!("query fits")
             };
+            let old_sources = engine
+                .count_prefix_hit_blocks_with_prefetch(
+                    "registered",
+                    "late-finish-control",
+                    &hashes[..1],
+                    QueryMode::Demand,
+                )
+                .await
+                .unwrap()
+                .blocks;
+            assert_eq!(old_sources.len(), 1);
             engine
                 .unregister_instance_and_wait("registered")
                 .await
@@ -513,9 +609,11 @@ async fn real_query_control_replays_claims_and_fences_replaced_registrations() {
                             operation: 3,
                             revision: 1,
                         },
-                        vec![]
+                        old_sources,
                     )
-                    .is_err(),
+                    .unwrap_err()
+                    .to_string()
+                    .contains("query instance registration changed"),
                 "late finish cannot adopt an identical replacement layout"
             );
             assert!(

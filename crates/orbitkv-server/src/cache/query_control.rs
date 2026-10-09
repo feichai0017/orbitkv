@@ -33,11 +33,15 @@ struct RetainedReply {
     payload: Vec<u8>,
     expires: Instant,
 }
+enum Submission {
+    Active([u8; 32]),
+    Canceled,
+}
 struct Interest {
     target: RegisteredQueryTarget,
     token: u64,
     expires: Instant,
-    submitted: HashMap<(u64, u64), [u8; 32]>,
+    submitted: HashMap<(u64, u64), Submission>,
     replies: HashMap<(u64, u64), RetainedReply>,
 }
 #[derive(Default)]
@@ -95,6 +99,16 @@ fn encode_outcome(reply: &QueryReply) -> Result<Vec<u8>, Status> {
         .map_err(|error| Status::internal(error.to_string()))
 }
 impl Interest {
+    fn cancel(&mut self, ticket: QueryTicket) -> Result<(), Status> {
+        let key = (ticket.operation_id, ticket.revision);
+        if !self.submitted.contains_key(&key) && self.submitted.len() >= MAX_OPERATIONS {
+            return Err(Status::resource_exhausted("query operation limit"));
+        }
+        self.submitted.insert(key, Submission::Canceled);
+        self.replies.remove(&key);
+        Ok(())
+    }
+
     fn admit(&mut self, command: &QueryCommand, encoded: &[u8]) -> Result<QueryTicket, Status> {
         match command {
             QueryCommand::Submit(query) => {
@@ -120,13 +134,22 @@ impl Interest {
                 let key = (query.ticket.operation_id, query.ticket.revision);
                 let digest: [u8; 32] = Sha256::digest(encoded).into();
                 match self.submitted.get(&key) {
-                    Some(previous) if *previous != digest => {
+                    Some(Submission::Canceled) => {
+                        return Err(Status::failed_precondition("query operation canceled"));
+                    }
+                    Some(Submission::Active(previous)) if *previous != digest => {
                         return Err(Status::invalid_argument(
                             "query changed without new revision",
                         ));
                     }
                     Some(_) => {}
                     None => {
+                        if self.submitted.iter().any(|((operation, _), state)| {
+                            *operation == query.ticket.operation_id
+                                && matches!(state, Submission::Canceled)
+                        }) {
+                            return Err(Status::failed_precondition("query operation canceled"));
+                        }
                         if self.submitted.len() >= MAX_OPERATIONS {
                             return Err(Status::resource_exhausted("query operation limit"));
                         }
@@ -139,12 +162,20 @@ impl Interest {
                                 "finished operation requires a new id",
                             ));
                         }
-                        self.submitted.insert(key, digest);
+                        self.submitted.insert(key, Submission::Active(digest));
                     }
                 }
                 Ok(query.ticket)
             }
-            QueryCommand::Poll(ticket) => Ok(*ticket),
+            QueryCommand::Poll(ticket) => {
+                if matches!(
+                    self.submitted.get(&(ticket.operation_id, ticket.revision)),
+                    Some(Submission::Canceled)
+                ) {
+                    return Err(Status::failed_precondition("query operation canceled"));
+                }
+                Ok(*ticket)
+            }
             QueryCommand::Claim { .. } => Err(Status::invalid_argument(
                 "preparation claim is not network delivery",
             )),
@@ -235,6 +266,9 @@ impl QueryControlService {
             } else {
                 interest.replies.retain(|(operation, revision), reply| {
                     if reply.expires <= now {
+                        interest
+                            .submitted
+                            .insert((*operation, *revision), Submission::Canceled);
                         queries.cancel(
                             interest.token,
                             QueryTicket {
@@ -386,7 +420,7 @@ impl CacheQueryControl for QueryControlService {
             .get(&key)
             .is_some_and(|reply| reply.expires <= Instant::now())
         {
-            interest.replies.remove(&key);
+            interest.cancel(ticket)?;
             self.queries
                 .lock()
                 .cancel(interest.token, ticket, &self.engine);
@@ -445,15 +479,14 @@ impl CacheQueryControl for QueryControlService {
             .get(&key)
             .is_some_and(|reply| reply.expires <= Instant::now())
         {
-            interest.replies.remove(&key);
-            self.queries.lock().cancel(
-                interest.token,
-                QueryTicket {
-                    operation_id: request.operation_id,
-                    revision: request.revision,
-                },
-                &self.engine,
-            );
+            let ticket = QueryTicket {
+                operation_id: request.operation_id,
+                revision: request.revision,
+            };
+            interest.cancel(ticket)?;
+            self.queries
+                .lock()
+                .cancel(interest.token, ticket, &self.engine);
             return Err(Status::failed_precondition("query result expired"));
         }
         let reply = interest
@@ -488,9 +521,7 @@ impl CacheQueryControl for QueryControlService {
         }
         let mut book = self.book.lock();
         let interest = self.interest(&mut book, request.interest)?;
-        let key = (ticket.operation_id, ticket.revision);
-        interest.replies.remove(&key);
-        // Retain the submitted identity: a canceled operation cannot be reopened.
+        interest.cancel(ticket)?;
         self.queries
             .lock()
             .cancel(interest.token, ticket, &self.engine);
