@@ -282,7 +282,18 @@ async fn real_query_control_replays_claims_and_fences_replaced_registrations() {
             let expected: Vec<u8> = (0..16384)
                 .map(|i| ((i * 13 + shard * 37) % 251) as u8)
                 .collect();
-            let mut tensor = stream.clone_htod(&expected).unwrap();
+            context.bind_to_thread().unwrap();
+            // Framework CUDA IPC tensors use synchronous allocations; async
+            // pool allocations expose a null allocation context to the driver.
+            // SAFETY: the primary context is current, and CudaSlice takes sole
+            // ownership of this 16 KiB allocation until all restores drain below.
+            let mut tensor = unsafe {
+                stream.upgrade_device_ptr::<u8>(
+                    cudarc::driver::result::malloc_sync(expected.len()).unwrap(),
+                    expected.len(),
+                )
+            };
+            stream.memcpy_htod(&expected, &mut tensor).unwrap();
             stream.synchronize().unwrap();
             let address = tensor.device_ptr(&stream).0;
             let register = |engine: &OrbitKVEngine| {
