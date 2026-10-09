@@ -40,7 +40,7 @@ fn registration_receives_owned_fds_and_fragmented_stream_frames() {
             }
             server.write_all(b"arena:1").unwrap();
         });
-        let (header, reply) = receive_lifecycle_reply(&client).unwrap();
+        let (header, reply) = receive_lifecycle_reply(&client, MAX_LIFECYCLE_PAYLOAD).unwrap();
         assert_eq!(header.epoch, 91);
         assert_eq!(reply.payload, b"arena:1");
         assert_eq!(reply.fds.len(), 1);
@@ -60,7 +60,7 @@ fn lifecycle_descriptor_marker_is_required_and_descriptor_count_is_bounded() {
     use std::os::fd::AsFd;
     let (client, mut server) = UnixStream::pair().unwrap();
     server.write_all(&[0]).unwrap();
-    assert!(receive_lifecycle_reply(&client).is_err());
+    assert!(receive_lifecycle_reply(&client, MAX_LIFECYCLE_PAYLOAD).is_err());
     let file = tempfile::tempfile().unwrap();
     let fds = vec![file.as_fd(); MAX_LIFECYCLE_FDS + 1];
     assert!(send_lifecycle_fds(&server, &fds).is_err());

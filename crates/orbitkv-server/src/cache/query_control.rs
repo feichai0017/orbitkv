@@ -12,6 +12,7 @@ use orbitkv_proto::proto::engine::{
     RegisteredQueryTarget, SessionRequest,
 };
 use parking_lot::Mutex as BookMutex;
+use prost::Message;
 use sha2::{Digest, Sha256};
 use tokio::runtime::Handle;
 use tonic::{Request, Response, Status};
@@ -248,6 +249,9 @@ impl QueryControlService {
             registration_generation: registration.generation.to_vec(),
             capability: capability.as_bytes().to_vec(),
         };
+        if target.encoded_len() > orbitkv_channel::lifecycle::MAX_QUERY_TARGET_PAYLOAD {
+            return Err(Status::resource_exhausted("query target metadata limit"));
+        }
         book.targets.insert(capability, target.clone());
         Ok(target)
     }

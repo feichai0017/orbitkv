@@ -10,7 +10,8 @@ use rustix::process::{PidfdFlags, pidfd_open};
 use thiserror::Error;
 
 use crate::lifecycle::{
-    LifecycleCommand, LifecycleHeader, LifecycleReply, receive_lifecycle_reply,
+    LifecycleCommand, LifecycleHeader, LifecycleReply, MAX_LIFECYCLE_PAYLOAD,
+    MAX_QUERY_TARGET_PAYLOAD, receive_lifecycle_reply,
 };
 use crate::{
     BootstrapClient, BootstrapError, CacheProtocolError, CallOptions, Command, CommandCode,
@@ -116,17 +117,24 @@ impl ChannelClient {
             stream.set_read_timeout(Some(timeout))?;
             stream.write_all(&header)?;
             stream.write_all(payload)?;
-            let (header, reply) = receive_lifecycle_reply(stream)?;
+            let payload_limit = if matches!(command, LifecycleCommand::ExportQueryTarget) {
+                MAX_QUERY_TARGET_PAYLOAD
+            } else {
+                MAX_LIFECYCLE_PAYLOAD
+            };
+            let (header, reply) = receive_lifecycle_reply(stream, payload_limit)?;
             if header.epoch != self.session_epoch() {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     "stale lifecycle session",
                 ));
             }
-            if !matches!(command, LifecycleCommand::Register)
-                && (!reply.payload.is_empty() || !reply.fds.is_empty())
-                && header.code == 0
-            {
+            let unexpected = match command {
+                LifecycleCommand::Register => false,
+                LifecycleCommand::ExportQueryTarget => !reply.fds.is_empty(),
+                _ => !reply.payload.is_empty() || !reply.fds.is_empty(),
+            };
+            if unexpected && header.code == 0 {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     "unexpected lifecycle attachments",

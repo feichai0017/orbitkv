@@ -11,6 +11,7 @@ use rustix::net::{
 };
 
 pub const LIFECYCLE_HEADER_BYTES: usize = 20;
+pub const MAX_QUERY_TARGET_PAYLOAD: usize = 64 * 1024;
 pub const MAX_LIFECYCLE_PAYLOAD: usize = 64 * 1024 * 1024;
 const MAGIC: u32 = 0x4f52_424c;
 const VERSION: u16 = 5;
@@ -59,6 +60,7 @@ pub fn send_lifecycle_fds(socket: &impl AsFd, fds: &[BorrowedFd<'_>]) -> io::Res
 
 pub(crate) fn receive_lifecycle_reply(
     mut socket: &UnixStream,
+    payload_limit: usize,
 ) -> io::Result<(LifecycleHeader, LifecycleReply)> {
     let mut marker = [0];
     let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(MAX_LIFECYCLE_FDS))];
@@ -99,6 +101,12 @@ pub(crate) fn receive_lifecycle_reply(
     let mut header = [0; LIFECYCLE_HEADER_BYTES];
     socket.read_exact(&mut header)?;
     let header = LifecycleHeader::decode(header)?;
+    if header.payload_len > payload_limit {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "lifecycle response exceeds command limit",
+        ));
+    }
     let mut payload = vec![0; header.payload_len];
     socket.read_exact(&mut payload)?;
     Ok((header, LifecycleReply { payload, fds }))

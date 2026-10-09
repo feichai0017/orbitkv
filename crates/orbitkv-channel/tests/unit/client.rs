@@ -160,3 +160,109 @@ fn publish_chunk_boundaries_include_variable_hashes_and_only_active_layers() {
         )))
     ));
 }
+
+#[test]
+fn query_target_export_accepts_only_bounded_payload_and_never_arena_descriptors() {
+    use crate::lifecycle::{LIFECYCLE_HEADER_BYTES, send_lifecycle_fds};
+    use crate::{BootstrapServer, TransportServer};
+    use std::io::Read;
+    use std::os::fd::AsFd;
+    use std::sync::atomic::AtomicU64;
+    use std::thread;
+
+    static NAMES: AtomicU64 = AtomicU64::new(1);
+    let cases = [
+        (LifecycleCommand::ExportQueryTarget, false, false, true),
+        (LifecycleCommand::ExportQueryTarget, true, false, false),
+        (LifecycleCommand::ExportQueryTarget, false, true, false),
+        (LifecycleCommand::Health, false, false, false),
+        (LifecycleCommand::Session, false, false, false),
+        (LifecycleCommand::Unregister, false, false, false),
+    ];
+    for (command, descriptor, oversized, accepted) in cases {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("lifecycle.sock");
+        let name = format!(
+            "orbitkv/test/lifecycle/{}/{}",
+            std::process::id(),
+            NAMES.fetch_add(1, Ordering::Relaxed)
+        );
+        let bootstrap = BootstrapServer::bind(&socket, &name, 81, 64 * 1024, 4096).unwrap();
+        let _transport = TransportServer::bind(&name).unwrap();
+        thread::scope(|scope| {
+            let peer = scope.spawn(|| {
+                let session = bootstrap.accept().unwrap();
+                let mut stream = session.stream();
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut header = [0; LIFECYCLE_HEADER_BYTES];
+                stream.read_exact(&mut header).unwrap();
+                let request = LifecycleHeader::decode(header).unwrap();
+                assert_eq!(request.code, command as u16);
+                assert_eq!(request.epoch, 81);
+                let file = tempfile::tempfile().unwrap();
+                let fds = if descriptor {
+                    vec![file.as_fd()]
+                } else {
+                    Vec::new()
+                };
+                send_lifecycle_fds(stream, &fds).unwrap();
+                let payload = b"query-target-capability";
+                stream
+                    .write_all(
+                        &LifecycleHeader {
+                            code: 0,
+                            epoch: 81,
+                            payload_len: if oversized {
+                                MAX_QUERY_TARGET_PAYLOAD + 1
+                            } else {
+                                payload.len()
+                            },
+                        }
+                        .encode()
+                        .unwrap(),
+                    )
+                    .unwrap();
+                if !oversized {
+                    stream.write_all(payload).unwrap();
+                }
+                if accepted {
+                    stream.read_exact(&mut header).unwrap();
+                    assert_eq!(
+                        LifecycleHeader::decode(header).unwrap().code,
+                        LifecycleCommand::Health as u16
+                    );
+                    send_lifecycle_fds(stream, &[]).unwrap();
+                    stream
+                        .write_all(
+                            &LifecycleHeader {
+                                code: 0,
+                                epoch: 81,
+                                payload_len: 0,
+                            }
+                            .encode()
+                            .unwrap(),
+                        )
+                        .unwrap();
+                }
+            });
+            let client = ChannelClient::connect(&socket, CallOptions::default()).unwrap();
+            let result = client.lifecycle(command, &[]);
+            if accepted {
+                let reply = result.unwrap();
+                assert_eq!(reply.payload, b"query-target-capability");
+                assert!(reply.fds.is_empty());
+                client.lifecycle(LifecycleCommand::Health, &[]).unwrap();
+            } else {
+                assert!(result.is_err(), "{command:?}/{descriptor}/{oversized}");
+                assert!(matches!(
+                    client.lifecycle(LifecycleCommand::Health, &[]),
+                    Err(ChannelError::SessionRequiresReconnect)
+                ));
+            }
+            peer.join().unwrap();
+        });
+    }
+}
