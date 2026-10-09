@@ -1490,8 +1490,9 @@ Do not delete consumed safety behavior based on these proposals.
   native controls, compiled/installed startup rejection, export bindings and one
   vLLM SSD/direct model recovery. The older wheel's six profiles are not relabelled
   as final-wheel measurements. Old 312 and final 144 frozen inputs and installed
-  package hashes remain unchanged; owned processes, ports, UDS and GPU compute
-  all drain normally. The byte fixture uses two real Rust Engine/UDS/gRPC endpoints
+  package hashes remain unchanged; structured outer-service cleanup and owned
+  process/port/UDS/GPU postflight pass; native child teardown and standard Manager
+  signal-trace limits remain in the scoped review. The byte fixture uses two real Rust Engine/UDS/gRPC endpoints
   in one OS process, not two independent Manager processes or physical TP.
   Scheduler common-prefix coordination and consumed official worker handshake
   remain missing code; cross-host activation requires protected transport and
