@@ -1811,8 +1811,9 @@ physical cross-host/rank combinations, native P/D faults and S3-dependent
 reclamation remain open. Shared capacity does not establish interchangeable
 cross-engine KV bytes or a latency/throughput advantage.
 
-**Two-host Manager path timing (2026-10-09), delivery in progress:** the next
-bounded measurement uses the installed `1ab67a58` production freeze on two
+**Two-host Manager path timing (2026-10-09), implemented and measured;
+independent review open:** the bounded measurement uses the installed
+`1ab67a58` production freeze on two
 dedicated Forge H20 hosts. `benches.shared_cache_profile` separates a first
 remote DRAM read from warmed repeated restores at 512 KiB/8 MiB/32 MiB, both
 directions and single/four-NIC allowlists. Every sample clears consumer DRAM and
@@ -1820,9 +1821,24 @@ requires exact remote/H2D bytes, source release and GPU tensor/sentinel equality
 The source grants, TENT READ and reconstruction remain owned by the Rust
 Managers. Client query/restore timing is separate from GPU clearing, validation
 and controller HTTP; no isolated DMA or model-serving timing is inferred.
-The initial physical byte checks are functional readiness only, pending
-independent review. This descriptive timing substage does not launch a formal
+The frozen `68098007` harness completes all twelve size/direction/NIC cells,
+with 432 exact whole-tensor byte oracles (12 cold, 60 warm-up, 360 measured).
+Warm Manager fetch medians range from 1.087 to 1.977 ms; cold fetches range from
+84.151 to 208.610 ms, primarily in the TENT READ stage. The client fixture's
+10 ms query polling is reported separately and is not engine latency. Runtime
+inputs stay unchanged on both hosts; all 24 Managers exit zero, workers release
+their contexts, etcd shuts down normally, and ports/sockets/GPU use drain.
+The executing agent reconstructs reference hashes, metric/NIC deltas and summary
+statistics; this does not substitute for independent acceptance. Functional
+readiness and descriptive timing evidence are at
+`/root/orbitkv-artifacts/forge-rdma-gds-20426175-20261009/manager-dram-profile-20261009/REPORT.md`,
+with complete raw host mirrors and the frozen plan beside it.
+This descriptive timing substage does not launch a formal
 isolation/HA campaign, expand support, close S5 or change production policy.
+The next measured execution gap is cold TENT READ startup; isolate segment,
+connection and progress costs before a production change. CUDA optimization
+requires separate device-event DMA/kernel measurements and a matched KDA
+comparison; client restore timing alone does not establish a kernel bottleneck.
 See [the maintained methodology](shared-cache-qualification.md#full-manager-remote-dram-path-timing).
 
 - Track each engine separately: single instance; independent replicas; multiple
@@ -1830,7 +1846,8 @@ See [the maintained methodology](shared-cache-qualification.md#full-manager-remo
   relevant combinations; homogeneous/heterogeneous P/D parallelism; same-host TCP,
   physical two-host TCP and RDMA. Label implemented, qualified, experimental and
   unsupported independently. Do not infer KV partitioning from EP world size.
-- **Implementation open:** node-local Manager query fan-out for cross-host TP.
+- **Implementation open:** protected cross-host activation of the existing
+  native Manager query fan-out, accepted on trusted loopback above.
   The engine still owns rank agreement, legal common recovery boundaries, GPU
   allocation and execution collectives. Define stage-specific PP state/layout;
   reject unsupported resharding and state mappings explicitly.

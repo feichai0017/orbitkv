@@ -352,6 +352,9 @@ verified completion, not an isolated CUDA DMA duration. The query timing also
 includes the fixture's explicit 10 ms pending-query polling; that is not model
 scheduler latency. GPU clearing, byte/hash checks, HTTP transport, eviction,
 barriers and quiescence waits are separately recorded outside those clocks.
+The requests are serialized with eviction, barriers and three idle observations
+between samples; this is a paced latency profile. Subtracting polling sleep from
+the query clock does not produce an event-driven engine latency measurement.
 
 Compare both directions with a fixed single-NIC or four-NIC allowlist. Record
 actual physical NIC counter deltas; a four-NIC configuration does not prove all
