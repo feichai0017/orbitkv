@@ -318,3 +318,44 @@ transport revocation after a permanently lost requester. Such source pins remain
 charged until safe release or coordinated Manager teardown. Real partitions,
 multi-rank replicas and metadata HA remain separate gates; scoped two-host TCP
 serving results are recorded above.
+
+## Full-Manager remote DRAM path timing
+
+Start two dedicated Managers and the maintained GPU byte fixture beside each.
+For this descriptive profile, run the fixture worker with `--profile` and choose
+`--segment-bytes 4096`, `65536` or `262144` for 512 KiB, 8 MiB or 32 MiB of
+payload. Both workers must use the same segment size, namespace and layout.
+The production wheel and native libraries are frozen separately from the test
+harness. Payload timing always runs through the actual Rust Manager.
+
+```bash
+python -m benches.shared_cache_profile \
+  --source-url http://source-worker:9100 \
+  --target-url http://consumer-worker:9100 \
+  --source-manager http://source-manager:9091 \
+  --target-manager http://consumer-manager:9091 \
+  --payload-bytes 8388608 --warmup 5 --samples 30 \
+  --output /var/tmp/cache-profile/run-001.json
+```
+
+The first read is kept as a cold sample. Five additional warm-up operations
+are retained separately from the thirty measured operations. Consumer DRAM is
+evicted before every later read, so a reused prefix cannot become a local cache
+hit. Every sample requires exact remote-fetch and H2D byte deltas, one native
+authorization/allocation/READ/rebuild/release observation, full destination
+tensor and sentinel equality, and completed query/source ownership drain.
+
+Manager stage durations come from before/after metrics on the consumer's clock;
+worker query/restore durations use its own monotonic clock. They are not
+cross-host timestamp subtractions. Restore timing covers native submit/wait and
+verified completion, not an isolated CUDA DMA duration. The query timing also
+includes the fixture's explicit 10 ms pending-query polling; that is not model
+scheduler latency. GPU clearing, byte/hash checks, HTTP transport, eviction,
+barriers and quiescence waits are separately recorded outside those clocks.
+
+Compare both directions with a fixed single-NIC or four-NIC allowlist. Record
+actual physical NIC counter deltas; a four-NIC configuration does not prove all
+four rails carry payload. Report descriptive median, nearest-rank p95 and max;
+thirty samples do not establish stable p99, saturation throughput, a hardware
+advantage or S2/S5 performance qualification. Raw per-request timing, metrics,
+logs, hashes, workload order and failure/cleanup evidence stay outside Git.

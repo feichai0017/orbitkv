@@ -32,6 +32,8 @@ def worker(args: argparse.Namespace) -> None:
     from orbitkv import BlockHashes, CacheManagerClient, QueryLoading
     from orbitkv.client.gpu import serialize_gpu_buffer
 
+    segment_bytes = args.segment_bytes
+    payload_bytes = LAYERS * 2 * len(SOURCE_PAGES) * segment_bytes
     names = [f"layer_{index}" for index in range(LAYERS)]
     source_hashes = [
         hashlib.sha256(f"byte-fixture-{index}".encode()).digest()
@@ -39,13 +41,13 @@ def worker(args: argparse.Namespace) -> None:
     ]
     hashes = BlockHashes(source_hashes)
     pattern = (
-        torch.arange(LAYERS * 2 * BLOCKS * SEGMENT_BYTES, dtype=torch.int32)
+        torch.arange(LAYERS * 2 * BLOCKS * segment_bytes, dtype=torch.int32)
         .remainder_(251)
         .to(torch.uint8)
-        .reshape(LAYERS, 2, BLOCKS, SEGMENT_BYTES)
+        .reshape(LAYERS, 2, BLOCKS, segment_bytes)
     )
     tensors = [
-        torch.full((2, BLOCKS, SEGMENT_BYTES), 165, dtype=torch.uint8, device="cuda") for _ in names
+        torch.full((2, BLOCKS, segment_bytes), 165, dtype=torch.uint8, device="cuda") for _ in names
     ]
     client = CacheManagerClient(args.manager_socket)
     registered = False
@@ -61,8 +63,8 @@ def worker(args: argparse.Namespace) -> None:
             names,
             [serialize_gpu_buffer(tensor) for tensor in tensors],
             [BLOCKS] * LAYERS,
-            [SEGMENT_BYTES] * LAYERS,
-            [BLOCKS * SEGMENT_BYTES] * LAYERS,
+            [segment_bytes] * LAYERS,
+            [BLOCKS * segment_bytes] * LAYERS,
             [2] * LAYERS,
             "direct",
             False,
@@ -97,19 +99,30 @@ def worker(args: argparse.Namespace) -> None:
                         )
                         if not ok:
                             raise RuntimeError(message)
-                        result = {"saved_bytes": PAYLOAD_BYTES}
+                        result = {"saved_bytes": payload_bytes}
                     elif operation == "load":
+                        clear_started = time.monotonic_ns()
                         for tensor in tensors:
                             tensor.fill_(165)
+                        if args.profile:
+                            torch.cuda.synchronize()
+                        query_started = time.monotonic_ns()
+                        native_query_ns = poll_sleep_ns = polls = 0
                         deadline = time.monotonic() + 40
                         request = f"byte-load-{time.time_ns()}"
                         while True:
+                            call_started = time.monotonic_ns()
                             ready = client.query_prefetch(args.instance, hashes, req_id=request)
+                            native_query_ns += time.monotonic_ns() - call_started
+                            polls += 1
                             if not isinstance(ready, QueryLoading):
                                 break
                             if time.monotonic() >= deadline:
                                 raise TimeoutError("fixture query did not complete")
+                            sleep_started = time.monotonic_ns()
                             time.sleep(0.01)
+                            poll_sleep_ns += time.monotonic_ns() - sleep_started
+                        restore_started = time.monotonic_ns()
                         if ready.num_hit_blocks != len(SOURCE_PAGES):
                             if ready.lease:
                                 client.release(ready.lease)
@@ -122,7 +135,9 @@ def worker(args: argparse.Namespace) -> None:
                             [(ready.lease, [DESTINATION_PAGES])],
                             ready_stream=torch.cuda.current_stream().cuda_stream,
                         )
+                        submitted = time.monotonic_ns()
                         status = client.wait_restore(handle, timeout=30)
+                        completed = time.monotonic_ns()
                         if not status.done or not status.success:
                             raise RuntimeError(status.message or "GPU Restore did not complete")
                         digests = []
@@ -135,7 +150,23 @@ def worker(args: argparse.Namespace) -> None:
                                     f"Layer {layer}: data or sentinel gaps changed"
                                 )
                             digests.append(hashlib.sha256(actual.numpy().tobytes()).hexdigest())
-                        result = {"checked_payload_bytes": PAYLOAD_BYTES, "sha256": digests}
+                        result = {"checked_payload_bytes": payload_bytes, "sha256": digests}
+                        if args.profile:
+                            result.update(
+                                query_id=request,
+                                timing={
+                                    "clear_ms": (query_started - clear_started) / 1e6,
+                                    "query_ms": (restore_started - query_started) / 1e6,
+                                    "native_query_calls_ms": native_query_ns / 1e6,
+                                    "poll_sleep_ms": poll_sleep_ns / 1e6,
+                                    "query_calls": polls,
+                                    "restore_submit_ms": (submitted - restore_started) / 1e6,
+                                    "restore_wait_ms": (completed - submitted) / 1e6,
+                                    "restore_ms": (completed - restore_started) / 1e6,
+                                    "query_restore_ms": (completed - query_started) / 1e6,
+                                    "oracle_ms": (time.monotonic_ns() - completed) / 1e6,
+                                },
+                            )
                     else:
                         raise ValueError(f"Unknown fixture operation: {operation}")
                     status_code, body = 200, json.dumps(result)
@@ -214,6 +245,14 @@ def main() -> None:
     local.add_argument("--manager-socket", required=True)
     local.add_argument("--instance", required=True)
     local.add_argument("--namespace", required=True)
+    local.add_argument(
+        "--segment-bytes", type=int, choices=(4096, 65536, 262144), default=SEGMENT_BYTES
+    )
+    local.add_argument(
+        "--profile",
+        action="store_true",
+        help="time query/restore outside clearing and byte validation",
+    )
     run = modes.add_parser("run", help="check forward Restore and re-serving after source eviction")
     for name in ("source-url", "target-url", "source-manager", "target-manager"):
         run.add_argument(f"--{name}", required=True)

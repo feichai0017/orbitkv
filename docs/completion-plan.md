@@ -1811,6 +1811,20 @@ physical cross-host/rank combinations, native P/D faults and S3-dependent
 reclamation remain open. Shared capacity does not establish interchangeable
 cross-engine KV bytes or a latency/throughput advantage.
 
+**Two-host Manager path timing (2026-10-09), delivery in progress:** the next
+bounded measurement uses the installed `1ab67a58` production freeze on two
+dedicated Forge H20 hosts. `benches.shared_cache_profile` separates a first
+remote DRAM read from warmed repeated restores at 512 KiB/8 MiB/32 MiB, both
+directions and single/four-NIC allowlists. Every sample clears consumer DRAM and
+requires exact remote/H2D bytes, source release and GPU tensor/sentinel equality.
+The source grants, TENT READ and reconstruction remain owned by the Rust
+Managers. Client query/restore timing is separate from GPU clearing, validation
+and controller HTTP; no isolated DMA or model-serving timing is inferred.
+The initial physical byte checks are functional readiness only, pending
+independent review. This descriptive timing substage does not launch a formal
+isolation/HA campaign, expand support, close S5 or change production policy.
+See [the maintained methodology](shared-cache-qualification.md#full-manager-remote-dram-path-timing).
+
 - Track each engine separately: single instance; independent replicas; multiple
   instances sharing a Manager; dense/hybrid; P/D; attention DP, TP, PP, MoE EP and
   relevant combinations; homogeneous/heterogeneous P/D parallelism; same-host TCP,
