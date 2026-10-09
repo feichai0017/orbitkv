@@ -256,7 +256,10 @@ def run_cache_plan(engine, tier, model, directory, env, *, cuda_graph=False, que
                 ].get("orbitkv_ssd_cufile_read_bytes_total", 0), snapshots
         if query_control:
             assert final["orbitkv_shard_query_submissions_total"] > 0
-            assert "registered query handshake configured: nodes=1 ranks=1" in (directory / "vllm-restart.log").read_text()
+            assert (
+                "registered query handshake configured: nodes=1 ranks=1"
+                in (directory / "vllm-restart.log").read_text()
+            )
         (directory / "result.json").write_text(
             json.dumps(
                 {
