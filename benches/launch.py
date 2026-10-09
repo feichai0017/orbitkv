@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -46,10 +47,26 @@ def configure(args: Namespace, bytes_per_token: int) -> Launch:
     if args.engine == "vllm" and args.deterministic_inference:
         env["VLLM_BATCH_INVARIANT"] = "1"
     env.pop("ORBITKV_TRANSFER_BACKEND", None)
-    env["PYTHONPATH"] = os.pathsep.join(
-        [str(ROOT / "python"), str(args.output)]
-        + [path for path in sys.path if Path(path).name in {"site-packages", "dist-packages"}]
-    )
+    site_paths = [
+        path for path in sys.path if Path(path).name in {"site-packages", "dist-packages"}
+    ]
+    package_dir = ROOT / "python/orbitkv"
+    if args.installed_artifact:
+        if args.backend == "orbitkv":
+            spec = importlib.util.find_spec("orbitkv")
+            if spec is None or spec.origin is None:
+                raise RuntimeError("Installed benchmark requires the complete OrbitKV wheel")
+            package_dir = Path(spec.origin).resolve().parent
+            if package_dir.parent not in {Path(path).resolve() for path in site_paths}:
+                raise RuntimeError(
+                    f"Installed benchmark resolved OrbitKV outside site-packages: {package_dir}"
+                )
+            if not (package_dir / "orbitkv-cache-manager-py").is_file():
+                raise RuntimeError("Installed OrbitKV wheel does not contain its Cache Manager")
+            site_paths = [str(package_dir.parent), *site_paths]
+        env["PYTHONPATH"] = os.pathsep.join(dict.fromkeys([*site_paths, str(args.output)]))
+    else:
+        env["PYTHONPATH"] = os.pathsep.join([str(ROOT / "python"), str(args.output), *site_paths])
     port = free_port()
     base_url = f"http://127.0.0.1:{port}"
     manager_url = None
@@ -77,7 +94,7 @@ def configure(args: Namespace, bytes_per_token: int) -> Launch:
         manager_command = [
             env.get(
                 "ORBITKV_CACHE_MANAGER_BINARY",
-                str(ROOT / "python/orbitkv/orbitkv-cache-manager-py"),
+                str(package_dir / "orbitkv-cache-manager-py"),
             ),
             "--addr",
             f"127.0.0.1:{manager_port}",
@@ -92,6 +109,8 @@ def configure(args: Namespace, bytes_per_token: int) -> Launch:
             str(args.storage_codec_budget),
         ]
         backend_configuration.update(
+            artifact_mode="installed" if args.installed_artifact else "source",
+            orbitkv_package_dir=str(package_dir),
             orbitkv_transfer_backend=args.orbitkv_transfer_backend,
             storage_codec=args.storage_codec,
             storage_codec_budget_bytes_per_worker=args.storage_codec_budget,
@@ -140,12 +159,13 @@ def configure(args: Namespace, bytes_per_token: int) -> Launch:
             "timeout_ms": args.read_timeout_ms,
             "max_batches": args.read_max_batches,
         }
-        plugin = args.output / "orbitkv_benchmark-0.0.dist-info"
-        plugin.mkdir()
-        (plugin / "METADATA").write_text("Name: orbitkv-benchmark\nVersion: 0.0\n")
-        (plugin / "entry_points.txt").write_text(
-            "[sglang.srt.plugins]\norbitkv = orbitkv.sglang.plugin:register\n"
-        )
+        if not args.installed_artifact:
+            plugin = args.output / "orbitkv_benchmark-0.0.dist-info"
+            plugin.mkdir()
+            (plugin / "METADATA").write_text("Name: orbitkv-benchmark\nVersion: 0.0\n")
+            (plugin / "entry_points.txt").write_text(
+                "[sglang.srt.plugins]\norbitkv = orbitkv.sglang.plugin:register\n"
+            )
     elif args.backend == "lmcache":
         env["LMCACHE_TRACK_USAGE"] = "false"
         cache_port, cache_http = free_port(), free_port()

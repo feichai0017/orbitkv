@@ -19,6 +19,7 @@ selected external `--ssd-dir` mount. Criterion measurements require an external
 ```bash
 .venv/vllm-release/bin/python -m benches.single_node \
   --engine vllm --backend orbitkv --model /path/to/immutable-model \
+  --installed-artifact \
   --output /var/tmp/orbitkv-bench/vllm-dram-001
 
 python -m benches.report /var/tmp/orbitkv-bench/vllm-dram-001 \
@@ -44,6 +45,108 @@ checks and CI, including force-added files. It reserves `benches/results/`,
 `benches/runs/`, `results/` and `runs/` for generated output and rejects tracked
 entries there. It deliberately allows deterministic fixtures under `tests/` and
 source files whose names contain `result`; it does not infer content from such names.
+
+## Serving comparisons
+
+Compare backends inside each engine first. The selected profiles are official
+vLLM 0.31.0 with the V1 runner and one attention group, and official SGLang
+0.5.21. Use dense Qwen3 BF16, TP=1/PP=1 for the initial matrix; broader rank,
+hybrid, P/D and Graph profiles need their own qualification. Use separate clean
+installed environments and freeze the resolved dependencies and all installed
+engine/cache files before and after each run. `--installed-artifact` keeps source
+adapters out of the child import path; it does not install or qualify dependencies.
+
+| Backend | Purpose | Capacity control |
+| --- | --- | --- |
+| `native` | Engine HBM prefix-cache reference | Same GPU KV bytes; no host cache |
+| `cpu` | Released vLLM OffloadingConnector or SGLang HiCache | Same GPU KV bytes and host budget |
+| `orbitkv` | Installed wheel and bundled Manager | Same GPU KV bytes and host budget; DRAM first |
+| `lmcache` | Released LMCache MP connector and server | Same GPU KV bytes and host budget; DRAM first |
+
+The LMCache target is
+[0.5.5](https://github.com/LMCache/LMCache/releases/tag/v0.5.5), commit
+`05a013b29da78cf2321b9b46ec5039dde2fb0bb0`; validate the selected engine/PyTorch
+combination before measurement. Its
+[released SGLang MP example](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/examples/sgl_integration/README.md)
+documents the server/configuration boundary. A launcher option or successful
+import does not prove model serving or compatible native kernels.
+
+Freeze model/tokenizer content hashes, tokenized prompts, output length, seed,
+arrival/concurrency pattern, page/chunk size, GPU KV bytes, host/SSD capacity,
+NUMA placement and eager/Graph mode. Record actual effective cache capacity,
+staging, scratch, pinned ownership and all cache-server processes in addition to
+configured budgets. Preserve native HBM hits; an external miss and a resident
+HBM hit do not perform equal work. Start with cold, HBM-hot, external full/partial
+hit, cache miss and post-pressure cases. Add independent engine restart and
+DRAM-evicted io_uring SSD restores only after their byte/output controls pass.
+Native GDS remains a separate deferred qualification.
+
+Use concurrency 1/4/8 and at least three, preferably five, order-alternated
+independent runs per matched profile. Declare warmup, sample count, stop rules,
+SLOs and acceptance thresholds before launch. Bootstrap independent run pairs,
+not correlated requests inside one run. Retain slow samples and report absolute
+latency differences alongside ratios and uncertainty. Report TTFT, end-to-end
+latency, completed requests/tokens per second, SLO goodput, CPU/pinned-memory
+cost, cache-source bytes and physical I/O. The current single-node streaming
+driver times first returned text and completion. Sustained reports include a
+request-level mean decode-time-per-token proxy; per-token ITL distributions and
+SLO goodput instrumentation remain open and cannot be inferred from that proxy.
+Output length and text are retained; require the engine's native deterministic
+output control and the cache byte/lifetime gates before any speedup claim.
+
+For two-host shared-cache serving, publish on one host and restore in a fresh
+consumer on the other. Require zero consumer DRAM beforehand, positive remote
+and GPU-copy bytes, matching output, exact source identity and final reservation
+drain. The native consumer recomputation control has the same model and request;
+a same-host HBM hit is a separate best-case reference. Match global cache
+coverage, replica count and total memory, including storage-server segments and
+staging, for a distributed LMCache comparison. The documented
+[LMCache Mooncake Store backend](https://docs.lmcache.ai/kv_cache/storage_backends/mooncake.html)
+uses a storage service as well as transport. Verify that the released MP
+integration consumes the chosen backend before comparing it with OrbitKV;
+that documentation does not establish distributed MP support on these pins.
+
+## TENT and fabric diagnostics
+
+Keep bare TENT measurements separate from full Manager recovery and engine
+serving. Freeze the Mooncake commit, wrapper, libraries and configuration. Measure
+READ/WRITE for host-to-host, host-to-GPU and GPU-to-GPU payloads; record exact
+device/host pointer registration, bytes, placement, source ownership and drain.
+Distinguish first segment discovery/connection and memory registration from
+preheated transfer. Test packed and fragmented layouts, message-size crossover,
+one/two/four NIC selections, NUMA placement and concurrent clients/GPU pairs.
+Registration or a transport's internal counter alone does not prove physical
+GPUDirect RDMA; retain NIC counters, payload checks and negative route controls.
+
+NVLink is a same-host GPU fabric. Hardware link status is readiness evidence,
+not measured payload bandwidth or proof that TENT selects a local path. Verify
+the available pinned TENT transport first, then record the actual route and
+fabric counters. Treat a local CUDA peer-copy ceiling separately from TENT's
+consumed path. Cross-host traffic remains on the network. For mixed inference,
+compare isolated cache READ with native P/D WRITE and NCCL traffic on shared and
+separate NICs; retain decode ITL, TTFT, goodput and GPU/PCIe/CPU/fabric pressure.
+This requires the serving instrumentation above, not an extrapolation from a
+GPU-to-GPU microbenchmark.
+
+The pinned
+[TENT NVLink implementation](https://github.com/kvcache-ai/Mooncake/blob/719735896c86b56fabec6cf3e825fb2ea640597a/mooncake-transfer-engine/tent/src/transport/nvlink/nvlink_transport.cpp)
+has CUDA IPC export and asynchronous completion; OrbitKV enables its native
+transports unless TCP is forced. Test cudaMalloc-backed tensors, suballocations,
+VMM allocations, mixed-device batches and non-default producer streams
+separately. The pinned path skips IPC export for VMM memory, so an enabled
+transport can still be ineligible for a particular allocation. Preserve the
+producer-readiness edge and device/source lifetime when investigating its
+caller synchronization cost; a faster copy that races a producer is invalid.
+
+Investigate cold READ segment discovery, metadata fetch, QP setup, memory
+registration and progress/completion independently before labeling a TENT bug.
+Reproduce a suspected upstream issue outside the Manager wrapper on the pinned
+baseline, check existing upstream issues/PRs, and retain a matched candidate
+with exact bytes, partial-submit, cancellation, peer-loss, delayed completion
+and final drain controls. A wrapper polling delay belongs in OrbitKV; an
+upstream transport repair needs its own reproducer and regression evidence.
+Use KDA for a measured GPU packing/scatter or codec bottleneck, with device-event
+and actual serving controls; it cannot optimize an RPC or connection delay.
 
 ## Historical tracked evidence
 

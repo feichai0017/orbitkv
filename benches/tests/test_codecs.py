@@ -1,7 +1,9 @@
 """Codec controls and evidence must stay usable without native/GPU imports."""
 
 import json
+import sys
 from argparse import ArgumentTypeError, Namespace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +17,7 @@ def launch_arguments(tmp_path, engine="vllm", codec="none", ssd_gib=4):
     return Namespace(
         engine=engine,
         backend="orbitkv",
+        installed_artifact=False,
         model=tmp_path / "model",
         output=tmp_path,
         host_gib=1,
@@ -40,6 +43,53 @@ def launch_arguments(tmp_path, engine="vllm", codec="none", ssd_gib=4):
         prefill_tokens=8192,
         orbitkv_transfer_backend=None,
     )
+
+
+@pytest.mark.parametrize("engine", ["vllm", "sglang"])
+def test_installed_benchmark_uses_wheel_without_source_or_duplicate_plugin(
+    tmp_path, monkeypatch, engine
+):
+    site = tmp_path / "site-packages"
+    package = site / "orbitkv"
+    package.mkdir(parents=True)
+    (package / "orbitkv-cache-manager-py").touch()
+    monkeypatch.setattr(
+        "benches.launch.sys.path",
+        [
+            str(site),
+            *(
+                path
+                for path in sys.path
+                if Path(path).name not in {"site-packages", "dist-packages"}
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        "benches.launch.importlib.util.find_spec",
+        lambda name: SimpleNamespace(origin=str(package / "__init__.py")),
+    )
+    monkeypatch.delenv("ORBITKV_CACHE_MANAGER_BINARY", raising=False)
+    monkeypatch.setenv("PYTHONPATH", "/source/that/must/not/shadow/the/wheel")
+    args = launch_arguments(tmp_path, engine)
+    args.installed_artifact = True
+    launch = configure(args, 147456)
+    assert launch.manager_command[0] == str(package / "orbitkv-cache-manager-py")
+    assert launch.env["PYTHONPATH"].split(":") == [str(site), str(tmp_path)]
+    assert launch.backend_configuration["artifact_mode"] == "installed"
+    assert launch.backend_configuration["orbitkv_package_dir"] == str(package)
+    assert not (tmp_path / "orbitkv_benchmark-0.0.dist-info").exists()
+
+
+@pytest.mark.parametrize("origin", [None, "/checkout/python/orbitkv/__init__.py"])
+def test_installed_benchmark_rejects_missing_or_shadowed_wheel(tmp_path, monkeypatch, origin):
+    monkeypatch.setattr(
+        "benches.launch.importlib.util.find_spec",
+        lambda name: None if origin is None else SimpleNamespace(origin=origin),
+    )
+    args = launch_arguments(tmp_path)
+    args.installed_artifact = True
+    with pytest.raises(RuntimeError, match="complete OrbitKV wheel|outside site-packages"):
+        configure(args, 147456)
 
 
 @pytest.mark.parametrize("engine", ["vllm", "sglang"])

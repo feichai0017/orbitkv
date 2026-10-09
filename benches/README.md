@@ -203,19 +203,24 @@ not qualify physical two-host or RDMA deployment.
 
 ## Single-node comparison
 
-Use separate environments for the validated vLLM 0.29.0 and SGLang 0.5.20
-releases. Follow the [deployment guide](../docs/single-node.md) to build/install
-the release wheel. The harness needs `requests`; the selected engine provides
-its tokenizer and GPU runtime. LMCache and FlexKV are comparison dependencies,
-not OrbitKV package dependencies.
+Use separate installed environments for the selected official vLLM 0.31.0 and
+SGLang 0.5.21 releases. Earlier 0.29.0/0.5.20 measurements remain historical
+evidence for those revisions. Follow the [deployment guide](../docs/single-node.md)
+to build/install the release wheel. The harness needs `requests`; the selected
+engine provides its tokenizer and GPU runtime. LMCache and FlexKV are comparison
+dependencies, not OrbitKV package dependencies. The LMCache comparison target is
+the official 0.5.5 release with its MP connector; the target still needs startup
+and output validation in each selected engine environment.
 
 ```bash
 .venv/vllm-release/bin/python -m benches.single_node \
   --engine vllm --backend orbitkv --model /workspace/models/qwen3-8b \
+  --installed-artifact \
   --output /var/tmp/orbitkv-bench/vllm-dram
 
 .venv/sglang-release/bin/python -m benches.single_node \
   --engine sglang --backend orbitkv --model /workspace/models/qwen3-8b \
+  --installed-artifact \
   --output /var/tmp/orbitkv-bench/sglang-dram
 ```
 
@@ -224,9 +229,15 @@ The harness rejects output inside this checkout, including symlinks back into it
 See [benchmark evidence](../docs/benchmark-evidence.md) for historical archives,
 hashes, retention and CI artifact handling. The
 harness owns the engine and the OrbitKV/LMCache process; do not start other GPU
-workloads during measurement. An OrbitKV source run uses the staged Cache Manager
-binary in `python/orbitkv/` and the Python adapters from this checkout.
-Set `ORBITKV_CACHE_MANAGER_BINARY` to select an explicitly built Manager.
+workloads during measurement. Use `--installed-artifact` for release comparisons:
+child processes import installed packages without prepending this checkout's
+`python/`, and OrbitKV selects the wheel's bundled Manager. A missing or
+source-shadowed OrbitKV wheel is rejected before services start. The installed
+SGLang plugin registration comes from the wheel. The manifest retains this mode,
+the package path and the selected Manager hash. Omitting the flag is the developer
+source mode, which uses the staged Manager and adapters in `python/orbitkv/`.
+`ORBITKV_CACHE_MANAGER_BINARY` overrides either selection; record and freeze that
+binary explicitly when using it.
 The extension and Manager must come from the same source revision and protocol.
 Listener ports, including SGLang's rendezvous port, are chosen outside Linux's
 outgoing ephemeral range to reduce startup conflicts during GPU initialization.
@@ -234,6 +245,11 @@ outgoing ephemeral range to reduce startup conflicts during GPU initialization.
 Use `--backend native`, `cpu`, `orbitkv`, `lmcache`, or `flexkv`. Compare within
 one engine, using identical model, GPU token capacity, host capacity, request
 sequence, and dependencies. Supported model scope is dense Qwen3 in BF16, TP=1.
+`native` measures resident engine HBM caching with no host cache. `cpu` uses
+vLLM's OffloadingConnector or SGLang's HiCache and is the equal-host-budget
+reference for OrbitKV and LMCache. Report the HBM reference separately from
+external restore work. The [serving comparison method](../docs/benchmark-evidence.md#serving-comparisons)
+defines correctness, capacity, repetitions and the separate distributed controls.
 FlexKV compatibility failures observed on these releases are documented in the
 [measurement report](../docs/single-node-performance.md); accepting a backend
 option does not mean its current integration can start successfully.

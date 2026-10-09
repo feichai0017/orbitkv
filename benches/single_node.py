@@ -34,6 +34,11 @@ def main() -> None:
     )
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument(
+        "--installed-artifact",
+        action="store_true",
+        help="Use installed packages and the wheel's Manager; reject a source OrbitKV import",
+    )
+    parser.add_argument(
         "--output",
         type=external_path,
         required=True,
