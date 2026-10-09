@@ -97,6 +97,8 @@ def test_static_adapters_keep_native_hits_and_separate_changed_contents(engine, 
             "2",
             "--max-lora-rank",
             "8",
+            "--shutdown-timeout",
+            "30",
             "--lora-modules",
             *[f"{name}={path}" for name, path in adapters.items()],
         ]
@@ -206,8 +208,8 @@ def test_static_adapters_keep_native_hits_and_separate_changed_contents(engine, 
                     assert cached_tokens(engine, warm) >= 704, warm
                     new = snapshot(f"after-restart-{name}")
                     assert new["orbitkv_load_bytes_total"] > old.get("orbitkv_load_bytes_total", 0)
-                    assert new["orbitkv_ssd_read_bytes_total"] > old.get(
-                        "orbitkv_ssd_read_bytes_total", 0
+                    assert new["orbitkv_ssd_prefetch_bytes_total"] > old.get(
+                        "orbitkv_ssd_prefetch_bytes_total", 0
                     )
             write_adapter(adapters["static-a"], config, 41)
             with service(command, url, env, tmp_path, f"{engine}-native-changed"):
