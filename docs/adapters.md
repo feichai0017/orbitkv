@@ -379,8 +379,9 @@ For one Manager, explicitly set `orbitkv.query_control=true`; multiple
 }
 ```
 
-For TP8 and two endpoints, global ranks 0–3 register with the first Manager and
-4–7 with the second. The scheduler requires exactly all declared global ranks,
+As a configuration example for TP8 and two endpoints, global ranks 0–3 register
+with the first Manager and 4–7 with the second. This physical topology is not
+qualified. The scheduler requires exactly all declared global ranks,
 and all workers in one node must export the identical registration. Every worker
 receives the same ordered endpoint list; custom local UDS paths can use
 `orbitkv.tp_shard_bootstrap_sockets`.
@@ -403,8 +404,11 @@ profile remains the default.
 This implementation currently accepts only trusted same-host literal loopback
 endpoints. Cross-host activation needs authenticated encrypted transport and its
 own physical topology/fault qualification. Two Manager processes on one GPU do
-not qualify TP8, multi-GPU NCCL, HA or S3 lifetime. Final installed-artifact and
-independent review status is recorded in S5.5 of the completion plan.
+not qualify TP8, multi-GPU NCCL, HA or S3 lifetime. The `1ab67a58` installed wheel
+is independently accepted for two-Manager DRAM/io_uring byte gates and official
+vLLM TP=1 eager handshake/cache recovery on H20. Physical multi-GPU serving and
+composition with the separate adapter/Graph profiles remain unqualified.
+See the scoped acceptance in the completion plan.
 
 ## Complete cache blocks and live prompt tails
 
@@ -455,8 +459,8 @@ admission. Consumers must open a fresh interest per lookup and close it after
 native ownership handoff/completion; idle expiry is a bounded failure fallback.
 
 This transport primitive is independently accepted for the trusted same-host
-loopback authority and lease scope. The native common-prefix coordinator and
-official vLLM handshake are implemented in the subsequent scoped delivery;
-their installed-artifact qualification and independent acceptance are separate.
-No cross-host native TP model, HA or S3 fault qualification is implied. See S5.5 in the completion plan for the next
-bounded delivery and hardware gates.
+loopback authority and lease scope. The subsequent native common-prefix
+coordinator and official vLLM handshake are independently accepted at `1ab67a58`
+for the same-host installed-artifact scope above. Cross-host native TP model, HA
+and S3 fault qualification remain open. See S5.5 in the completion plan for
+physical topology and lifetime gates.
