@@ -1092,6 +1092,12 @@ layer hooks. The current contracts live in [transport](transport.md) and
   expert traffic on shared versus separate NICs. Measure decode ITL tails, TTFT,
   SLO goodput, CPU cores, PCIe/NUMA pressure and physical NIC counters. TENT's own
   load counters do not measure non-TENT traffic; RDMA is not bandwidth isolation.
+  Separate bare TENT cold/warm READ/WRITE, full Manager recovery and each engine's
+  serving comparison. Same-host NVLink needs an observed consumed transport;
+  link status cannot substitute for route or payload evidence. Before a TENT
+  repair, isolate segment discovery, registration, QP/progress and wrapper
+  completion, reproduce against the pinned upstream and retain fault/drain
+  controls. Follow [the maintained method](benchmark-evidence.md#tent-and-fabric-diagnostics).
 - **Implementation partial:** direct registered engine-page SSD I/O and multi-writer
   GPU assembly remain beyond the existing staged GPU path. Include registration,
   source-page hold time, fragmentation and extra HBM in their admission decision.
@@ -1611,6 +1617,38 @@ wheel gates. Open profiles only with proven ownership and fault handling; no
 fork-only factory, callback, default configuration or CI dependency may remain.
 
 ### S5.5 — Deployment matrix and upstream maintenance
+
+**Serving comparison readiness implemented; runtime qualification open
+(2026-10-09):** `benches.single_node --installed-artifact` selects installed
+packages and the bundled Manager, rejects a missing/source-shadowed OrbitKV
+wheel and consumes the wheel's SGLang plugin registration. Source developer
+mode remains explicit by omitting the flag. Benchmark tests cover both engines
+and rejected package origins. This changes the measurement launcher only.
+
+The next comparison uses each official selected engine separately: native HBM,
+native CPU offload/HiCache, OrbitKV and the LMCache 0.5.5 MP target, with matched
+model, GPU/host budgets, requests and independent order-alternated runs.
+Fresh official environments and model artifacts on the two H20 hosts still need
+freezing and startup/output controls before a serving campaign. Local legacy
+environments at `/root/orbitkv/.venv/{vllm,sglang}-release` resolve to
+0.29.0/0.5.20 and must not be relabeled as 0.31.0/0.5.21 evidence. The sustained
+decode-time-per-token field is an aggregate proxy; per-token ITL distributions
+and SLO goodput instrumentation remain open. Distributed LMCache needs
+a consumed released backend profile and equal total cache budgets. TENT cold/warm,
+GPUDirect RDMA and same-host NVLink diagnostics are separate S4 controls; no
+transport bug or end-to-end advantage is inferred from a microbenchmark.
+Use [the serving method](benchmark-evidence.md#serving-comparisons). This readiness
+work does not change S2/S5 status or qualify any new engine/topology profile.
+
+**TENT allocation triage (2026-10-10):** the independent CUDA API probe passes on
+both H20 hosts and confirms that valid VMM memory requires its dedicated
+shareable-handle API; legacy IPC export rejects it. No TENT payload defect is
+reproduced by that probe. Existing upstream issue #2511/PR #3538 covers a
+different DMA-BUF registration defect. Our official `v0.3.13.post1` pin also
+lacks merged NVLink fixes #3678/#3679; peer ordinal and suballocation-handle
+controls are required before local NVLink qualification. Retain separate
+released/upstream-main evidence and preserve the current frozen runtime. See
+[the allocation and upstream limits](benchmark-evidence.md#tent-and-fabric-diagnostics).
 
 **Local gates passed; independent review open (2026-10-07):** test commit
 `06d00d53` adds a reproducible two-engine shared-Manager gate for official
