@@ -39,6 +39,7 @@ struct PendingQuery {
 pub enum QueryIntent {
     Lookup { wait_for_full_prefix: bool },
     Candidates,
+    Shards,
     Recovery(RecoveryDemand),
 }
 
@@ -134,6 +135,9 @@ impl Queries {
         intent: QueryIntent,
     ) -> Result<QueryCommand, ChannelError> {
         if let Some(query) = self.pending.get_mut(key) {
+            if (query.intent == QueryIntent::Shards) != (intent == QueryIntent::Shards) {
+                return Err(crate::CacheProtocolError::InvalidShardPayload.into());
+            }
             if query.prepared_until.is_some() && query.hashes == *hashes && query.intent == intent {
                 query.prepared_until = None;
                 return Ok(QueryCommand::Claim {
@@ -302,6 +306,9 @@ impl CacheClient {
         intent: QueryIntent,
         observe: bool,
     ) -> Result<(QueryBundleResponse, Option<ChannelCallObservation>), ChannelError> {
+        if intent == QueryIntent::Shards {
+            return Err(crate::CacheProtocolError::InvalidShardPayload.into());
+        }
         let key = QueryKey {
             instance: instance.into(),
             request: request.into(),
@@ -312,7 +319,7 @@ impl CacheClient {
             .lock()
             .map_err(|_| ChannelError::SessionRequiresReconnect)?;
         if let Some((ticket, _)) = queries.warmups.remove(&key) {
-            self.cancel(ticket)?;
+            self.cancel(ticket, false)?;
         }
         if queries.pending.get(&key).is_some_and(|query| {
             query
@@ -320,7 +327,7 @@ impl CacheClient {
                 .is_some_and(|until| Instant::now() >= until)
         }) && let Some(query) = queries.pending.remove(&key)
         {
-            self.cancel(query.ticket)?;
+            self.cancel(query.ticket, query.intent == QueryIntent::Shards)?;
         }
         let previous = queries.pending.get(&key).map(|query| query.ticket);
         let discover = intent == QueryIntent::Candidates;
@@ -348,9 +355,9 @@ impl CacheClient {
                 // Failure before submission can leave the prior revision alive;
                 // failure after submission can leave the replacement alive.
                 if let Some(query) = queries.pending.remove(&key) {
-                    let _ = self.cancel(query.ticket);
+                    let _ = self.cancel(query.ticket, query.intent == QueryIntent::Shards);
                     if let Some(previous) = previous.filter(|ticket| *ticket != query.ticket) {
-                        let _ = self.cancel(previous);
+                        let _ = self.cancel(previous, false);
                     }
                 }
                 Err(error)
@@ -489,7 +496,7 @@ impl CacheClient {
             .collect();
         for key in expired {
             if let Some(query) = queries.pending.remove(&key) {
-                self.cancel(query.ticket)?;
+                self.cancel(query.ticket, query.intent == QueryIntent::Shards)?;
             }
         }
         if queries.pending.contains_key(&key)
@@ -541,7 +548,7 @@ impl CacheClient {
                 Err(ChannelError::SessionRequiresReconnect)
             }
             Err(error) => {
-                let _ = self.cancel(ticket);
+                let _ = self.cancel(ticket, false);
                 Err(error)
             }
         }
@@ -574,7 +581,7 @@ impl CacheClient {
             .collect();
         for key in expired {
             if let Some((ticket, _)) = queries.warmups.remove(&key) {
-                self.cancel(ticket)?;
+                self.cancel(ticket, false)?;
             }
         }
         if queries.warmups.contains_key(&key)
@@ -634,17 +641,73 @@ impl CacheClient {
             .lock()
             .map_err(|_| ChannelError::SessionRequiresReconnect)?;
         if let Some((ticket, _)) = queries.warmups.remove(&key) {
-            self.cancel(ticket)?;
+            self.cancel(ticket, false)?;
         }
         if let Some(query) = queries.pending.remove(&key) {
-            self.cancel(query.ticket)?;
+            self.cancel(query.ticket, query.intent == QueryIntent::Shards)?;
         }
         Ok(())
     }
 
-    fn cancel(&self, ticket: QueryTicket) -> Result<(), ChannelError> {
+    fn cancel(&self, ticket: QueryTicket, shards: bool) -> Result<(), ChannelError> {
+        let request_id = next_id(&self.requests)?;
+        let request = CancelQueryRequest { ticket };
+        if shards {
+            self.channel.cancel_shard_query(request_id, &request)
+        } else {
+            self.channel.cancel_query(request_id, &request)
+        }
+    }
+
+    pub fn query_shards(
+        &self,
+        instance: &str,
+        hashes: &BlockHashes,
+        request: &str,
+    ) -> Result<crate::ShardQueryResponse, ChannelError> {
+        let key = QueryKey {
+            instance: instance.into(),
+            request: request.into(),
+            group: 0,
+        };
+        let mut queries = self
+            .queries
+            .lock()
+            .map_err(|_| ChannelError::SessionRequiresReconnect)?;
+        if let Some((ticket, _)) = queries.warmups.remove(&key) {
+            self.cancel(ticket, false)?;
+        }
+        let previous = queries.pending.get(&key).map(|query| query.ticket);
+        let command = queries.prepare(&key, hashes, QueryIntent::Shards)?;
+        let result = self
+            .channel
+            .query_shards(next_id(&self.requests)?, &command);
+        match result {
+            Ok(response) if response.num_hit_blocks <= hashes.as_slice().len() as u64 => {
+                queries.complete(&key, response.outcome);
+                Ok(response)
+            }
+            result => {
+                if let Some(query) = queries.pending.remove(&key) {
+                    let _ = self.cancel(query.ticket, true);
+                    if let Some(previous) = previous.filter(|ticket| *ticket != query.ticket) {
+                        let _ = self.cancel(previous, true);
+                    }
+                }
+                match result {
+                    Err(error) => Err(error),
+                    Ok(_) => {
+                        self.channel.close();
+                        Err(crate::CacheProtocolError::InvalidShardPayload.into())
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn release_shard_query(&self, control_id: Vec<u8>) -> Result<(), ChannelError> {
         self.channel
-            .cancel_query(next_id(&self.requests)?, &CancelQueryRequest { ticket })
+            .release_shard_query(next_id(&self.requests)?, control_id)
     }
 
     pub fn release(&self, lease: Vec<u8>) -> Result<(), ChannelError> {

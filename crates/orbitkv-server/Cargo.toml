@@ -38,6 +38,7 @@ cudarc.workspace = true
 tonic.workspace = true
 prost.workspace = true
 tokio.workspace = true
+futures.workspace = true
 rustix.workspace = true
 clap.workspace = true
 log.workspace = true

@@ -15,10 +15,15 @@ from vllm.distributed.kv_transfer.kv_connector.v1.base import (  # noqa: E402
     KVConnectorRole,
 )
 
-from orbitkv.orbitkv import BlockHashes, QueryLoading, QueryReady  # noqa: E402
+from orbitkv.orbitkv import BlockHashes, QueryLoading, ShardedQueryReady  # noqa: E402
 from orbitkv.vllm import OrbitKVConnector  # noqa: E402
 from orbitkv.vllm.config import ConnectorContext, TpShardTopology  # noqa: E402
-from orbitkv.vllm.metadata import LoadIntent, OrbitKVConnectorMetadata  # noqa: E402
+from orbitkv.vllm.metadata import (  # noqa: E402
+    LoadIntent,
+    OrbitKVConnectorMetadata,
+    OrbitKVQueryHandshake,
+    OrbitKVWorkerMetadata,
+)
 from orbitkv.vllm.scheduler import SchedulerAdapter, _QueryProbe  # noqa: E402
 from orbitkv.vllm.worker import WorkerAdapter  # noqa: E402
 
@@ -52,6 +57,7 @@ def _context(**kwargs) -> ConnectorContext:
         "device_id": 0,
         "client": MagicMock(),
         "tp_shards": _topology(),
+        "query_control": True,
     }
     defaults.update(kwargs)
     return ConnectorContext(**defaults)  # type: ignore[arg-type]
@@ -152,7 +158,7 @@ def test_worker_connector_routes_global_tp_rank_to_its_local_manager(monkeypatch
     )
 
 
-def test_scheduler_opens_a_local_topology_session_on_every_manager(monkeypatch):
+def test_scheduler_opens_only_its_local_topology_session(monkeypatch):
     first = MagicMock(transport="iceoryx2")
     second = MagicMock(transport="iceoryx2")
     monkeypatch.setattr(
@@ -164,9 +170,7 @@ def test_scheduler_opens_a_local_topology_session_on_every_manager(monkeypatch):
         first.start_session_watcher.assert_called_once()
         assert first.start_session_watcher.call_args.args[1].endswith(":tp-shard-0-of-2")
         assert first.start_session_watcher.call_args.args[2:] == (4, 4)
-        second.start_session_watcher.assert_called_once()
-        assert second.start_session_watcher.call_args.args[1].endswith(":tp-shard-1-of-2")
-        assert second.start_session_watcher.call_args.args[2:] == (4, 4)
+        second.start_session_watcher.assert_not_called()
     finally:
         connector.shutdown()
 
@@ -187,16 +191,15 @@ def test_scheduler_maps_each_tp_shard_to_its_local_socket(monkeypatch):
     connector = OrbitKVConnector(config, KVConnectorRole.SCHEDULER)
     try:
         assert connector._ctx.client is clients[0]
-        assert connector._scheduler._tp_shard_client._clients == tuple(clients)
-        assert connector._connections.clients == tuple(clients)
-        for client in clients:
-            client.start_session_watcher.assert_called_once()
+        assert connector._scheduler._clients == (clients[0],)
+        assert connector._connections.clients == (clients[0],)
+        clients[0].start_session_watcher.assert_called_once()
+        clients[1].start_session_watcher.assert_not_called()
     finally:
         connector.shutdown()
 
     assert factory.call_args_list == [
         call("/run/orbitkv/a.sock", timeout_ms=5_000, spin_iterations=64),
-        call("/run/orbitkv/b.sock", timeout_ms=5_000, spin_iterations=64),
     ]
 
 
@@ -212,7 +215,6 @@ def test_scheduler_derives_distinct_local_sockets(monkeypatch):
         connector.shutdown()
     assert factory.call_args_list == [
         call("/tmp/orbitkv-50055.sock", timeout_ms=5_000, spin_iterations=64),
-        call("/tmp/orbitkv-50056.sock", timeout_ms=5_000, spin_iterations=64),
     ]
 
 
@@ -237,7 +239,7 @@ def test_scheduler_fails_if_bootstrap_fails(monkeypatch):
 
 def test_scheduler_closes_every_connection_when_session_start_fails(monkeypatch):
     clients = [MagicMock(transport="iceoryx2"), MagicMock(transport="iceoryx2")]
-    clients[1].start_session_watcher.side_effect = RuntimeError("session rejected")
+    clients[0].start_session_watcher.side_effect = RuntimeError("session rejected")
     monkeypatch.setattr(
         "orbitkv.client.connection.CacheManagerClient", MagicMock(side_effect=clients)
     )
@@ -245,8 +247,8 @@ def test_scheduler_closes_every_connection_when_session_start_fails(monkeypatch)
     with pytest.raises(RuntimeError, match="session rejected"):
         OrbitKVConnector(_vllm_config(), KVConnectorRole.SCHEDULER)
 
-    for client in clients:
-        client.close.assert_called_once()
+    clients[0].close.assert_called_once()
+    clients[1].close.assert_not_called()
 
 
 def test_worker_uses_only_its_tp_shard_socket(monkeypatch):
@@ -318,7 +320,9 @@ def test_full_prefix_prefetch_uses_local_client(monkeypatch):
     monkeypatch.setattr(
         "orbitkv.client.connection.CacheManagerClient", MagicMock(return_value=client)
     )
-    config = _vllm_config(extra_overrides={"orbitkv.wait_for_full_prefix": True})
+    config = _vllm_config(
+        extra_overrides={"orbitkv.wait_for_full_prefix": True, "orbitkv.tp_shard_endpoints": None}
+    )
     connector = OrbitKVConnector(config, KVConnectorRole.SCHEDULER)
     try:
         assert connector._ctx.wait_for_full_prefix
@@ -351,101 +355,101 @@ def test_pure_mla_collapses_storage_tp_but_stripes_saves_within_each_node():
     assert context.local_physical_tp_size == 4
 
 
-def test_scheduler_uses_common_prefix_and_exact_per_shard_leases():
-    first = MagicMock()
-    second = MagicMock()
-    first.query_prefetch.side_effect = [
-        QueryReady(3, b"first-long"),
-        QueryReady(2, b"first-exact"),
-    ]
-    second.query_prefetch.return_value = QueryReady(2, b"second-exact")
-    scheduler = SchedulerAdapter(_context(), clients=(first, second))
-    hashes = [b"h0", b"h1", b"h2"]
-
-    ready = scheduler._query_recovery("request", _QueryProbe(0, tuple(hashes)), 10000)
-
-    assert ready is not None
+def test_scheduler_delegates_dense_shards_to_one_native_query_owner():
+    client = MagicMock()
+    client.query_shards.return_value = ShardedQueryReady(2, (b"a" * 16, b"b" * 16), b"c" * 16)
+    scheduler = SchedulerAdapter(_context(client=client))
+    scheduler.query_handshake_ready = True
+    probe = _QueryProbe(0, (b"h0", b"h1", b"h2"))
+    ready = scheduler._query_recovery("request", probe, 10000)
     assert ready.num_hit_blocks == 2
-    assert ready.leases == (b"first-exact", b"second-exact")
-    assert first.query_prefetch.call_args_list == [
-        call(
-            "instance",
-            BlockHashes(hashes),
-            req_id="request",
-            wait_for_full_prefix=False,
-        ),
-        call(
-            "instance",
-            BlockHashes(hashes[:2]),
-            req_id="request:tp-common-2",
-            wait_for_full_prefix=False,
-        ),
-    ]
-    first.release.assert_called_once_with(b"first-long")
-    second.release.assert_not_called()
+    assert ready.leases == (b"a" * 16, b"b" * 16)
+    assert probe.control_id == b"c" * 16
+    client.query_shards.assert_called_once_with(
+        "instance", BlockHashes(probe.query_hashes), "request"
+    )
+    client.query_prefetch.assert_not_called()
+    assert scheduler._release_query_probe("request", probe)
+    client.release_shard_query.assert_called_once_with(b"c" * 16)
+    client.release.assert_not_called()
 
 
-def test_scheduler_releases_ready_shards_when_another_shard_is_loading():
-    first = MagicMock()
-    second = MagicMock()
-    first.query_prefetch.return_value = QueryReady(2, b"first")
-    second.query_prefetch.return_value = QueryLoading()
-    scheduler = SchedulerAdapter(_context(), clients=(first, second))
-
-    assert scheduler._query_recovery("request", _QueryProbe(0, (b"h0", b"h1")), 10000) is None
-    first.release.assert_called_once_with(b"first")
-
-
-def test_scheduler_cancels_drifted_prefetch_before_querying_new_hashes():
-    first, second = MagicMock(), MagicMock()
-    first.query_prefetch.return_value = QueryLoading()
-    scheduler = SchedulerAdapter(_context(), clients=(first, second))
+def test_scheduler_cancels_drifted_native_query_before_replacing_hashes():
+    client = MagicMock()
+    client.query_shards.return_value = QueryLoading()
+    scheduler = SchedulerAdapter(_context(client=client))
+    scheduler.query_handshake_ready = True
     request = SimpleNamespace(
         request_id="request", block_hashes=[b"h0", b"h1", b"h2", b"h3"], num_tokens=64
     )
     assert scheduler.get_num_new_matched_tokens(request, 0) == (None, False)
     assert scheduler.get_num_new_matched_tokens(request, 32) == (None, False)
-    first.cancel_query.assert_called_once_with("instance", "request")
-    second.cancel_query.assert_called_once_with("instance", "request")
-    assert first.query_prefetch.call_args_list == [
-        call(
-            "instance",
-            BlockHashes(request.block_hashes),
-            req_id="request",
-            wait_for_full_prefix=False,
-        ),
-        call(
-            "instance",
-            BlockHashes(request.block_hashes[2:]),
-            req_id="request",
-            wait_for_full_prefix=False,
-        ),
+    client.cancel_query.assert_called_once_with("instance", "request")
+    assert client.query_shards.call_args_list == [
+        call("instance", BlockHashes(request.block_hashes), "request"),
+        call("instance", BlockHashes(request.block_hashes[2:]), "request"),
     ]
     scheduler.shutdown()
-    assert first.cancel_query.call_count == 2
-    assert second.cancel_query.call_count == 2
+    assert client.cancel_query.call_count == 2
 
 
-@pytest.mark.parametrize(
-    "invalid_ready",
-    [
-        QueryReady(3, b"too-many"),
-        QueryReady(1, b""),
-    ],
-)
-def test_scheduler_rejects_invalid_shard_query_results_without_leaking_lease(invalid_ready):
-    first = MagicMock()
-    second = MagicMock()
-    first.query_prefetch.return_value = QueryReady(2, b"first")
-    second.query_prefetch.return_value = invalid_ready
-    scheduler = SchedulerAdapter(_context(), clients=(first, second))
+def test_official_handshake_requires_every_rank_and_identical_node_registration(monkeypatch):
+    client = MagicMock(transport="iceoryx2")
+    monkeypatch.setattr(
+        "orbitkv.client.connection.CacheManagerClient", MagicMock(return_value=client)
+    )
+    connector = OrbitKVConnector(_vllm_config(), KVConnectorRole.SCHEDULER)
+    records = {
+        rank: OrbitKVQueryHandshake(b"node-a" if rank < 4 else b"node-b") for rank in range(8)
+    }
+    try:
+        with pytest.raises(ValueError, match="every declared"):
+            connector.set_xfer_handshake_metadata({rank: records[rank] for rank in range(7)})
+        mismatch = dict(records)
+        mismatch[3] = OrbitKVQueryHandshake(b"other")
+        with pytest.raises(ValueError, match="different query"):
+            connector.set_xfer_handshake_metadata(mismatch)
+        client.configure_shard_queries.assert_not_called()
+        connector.set_xfer_handshake_metadata(records)
+        client.configure_shard_queries.assert_called_once_with(
+            "instance",
+            "identity:tp-shard-0-of-2",
+            4,
+            4,
+            [
+                ("http://127.0.0.1:50055", "identity:tp-shard-0-of-2", b"node-a"),
+                ("http://127.0.0.1:50056", "identity:tp-shard-1-of-2", b"node-b"),
+            ],
+        )
+        assert connector._scheduler.query_handshake_ready
+    finally:
+        connector.shutdown()
 
-    with pytest.raises(RuntimeError, match="TP shard 1"):
-        scheduler._query_recovery("request", _QueryProbe(0, (b"h0", b"h1")), 10000)
 
-    first.release.assert_called_once_with(b"first")
-    if invalid_ready.lease:
-        second.release.assert_called_once_with(invalid_ready.lease)
+def test_query_control_release_requires_unique_completion_from_all_global_ranks():
+    client = MagicMock()
+    scheduler = SchedulerAdapter(_context(client=client))
+    control = b"c" * 16
+    scheduler._query_controls[control] = set()
+
+    def report(ranks):
+        scheduler.update_connector_output(
+            SimpleNamespace(
+                finished_sending=set(),
+                kv_connector_worker_meta=OrbitKVWorkerMetadata({}, {control: ranks}),
+            )
+        )
+
+    report({0, 1, 2, 3})
+    report({0, 1, 2, 3})
+    client.release_shard_query.assert_not_called()
+    with pytest.raises(ValueError, match="undeclared"):
+        report({8})
+    report({4, 5, 6, 7})
+    client.release_shard_query.assert_called_once_with(control)
+    assert control not in scheduler._query_controls
+    report({4, 5, 6, 7})
+    client.release_shard_query.assert_called_once_with(control)
 
 
 def test_worker_selects_the_lease_for_its_local_server(monkeypatch):

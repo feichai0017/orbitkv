@@ -143,6 +143,7 @@ class ConnectorContext:
     pp_size: int = 1
     mode: OrbitKVConnectorMode = OrbitKVConnectorMode.READ_WRITE
     wait_for_full_prefix: bool = False
+    query_control: bool = False
     tp_shards: TpShardTopology | None = None
     # Token span of one `Request.block_hashes` entry; `None` means one per
     # scheduler block.

@@ -42,8 +42,11 @@ def test_installed_wheel_recovers_after_engine_restart(
         sys.executable, engine, env, tmp_path, "installed-before", native=True
     )
     cuda_graph = request.config.getoption("--release-cuda-graph")
+    query_control = request.config.getoption("--release-query-control")
     try:
-        run_cache_plan(engine, tier, model, tmp_path, env, cuda_graph=cuda_graph)
+        run_cache_plan(
+            engine, tier, model, tmp_path, env, cuda_graph=cuda_graph, query_control=query_control
+        )
     finally:
         after = probe_installation(sys.executable, engine, env, tmp_path, "installed-after")
         assert before["distributions"] == after["distributions"], (
@@ -51,7 +54,7 @@ def test_installed_wheel_recovers_after_engine_restart(
         )
 
 
-def run_cache_plan(engine, tier, model, directory, env, *, cuda_graph=False):
+def run_cache_plan(engine, tier, model, directory, env, *, cuda_graph=False, query_control=False):
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(model, local_files_only=True, trust_remote_code=True)
@@ -73,8 +76,11 @@ def run_cache_plan(engine, tier, model, directory, env, *, cuda_graph=False):
         engine_port,
         env["ORBITKV_TRANSFER_BACKEND"],
         cuda_graph=cuda_graph,
+        query_control=query_control,
     )
     manager_args = manager_command(sys.executable, port, http_port, tier, directory)
+    if query_control:
+        manager_args.append("--enable-query-control")
     phases, graph_observations = {}, {}
     active_log = directory / f"{engine}-native.log"
 
@@ -248,6 +254,9 @@ def run_cache_plan(engine, tier, model, directory, env, *, cuda_graph=False):
                 assert snapshots[end].get("orbitkv_ssd_cufile_read_bytes_total", 0) == snapshots[
                     start
                 ].get("orbitkv_ssd_cufile_read_bytes_total", 0), snapshots
+        if query_control:
+            assert final["orbitkv_shard_query_submissions_total"] > 0
+            assert "registered query handshake configured: nodes=1 ranks=1" in (directory / "vllm-restart.log").read_text()
         (directory / "result.json").write_text(
             json.dumps(
                 {
@@ -257,6 +266,7 @@ def run_cache_plan(engine, tier, model, directory, env, *, cuda_graph=False):
                     "model": model,
                     "profile": f"dense TP=1 PP=1 {'FULL decode graph' if cuda_graph else 'eager'} same-host",
                     "graph_runtime_required": cuda_graph,
+                    "native_query_control_required": query_control,
                     "native_graph_progress": {
                         label: samples[-1]["count"] - samples[0]["count"]
                         for label, samples in graph_observations.items()

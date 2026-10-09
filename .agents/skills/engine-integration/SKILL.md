@@ -35,6 +35,17 @@ together after the consumed adapter passes. Do not add old/new API fallbacks.
   Keep cancellation/drain in that consumed lifecycle; do not restore a duplicate
   private Scheduler abort Hook. Queue preparation is opt-in; fork P/D observation
   Hooks are removed.
+- Dense TP shard queries use Manager-owned native fan-out, not Python foreign
+  UDS loops. Official worker handshake exports opaque registered targets; local
+  authenticated configuration validates complete rank/node coverage. Require
+  `--enable-query-control`; one-node consumption explicitly opts into
+  `orbitkv.query_control=true`. Keep trusted literal loopback scope and equal
+  TP-only/one-group V1 guards. Speculative/deferred-finalize metadata ordering
+  cannot report native completion safely, so it is rejected in this profile.
+  Worker metadata reports unique global ranks only after wait_restore; release
+  retained source interests only after all declared ranks complete. Run the
+  two-real-Manager installed byte/SSD gate separately from the official one-node
+  handshake serving gate; neither qualifies physical multi-GPU/cross-host TP.
 - P/D uses official vLLM NIXL/MultiConnector and SGLang native disaggregation;
   Manager shared-cache traffic still uses TENT. Do not reintroduce fork factories,
   callbacks, custom connectors, handshake/proxy or partial-tail cache modes.

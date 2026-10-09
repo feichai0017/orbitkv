@@ -39,7 +39,7 @@ record submitted, merged and released as different states.
 | S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. Independent final review accepts the second frozen S2.10 same-host formal handoff: all 25 cells are valid and five 16-owner ordinary visibility runs pass 50 ms, while both DRAM and SSD isolation fail the frozen per-pair/CI contract. S2.10b lifecycle, low-overhead observation and 14-cell diagnosis are complete. Independent review accepts the diagnostic archive but blocks a production repair: the dominant measured tail is after native return at the Python observer boundary, while no repeatable Manager, metadata-lock, completion-notification or SSD-owner shift is established. The supported envelope stays four owners and all prior formal campaigns remain immutable. Physical cross-host cache/HA, independent etcd failure domains and native GDS are qualification blocked on missing hardware; final serving, RDMA and S3-dependent cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
-| S5 | Partial: the S5.1 release/interface audit is independently accepted at `38f8dbb2`. Official 0.31.0/0.5.21 installed ordinary-cache/restart and bounded native P/D model gates pass locally. The final wheel and intact H20 cohort are independently accepted for ordinary-cache GPU recovery and 900-second direct/kernel two-engine shared-Manager io_uring pressure gates with exact native outputs, bounded reservations and normal drain. Recovered original review records and missing reviewer raw files are explicitly documented below. Idle process-scoped vLLM external reset is independently accepted at `6d874384`. Immutable local PEFT adapter identity is independently accepted at `47fea821` for dense TP=1/PP=1 eager official-engine reuse. Explicit serial batch-1 FULL decode Graph cache recovery is independently accepted at `c3f55060` for both official engines on H20 with direct/kernel io_uring SSD. Registered loopback query-control authority and lease ownership are independently accepted at `b1ea00a7`; native common-prefix coordination and official worker handshake are still missing code. Public lifecycle migration, dynamic adapter/live-weight identity, cross-host TP and broader lifetime/deployment qualification remain open. |
+| S5 | Partial: the S5.1 release/interface audit is independently accepted at `38f8dbb2`. Official 0.31.0/0.5.21 installed ordinary-cache/restart and bounded native P/D model gates pass locally. The final wheel and intact H20 cohort are independently accepted for ordinary-cache GPU recovery and 900-second direct/kernel two-engine shared-Manager io_uring pressure gates with exact native outputs, bounded reservations and normal drain. Recovered original review records and missing reviewer raw files are explicitly documented below. Idle process-scoped vLLM external reset is independently accepted at `6d874384`. Immutable local PEFT adapter identity is independently accepted at `47fea821` for dense TP=1/PP=1 eager official-engine reuse. Explicit serial batch-1 FULL decode Graph cache recovery is independently accepted at `c3f55060` for both official engines on H20 with direct/kernel io_uring SSD. Registered loopback query-control authority and lease ownership are independently accepted at `b1ea00a7`; native common-prefix coordination and official worker handshake are implemented with installed-artifact qualification open. Public lifecycle migration, dynamic adapter/live-weight identity, cross-host TP and broader lifetime/deployment qualification remain open. |
 | S6 | Partial: observations/limited choices exist; unified executed decisions remain open. |
 | S7 | Open: consumed retention/checkpoint compiler beyond recovery validation. |
 | S8 | Partial: existing wheel workflow; final images, artifact gates and publication remain open. |
@@ -1490,13 +1490,34 @@ Do not delete consumed safety behavior based on these proposals.
   native controls, compiled/installed startup rejection, export bindings and one
   vLLM SSD/direct model recovery. The older wheel's six profiles are not relabelled
   as final-wheel measurements. Old 312 and final 144 frozen inputs and installed
-  package hashes remain unchanged; owned processes, ports, UDS and GPU compute
-  all drain normally. The byte fixture uses two real Rust Engine/UDS/gRPC endpoints
+  package hashes remain unchanged; structured outer-service cleanup and owned
+  process/port/UDS/GPU postflight pass; native child teardown and standard Manager
+  signal-trace limits remain in the scoped review. The byte fixture uses two real Rust Engine/UDS/gRPC endpoints
   in one OS process, not two independent Manager processes or physical TP.
   Scheduler common-prefix coordination and consumed official worker handshake
   remain missing code; cross-host activation requires protected transport and
   qualification. S3 physical lifetime and full S5 remain open. Scoped review:
   `/root/orbitkv-artifacts/s5-tp-query-control-20261009/reviewer/FINAL-REVIEW.md`.
+- **Native dense TP query coordination implemented; qualification open (2026-10-09):**
+  the existing Manager now owns bounded parallel source queries, common-prefix
+  acquisition, exact Claim retries, revision/cancel fences and completion-held
+  source interests. The authenticated local bootstrap token owns immutable
+  topology; command ABI 12 and lifecycle version 6 require a matching installed
+  client/Manager. Source admission remains in PendingQueries/QueryBudget, and
+  shutdown fences coordinator work and drains bounded Close calls before physical
+  query/lifecycle/storage drain. No second Catalog or Python coordinator is added.
+  Official vLLM 0.31.0 worker handshake carries sealed targets; the scheduler opens
+  only its local UDS and reports unique completed global ranks after native
+  Restore completion. The former Python serial dense-shard query is removed.
+  This experimental dense TP-only profile is default-off for one Manager and
+  rejects unsupported parallel/recurrent/speculative/queue-preparation paths.
+  Trusted same-host loopback remains mandatory. CPU protocol, real mock-gRPC
+  revision/cancel/lost-Claim controls and source-only adapter contracts pass;
+  final wheel, two actual Manager-process GPU byte/SSD gates, official consumed
+  handshake serving, independent review and exact-head CI remain pending.
+  Evidence is external at `/root/orbitkv-artifacts/s5-native-shard-query-20261009/`.
+  Physical cross-host/multi-GPU TP, transport protection and S3 termination remain
+  open; this delivery cannot close the whole S5 stage.
 - **Qualification open:** Full + SWA + temporal recurrent native serving, page
   reuse under preemption, cancellation, engine restart and each advertised graph
   mode. Exact synthetic GPU recovery does not establish native model support.

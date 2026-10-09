@@ -29,7 +29,7 @@ from orbitkv.vllm.config import (
     resolve_transfer_backend,
 )
 from orbitkv.vllm.layout import CacheGroupLayout
-from orbitkv.vllm.metadata import OrbitKVConnectorMetadata
+from orbitkv.vllm.metadata import OrbitKVConnectorMetadata, OrbitKVQueryHandshake
 from orbitkv.vllm.metrics import OrbitKVConnectorStats, OrbitKVPromMetrics
 
 if TYPE_CHECKING:
@@ -161,12 +161,33 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
                 f"got tp_size={tp_size}, world_size={world_size}, "
                 f"dcp_world_size={dcp_world_size}, pcp_world_size={pcp_world_size}"
             )
+        query_control = get_option("orbitkv.query_control", tp_shards.shard_count > 1)
+        if not isinstance(query_control, bool):
+            raise ValueError("orbitkv.query_control must be a bool")
+        if tp_shards.shard_count > 1 and not query_control:
+            raise ValueError("multiple TP shards require native query control")
+        if query_control and (
+            is_mla
+            or pp_size != 1
+            or world_size != tp_size
+            or dcp_world_size != 1
+            or pcp_world_size != 1
+            or wait_for_full_prefix
+            or (getattr(vllm_config.parallel_config, "data_parallel_size", 1) or 1) != 1
+            or bool(getattr(vllm_config.parallel_config, "enable_expert_parallel", False))
+            or getattr(vllm_config, "speculative_config", None) is not None
+            or os.environ.get("ORBITKV_QUEUE_WARMUP") == "1"
+            or os.environ.get("ORBITKV_PREPARE_REQUESTS") == "1"
+        ):
+            raise ValueError(
+                "native query control requires dense TP-only V1 without speculative decoding"
+            )
         shard_index = tp_shards.shard_index(tp_rank) if tp_rank is not None else 0
         namespace = tp_shards.namespace(base_namespace, shard_index)
         self._connections = connect_cache(
             endpoints=tp_shards.endpoints,
             shard_index=shard_index,
-            all_shards=role == KVConnectorRole.SCHEDULER,
+            all_shards=False,
             get_option=get_option,
         )
         clients = self._connections.clients
@@ -178,6 +199,7 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             client.bootstrap_socket,
         )
 
+        self._base_namespace = base_namespace
         self._ctx = ConnectorContext(
             instance_id=instance_id,
             namespace=namespace,
@@ -197,6 +219,7 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             pp_size=pp_size,
             mode=mode,
             wait_for_full_prefix=wait_for_full_prefix,
+            query_control=query_control,
             tp_shards=tp_shards,
             hash_block_size=hash_block_size,
             static_loras=static_loras,
@@ -229,10 +252,10 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
                 # stream per vllm replica is enough — if any tp worker crashes,
                 # the scheduler dies too, closing this stream and triggering
                 # server-side cleanup of the instance's CUDA IPC mappings.
-                for index, client in enumerate(clients):
+                for client in clients:
                     client.start_session_watcher(
                         instance_id,
-                        tp_shards.namespace(base_namespace, index),
+                        namespace,
                         self._ctx.effective_tp_size,
                         self._ctx.effective_world_size,
                     )
@@ -244,6 +267,13 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
                     vllm_config=vllm_config,
                     kv_cache_config=kv_cache_config,
                 )
+                if query_control and tp_shards.shard_count > 1 and self._ctx.effective_tp_rank == 0:
+                    client.start_session_watcher(
+                        instance_id,
+                        namespace,
+                        self._ctx.effective_tp_size,
+                        self._ctx.effective_world_size,
+                    )
 
         except BaseException:
             self.shutdown()
@@ -324,6 +354,53 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
         if not self._worker:
             return None
         return self._worker.build_connector_worker_meta()
+
+    def get_handshake_metadata(self):
+        if not self._worker or not self._ctx.query_control:
+            return None
+        return OrbitKVQueryHandshake(
+            self._ctx.client.export_query_target(
+                self._ctx.instance_id,
+                self._ctx.namespace,
+                self._ctx.effective_tp_size,
+                self._ctx.effective_world_size,
+            )
+        )
+
+    def set_xfer_handshake_metadata(self, metadata: dict[int, Any]) -> None:
+        if not self._scheduler or not self._ctx.query_control:
+            return
+        topology = self._ctx.tp_shards
+        if topology is None or set(metadata) != set(range(self._ctx.tp_size)):
+            raise ValueError("query handshake must cover every declared global TP rank")
+        targets: list[bytes] = []
+        for node in range(topology.shard_count):
+            ranks = range(node * topology.local_tp_size, (node + 1) * topology.local_tp_size)
+            records = [metadata[rank] for rank in ranks]
+            if any(
+                not isinstance(record, OrbitKVQueryHandshake) or not record.target
+                for record in records
+            ):
+                raise ValueError("missing registered query handshake")
+            if any(record.target != records[0].target for record in records):
+                raise ValueError("workers in one node declared different query registrations")
+            targets.append(records[0].target)
+        namespaces = [
+            topology.namespace(self._base_namespace, node) for node in range(topology.shard_count)
+        ]
+        self._ctx.client.configure_shard_queries(
+            self._ctx.instance_id,
+            self._ctx.namespace,
+            topology.local_tp_size,
+            topology.local_world_size,
+            list(zip(topology.endpoints, namespaces, targets, strict=True)),
+        )
+        self._scheduler.query_handshake_ready = True
+        logger.info(
+            "[OrbitKVConnector] registered query handshake configured: nodes=%d ranks=%d",
+            topology.shard_count,
+            self._ctx.tp_size,
+        )
 
     def register_kv_caches(self, kv_caches: dict[str, torch.Tensor]):
         if not self._worker:

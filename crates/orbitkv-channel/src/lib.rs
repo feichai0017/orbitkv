@@ -44,6 +44,7 @@ pub use cache_protocol::{
     CompletionObservationRequest, CompletionOutcome, CompletionRoute, PublishLayer, PublishRequest,
     QueryBundleRequest, QueryBundleResponse, QueryCommand, QueryOutcomeCode, QueryTicket,
     ReleaseRequest, RestoreLease, RestoreRequest, RestoreResponse, RestoreState,
+    ShardQueryResponse,
 };
 #[cfg(target_os = "linux")]
 pub use client::{ChannelClient, ChannelError};

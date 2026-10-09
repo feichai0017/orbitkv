@@ -12,7 +12,8 @@ use orbitkv_channel::{
 use orbitkv_core::transfer::local::{LocalRestoreExecutor, LocalTensor};
 use orbitkv_core::{PayloadArena, TransferMode as LocalTransferMode};
 use orbitkv_proto::proto::engine::{
-    RegisterContextRequest, SessionRequest, TransferMode, UnregisterRequest,
+    ConfigureShardQueriesRequest, RegisterContextRequest, RegisteredQueryTarget, SessionRequest,
+    ShardQueryTarget, TransferMode, UnregisterRequest,
 };
 use prost::Message;
 use pyo3::{
@@ -514,6 +515,79 @@ impl PyCacheManagerClient {
             })
             .map_err(client_error)?;
         Ok(PyBytes::new(py, &reply.payload).unbind())
+    }
+
+    fn configure_shard_queries(
+        &self,
+        py: Python<'_>,
+        instance_id: String,
+        namespace: String,
+        tp_size: u32,
+        world_size: u32,
+        shards: Vec<(String, String, Vec<u8>)>,
+    ) -> PyResult<()> {
+        if shards.is_empty()
+            || shards.len() > orbitkv_channel::ShardQueryResponse::MAX_SHARDS
+            || shards
+                .iter()
+                .map(|(_, _, target)| target.len())
+                .sum::<usize>()
+                > 64 * 1024
+        {
+            return Err(PyValueError::new_err(
+                "bounded complete shard configuration required",
+            ));
+        }
+        let shards = shards
+            .into_iter()
+            .map(|(endpoint, namespace, bytes)| {
+                let target = RegisteredQueryTarget::decode(bytes.as_slice())
+                    .map_err(|error| PyValueError::new_err(error.to_string()))?;
+                Ok(ShardQueryTarget {
+                    endpoint,
+                    namespace,
+                    target: Some(target),
+                })
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        let request = ConfigureShardQueriesRequest {
+            local: Some(SessionRequest {
+                instance_id,
+                namespace,
+                tp_size,
+                world_size,
+            }),
+            shards,
+        };
+        if request.encoded_len() > 64 * 1024 {
+            return Err(PyValueError::new_err("shard configuration exceeds 64 KiB"));
+        }
+        self.lifecycle_call(
+            py,
+            LifecycleCommand::ConfigureShardQueries,
+            request.encode_to_vec(),
+        )
+    }
+
+    fn query_shards(
+        &self,
+        py: Python<'_>,
+        instance_id: &str,
+        block_hashes: &PyBlockHashes,
+        req_id: &str,
+    ) -> PyResult<Py<PyAny>> {
+        let response = py
+            .detach(|| {
+                self.inner
+                    .query_shards(instance_id, &block_hashes.0, req_id)
+            })
+            .map_err(client_error)?;
+        crate::shard_query_response(py, response)
+    }
+
+    fn release_shard_query(&self, py: Python<'_>, control_id: Vec<u8>) -> PyResult<()> {
+        py.detach(|| self.inner.release_shard_query(control_id))
+            .map_err(client_error)
     }
 
     fn health(&self, py: Python<'_>) -> PyResult<(bool, String)> {
