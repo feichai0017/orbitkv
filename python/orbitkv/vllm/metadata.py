@@ -1,11 +1,17 @@
 """Scheduler/worker transfer intents and completion metadata."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from vllm.distributed.kv_transfer.kv_connector.v1.base import (
+    KVConnectorHandshakeMetadata,
     KVConnectorMetadata,
     KVConnectorWorkerMetadata,
 )
+
+
+@dataclass(frozen=True)
+class OrbitKVQueryHandshake(KVConnectorHandshakeMetadata):
+    target: bytes
 
 
 @dataclass(frozen=True)
@@ -15,6 +21,7 @@ class LoadIntent:
     block_ids_by_group: tuple[tuple[int | None, ...], ...]
     leases: tuple[bytes, ...]
     num_tokens: int
+    control_id: bytes = b""
     # Hybrid loads carry the exact window/checkpoint leases separately from
     # the full-attention prefix lease.
     recovery_hold: "RecoveryLoadHold | None" = None
@@ -88,6 +95,7 @@ class OrbitKVWorkerMetadata(KVConnectorWorkerMetadata):
     """
 
     completed_boundary_jobs: dict[int, int]
+    completed_query_controls: dict[bytes, set[int]] = field(default_factory=dict)
 
     def aggregate(self, other: "KVConnectorWorkerMetadata") -> "OrbitKVWorkerMetadata":
         if not isinstance(other, OrbitKVWorkerMetadata):
@@ -96,4 +104,6 @@ class OrbitKVWorkerMetadata(KVConnectorWorkerMetadata):
             self.completed_boundary_jobs[job_id] = (
                 self.completed_boundary_jobs.get(job_id, 0) + count
             )
+        for control_id, ranks in other.completed_query_controls.items():
+            self.completed_query_controls.setdefault(control_id, set()).update(ranks)
         return self

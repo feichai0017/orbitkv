@@ -111,6 +111,51 @@ fn query_response(
 }
 
 #[pyclass(frozen)]
+struct ShardedQueryReady {
+    #[pyo3(get)]
+    num_hit_blocks: usize,
+    leases: Vec<Vec<u8>>,
+    control_id: Vec<u8>,
+}
+#[pymethods]
+impl ShardedQueryReady {
+    #[getter]
+    fn leases<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, self.leases.iter().map(|lease| PyBytes::new(py, lease)))
+    }
+    #[getter]
+    fn control_id<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        PyBytes::new(py, &self.control_id)
+    }
+}
+fn shard_query_response(
+    py: Python<'_>,
+    response: orbitkv_channel::ShardQueryResponse,
+) -> PyResult<Py<PyAny>> {
+    match response.outcome {
+        QueryOutcomeCode::Loading | QueryOutcomeCode::Busy => Py::new(
+            py,
+            QueryLoading {
+                admitted: response.outcome == QueryOutcomeCode::Loading,
+            },
+        )
+        .map(|value| value.into_any()),
+        QueryOutcomeCode::Ready => Py::new(
+            py,
+            ShardedQueryReady {
+                num_hit_blocks: u64_to_usize(response.num_hit_blocks, "num_hit_blocks")?,
+                leases: response.leases,
+                control_id: response.control_id,
+            },
+        )
+        .map(|value| value.into_any()),
+        QueryOutcomeCode::Candidates => Err(PyValueError::new_err(
+            "shard query cannot return candidates",
+        )),
+    }
+}
+
+#[pyclass(frozen)]
 struct QueryReady {
     #[pyo3(get)]
     num_hit_blocks: usize,
@@ -251,6 +296,7 @@ fn orbitkv(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("OrbitKVInternal", m.py().get_type::<OrbitKVInternal>())?;
     m.add_class::<QueryLoading>()?;
     m.add_class::<QueryReady>()?;
+    m.add_class::<ShardedQueryReady>()?;
     m.add_class::<QueryCandidates>()?;
     m.add_class::<recovery::PyRecoveryContract>()?;
     m.add_function(wrap_pyfunction!(rekey_hashes, m)?)?;

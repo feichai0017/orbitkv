@@ -199,6 +199,53 @@ impl ChannelClient {
         }
     }
 
+    pub fn query_shards(
+        &self,
+        request_id: u64,
+        request: &crate::QueryCommand,
+    ) -> Result<crate::ShardQueryResponse, ChannelError> {
+        let payload = request.encode()?;
+        let payload =
+            self.call_descriptor(CommandCode::QueryShards, request_id, &payload, 0, None)?;
+        crate::ShardQueryResponse::decode(&payload).map_err(|error| {
+            self.close();
+            error.into()
+        })
+    }
+
+    pub fn cancel_shard_query(
+        &self,
+        request_id: u64,
+        request: &crate::CancelQueryRequest,
+    ) -> Result<(), ChannelError> {
+        self.call_descriptor(
+            CommandCode::CancelShardQuery,
+            request_id,
+            &request.encode()?,
+            0,
+            None,
+        )?;
+        Ok(())
+    }
+
+    pub fn release_shard_query(
+        &self,
+        request_id: u64,
+        control_id: Vec<u8>,
+    ) -> Result<(), ChannelError> {
+        if control_id.len() != 16 || control_id.iter().all(|byte| *byte == 0) {
+            return Err(CacheProtocolError::InvalidShardPayload.into());
+        }
+        self.call_descriptor(
+            CommandCode::ReleaseShardQuery,
+            request_id,
+            &control_id,
+            0,
+            None,
+        )?;
+        Ok(())
+    }
+
     pub fn cancel_query(
         &self,
         request_id: u64,

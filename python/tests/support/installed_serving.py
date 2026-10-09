@@ -18,6 +18,9 @@ from tests.support.metrics import fetch_orbitkv_metrics
 
 DRAIN_GAUGES = (
     "orbitkv_query_reserved_bytes",
+    "orbitkv_query_control_interests",
+    "orbitkv_shard_query_active",
+    "orbitkv_shard_query_holds",
     "orbitkv_inflight_bytes",
     "orbitkv_ssd_write_inflight",
     "orbitkv_ssd_write_queue_pending",
@@ -130,7 +133,11 @@ def wait_for_drain(http_port: int) -> dict[str, float]:
         time.sleep(0.1)
 
 
-def engine_command(engine, python, model, port, transfer_backend="direct", *, cuda_graph=False):
+def engine_command(
+    engine, python, model, port, transfer_backend="direct", *, cuda_graph=False, query_control=False
+):
+    if query_control and engine != "vllm":
+        raise ValueError("registered worker query control requires the vLLM profile")
     if engine == "vllm":
         command = [
             str(python),
@@ -165,7 +172,10 @@ def engine_command(engine, python, model, port, transfer_backend="direct", *, cu
                     "kv_connector": "OrbitKVConnector",
                     "kv_role": "kv_both",
                     "kv_connector_module_path": "orbitkv.vllm",
-                    "kv_connector_extra_config": {"orbitkv.transfer_backend": transfer_backend},
+                    "kv_connector_extra_config": {
+                        "orbitkv.transfer_backend": transfer_backend,
+                        **({"orbitkv.query_control": True} if query_control else {}),
+                    },
                 }
             ),
         ]

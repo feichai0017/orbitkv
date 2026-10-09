@@ -59,6 +59,12 @@ def orbitkv_pool_size(request) -> str:
 def pytest_addoption(parser):
     """Add custom command line options for E2E tests."""
     parser.addoption(
+        "--release-query-control",
+        action="store_true",
+        default=False,
+        help="Consume official vLLM worker handshake and native dense query control",
+    )
+    parser.addoption(
         "--vllm-release-python",
         default=None,
         help="Installed official vLLM interpreter for the shared-Manager release gate",

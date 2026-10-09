@@ -14,7 +14,7 @@ pub const LIFECYCLE_HEADER_BYTES: usize = 20;
 pub const MAX_QUERY_TARGET_PAYLOAD: usize = 64 * 1024;
 pub const MAX_LIFECYCLE_PAYLOAD: usize = 64 * 1024 * 1024;
 const MAGIC: u32 = 0x4f52_424c;
-const VERSION: u16 = 5;
+const VERSION: u16 = 6;
 
 /// Payload arenas are attached only to successful GPU registration replies.
 pub const MAX_LIFECYCLE_FDS: usize = 64;
@@ -120,6 +120,7 @@ pub enum LifecycleCommand {
     Unregister = 3,
     Session = 4,
     ExportQueryTarget = 5,
+    ConfigureShardQueries = 6,
 }
 
 impl TryFrom<u16> for LifecycleCommand {
@@ -132,6 +133,7 @@ impl TryFrom<u16> for LifecycleCommand {
             3 => Ok(Self::Unregister),
             4 => Ok(Self::Session),
             5 => Ok(Self::ExportQueryTarget),
+            6 => Ok(Self::ConfigureShardQueries),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "unknown lifecycle command",

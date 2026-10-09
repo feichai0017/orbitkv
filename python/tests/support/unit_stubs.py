@@ -99,6 +99,9 @@ def _install_vllm_stubs() -> None:
     class KVConnectorMetadata:
         return_none: bool = False
 
+    class KVConnectorHandshakeMetadata:
+        pass
+
     class KVConnectorWorkerMetadata:
         pass
 
@@ -114,6 +117,7 @@ def _install_vllm_stubs() -> None:
     base.KVConnectorRole = KVConnectorRole
     base.KVConnectorBase_V1 = KVConnectorBase_V1
     base.KVConnectorMetadata = KVConnectorMetadata
+    base.KVConnectorHandshakeMetadata = KVConnectorHandshakeMetadata
     base.KVConnectorWorkerMetadata = KVConnectorWorkerMetadata
     base.SupportsHMA = SupportsHMA
     base.KVConnectorTransferResults = KVConnectorTransferResults
@@ -228,6 +232,14 @@ def _install_native_extension_stub() -> None:
             self.num_hit_blocks = num_hit_blocks
             self.lease = lease
             self.hit_positions = [] if hit_positions is None else hit_positions
+
+    @dataclass(frozen=True)
+    class _ShardedQueryReady:
+        num_hit_blocks: int
+        leases: tuple[bytes, ...]
+        control_id: bytes
+
+    module.ShardedQueryReady = getattr(module, "ShardedQueryReady", _ShardedQueryReady)
 
     class _QueryCandidates:
         def __init__(self, hit_positions):

@@ -57,6 +57,7 @@ class RestoreTask:
     started: float
     blocks: int
     request_ids: list[str]
+    control_ids: tuple[bytes, ...] = ()
 
 
 _KVCacheLayout = Literal["KV-first", "blocks-first"]
@@ -229,6 +230,7 @@ class WorkerAdapter:
         self._save_completion_events: dict[str, threading.Event] = {}
         # Boundary-state jobs finished since the last worker-meta report.
         self._completed_boundary_jobs: list[int] = []
+        self._completed_query_controls: dict[bytes, set[int]] = {}
         self._current_metadata: OrbitKVConnectorMetadata | None = None
 
         self._restore: RestoreTask | None = None
@@ -605,7 +607,17 @@ class WorkerAdapter:
                 ready_stream=torch.cuda.current_stream(self._torch_device).cuda_stream,
                 layer_events=list(self._layer_events.items()),
             )
-            self._restore = RestoreTask(restore, load_start, len(all_block_ids), request_ids)
+            self._restore = RestoreTask(
+                restore,
+                load_start,
+                len(all_block_ids),
+                request_ids,
+                tuple(
+                    intent.control_id
+                    for intent in metadata.load_intents.values()
+                    if intent.control_id
+                ),
+            )
             self._client.wait_restore_enqueued(restore, timeout=self.LOAD_TIMEOUT_SECONDS)
             # vLLM's recurrent operators have no KV-connector layer callback.
             # Their state must be ready before entering this forward.
@@ -672,6 +684,11 @@ class WorkerAdapter:
                 self._stats.record_load(time.perf_counter() - restore.started, restore.blocks, True)
             for req_id in restore.request_ids:
                 trace_transfer("gpu_ready", req_id, engine="vllm", success=True)
+            with self._save_completion_lock:
+                for control_id in restore.control_ids:
+                    self._completed_query_controls.setdefault(control_id, set()).add(
+                        self._ctx.tp_rank or 0
+                    )
             self._restore = None
         metadata = self._current_metadata
         self._current_metadata = None
@@ -713,12 +730,15 @@ class WorkerAdapter:
 
     def build_connector_worker_meta(self) -> OrbitKVWorkerMetadata | None:
         with self._save_completion_lock:
-            if not self._completed_boundary_jobs:
+            if not self._completed_boundary_jobs and not self._completed_query_controls:
                 return None
             completed = self._completed_boundary_jobs
+            controls = self._completed_query_controls
             self._completed_boundary_jobs = []
+            self._completed_query_controls = {}
         return OrbitKVWorkerMetadata(
             completed_boundary_jobs=dict.fromkeys(completed, 1),
+            completed_query_controls=controls,
         )
 
     def _make_save_task(

@@ -428,3 +428,31 @@ fn encoded_size_rejects_overflow_without_changing_the_budget() {
         assert_eq!(size, initial);
     }
 }
+
+#[test]
+fn shard_response_checks_all_leases_and_control_before_decode_allocation() {
+    let ready = ShardQueryResponse {
+        outcome: QueryOutcomeCode::Ready,
+        num_hit_blocks: 2,
+        leases: vec![vec![1; 16], vec![2; 16]],
+        control_id: vec![3; 16],
+    };
+    let encoded = ready.encode().unwrap();
+    assert_eq!(ShardQueryResponse::decode(&encoded).unwrap(), ready);
+    for case in 0..4 {
+        let mut invalid = ready.clone();
+        match case {
+            0 => invalid.control_id.clear(),
+            1 => invalid.leases[1].clear(),
+            2 => invalid.leases = vec![vec![1; 16]; 33],
+            _ => invalid.leases[0] = vec![0; 16],
+        }
+        assert!(invalid.encode().is_err());
+    }
+    let mut invalid = encoded.clone();
+    invalid[16..20].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert!(ShardQueryResponse::decode(&invalid).is_err());
+    let mut extra = encoded;
+    extra.push(0);
+    assert!(ShardQueryResponse::decode(&extra).is_err());
+}

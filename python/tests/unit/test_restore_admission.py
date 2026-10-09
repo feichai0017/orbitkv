@@ -12,7 +12,6 @@ install_connector_unit_stubs()
 from orbitkv import BlockHashes, QueryReady  # noqa: E402
 from orbitkv.vllm.config import ConnectorContext  # noqa: E402
 from orbitkv.vllm.scheduler import SchedulerAdapter  # noqa: E402
-from orbitkv.vllm.tp_shards import ShardedQueryReady  # noqa: E402
 
 
 def request(req_id, tokens=32):
@@ -150,7 +149,7 @@ def restoring():
             client=MagicMock(),
         )
     )
-    scheduler._tp_shard_client.query = MagicMock(return_value=ShardedQueryReady(2, (b"hold",)))
+    scheduler._ctx.client.query_prefetch = MagicMock(return_value=QueryReady(2, b"hold"))
     restoring = request("restore")
     assert scheduler.get_num_new_matched_tokens(restoring, 0) == (31, False)
     blocks = SimpleNamespace(
@@ -167,11 +166,11 @@ def restoring():
 def test_lookup_waits_for_compute_but_prefetch_can_complete(restoring, kind):
     scheduler, _ = restoring
     waiting = request("waiting", 7 if kind == "short" else 32)
-    ready = ShardedQueryReady(2, (b"next",)) if kind == "hit" else ShardedQueryReady(0, (b"",))
-    scheduler._tp_shard_client.query.return_value = ready
+    ready = QueryReady(2, b"next") if kind == "hit" else QueryReady(0, b"")
+    scheduler._ctx.client.query_prefetch.return_value = ready
 
     assert scheduler.get_num_new_matched_tokens(waiting, 0) == (None, False)
-    calls = scheduler._tp_shard_client.query.call_count
+    calls = scheduler._ctx.client.query_prefetch.call_count
     assert calls == (1 if kind == "short" else 2)
 
     scheduler.update_connector_output(
@@ -179,12 +178,12 @@ def test_lookup_waits_for_compute_but_prefetch_can_complete(restoring, kind):
     )
     scheduler.build_connector_meta(step())
     assert scheduler.get_num_new_matched_tokens(waiting, 0) == (None, False)
-    assert scheduler._tp_shard_client.query.call_count == calls
+    assert scheduler._ctx.client.query_prefetch.call_count == calls
 
     scheduler.build_connector_meta(step(tokens=1))
     expected = (31, False) if kind == "hit" else (0, False)
     assert scheduler.get_num_new_matched_tokens(waiting, 0) == expected
-    assert scheduler._tp_shard_client.query.call_count == calls
+    assert scheduler._ctx.client.query_prefetch.call_count == calls
 
 
 @pytest.mark.parametrize("pending_save", [False, True])

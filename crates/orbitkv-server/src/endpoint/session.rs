@@ -14,6 +14,7 @@ use tokio::sync::watch;
 
 use crate::cache::lifecycle::{ControlError, LifecycleService};
 use crate::cache::query_control::QueryControlService;
+use crate::cache::shards::ShardQueries;
 use crate::proto::engine::{RegisterContextRequest, SessionRequest, UnregisterRequest};
 
 pub(crate) async fn serve(
@@ -22,6 +23,8 @@ pub(crate) async fn serve(
     lifecycle: LifecycleService,
     mut shutdown: watch::Receiver<bool>,
     query_control: Option<QueryControlService>,
+    shards: Option<ShardQueries>,
+    token: u64,
 ) {
     let connection = stream.try_clone().ok();
     let mut owners = HashMap::new();
@@ -60,6 +63,8 @@ pub(crate) async fn serve(
                 &lifecycle,
                 &mut owners,
                 query_control.as_ref(),
+                shards.as_ref(),
+                token,
             )
             .await;
             let (code, body, arenas) = match result {
@@ -101,6 +106,9 @@ pub(crate) async fn serve(
     if let Some(connection) = connection {
         let _ = connection.shutdown(std::net::Shutdown::Both);
     }
+    if let Some(shards) = shards {
+        shards.close_session(token);
+    }
     for (instance, token) in owners {
         lifecycle.close_session(&instance, token).await;
     }
@@ -123,8 +131,21 @@ async fn dispatch(
     lifecycle: &LifecycleService,
     owners: &mut HashMap<String, u64>,
     query_control: Option<&QueryControlService>,
+    shards: Option<&ShardQueries>,
+    token: u64,
 ) -> Result<(Vec<u8>, Vec<orbitkv_core::PayloadArena>), ControlError> {
     match command {
+        LifecycleCommand::ConfigureShardQueries => {
+            let request = crate::proto::engine::ConfigureShardQueriesRequest::decode(payload)
+                .map_err(|error| ControlError::invalid_argument(error.to_string()))?;
+            let control = query_control.ok_or_else(|| {
+                ControlError::invalid_argument("registered query control is not enabled")
+            })?;
+            shards
+                .ok_or_else(|| ControlError::invalid_argument("shard queries are not enabled"))?
+                .configure(token, request, control)
+                .map_err(|error| ControlError::invalid_argument(error.to_string()))?;
+        }
         LifecycleCommand::ExportQueryTarget => {
             let request = SessionRequest::decode(payload)
                 .map_err(|error| ControlError::invalid_argument(error.to_string()))?;

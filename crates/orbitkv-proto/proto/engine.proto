@@ -316,3 +316,14 @@ message QueryControlResponse {
   bytes payload = 1;
 }
 message QueryControlEmpty {}
+
+// Local bootstrap configuration. Query authority never imports foreign GPU mappings.
+message ShardQueryTarget {
+  string endpoint = 1;
+  string namespace = 2;
+  RegisteredQueryTarget target = 3;
+}
+message ConfigureShardQueriesRequest {
+  SessionRequest local = 1;
+  repeated ShardQueryTarget shards = 2;
+}

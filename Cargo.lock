@@ -2155,6 +2155,7 @@ dependencies = [
  "dashmap",
  "etcd-client",
  "fastrace",
+ "futures",
  "log",
  "opentelemetry",
  "opentelemetry-otlp",

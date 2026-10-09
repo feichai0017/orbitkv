@@ -31,7 +31,7 @@ use crate::cache::operations::{
     PublishInput, PublishLayerInput, QueryOutcome, RestoreInput, RestoreLeaseInput,
     execute_publish, execute_release, execute_restore,
 };
-use crate::cache::{pending, query_control::QueryControlService};
+use crate::cache::{pending, query_control::QueryControlService, shards::ShardQueries};
 
 const BOOTSTRAP_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const LIVENESS_POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -55,6 +55,7 @@ pub(crate) struct ProcessEndpoint {
     lifecycle_shutdown: watch::Sender<bool>,
     queries: Arc<parking_lot::Mutex<pending::PendingQueries>>,
     engine: Arc<OrbitKVEngine>,
+    shards: Option<ShardQueries>,
 }
 
 struct ActiveTasks {
@@ -234,6 +235,10 @@ impl ProcessEndpoint {
             queries.read_timeout = read_timeout;
             queries.read_max_batches = read_max_batches;
         }
+        let shards = query_control
+            .as_ref()
+            .map(|_| ShardQueries::new(runtime.clone()));
+        let endpoint_shards = shards.clone();
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
         let active_publishes = Arc::new(ActiveTasks::default());
@@ -275,6 +280,7 @@ impl ProcessEndpoint {
                             &thread_lifecycle_shutdown,
                             &thread_lifecycle_connections,
                             query_control.clone(),
+                            shards.clone(),
                         );
                         next_bootstrap_poll = now + BOOTSTRAP_POLL_INTERVAL;
                     }
@@ -290,6 +296,9 @@ impl ProcessEndpoint {
                         queries.lock().retain_sessions(&engine, |token| {
                             token % 2 == 0 || sessions.contains_key(&token)
                         });
+                        if let Some(shards) = &shards {
+                            shards.retain_sessions(|token| sessions.contains_key(&token));
+                        }
                         next_liveness_poll = now + LIVENESS_POLL_INTERVAL;
                     }
 
@@ -316,6 +325,7 @@ impl ProcessEndpoint {
                                 &hll_tracker,
                                 &mut queries.lock(),
                                 &mut request_shutdown,
+                                shards.as_ref(),
                             ))
                         }
                     }) {
@@ -349,6 +359,7 @@ impl ProcessEndpoint {
             lifecycle_shutdown,
             queries: endpoint_queries,
             engine: endpoint_engine,
+            shards: endpoint_shards,
         })
     }
 
@@ -369,6 +380,12 @@ impl ProcessEndpoint {
     }
 
     pub(crate) async fn stop_queries_and_drain(&self) -> Result<(), EngineError> {
+        if let Some(shards) = &self.shards {
+            shards
+                .stop_and_drain()
+                .await
+                .map_err(|error| EngineError::InvalidArgument(error.to_string()))?;
+        }
         pending::PendingQueries::stop_and_drain(&self.queries, &self.engine).await
     }
 
@@ -408,6 +425,7 @@ fn accept_pending_sessions(
     lifecycle_shutdown: &watch::Sender<bool>,
     lifecycle_connections: &Arc<ActiveTasks>,
     query_control: Option<QueryControlService>,
+    shards: Option<ShardQueries>,
 ) {
     loop {
         match bootstrap.try_accept() {
@@ -446,9 +464,20 @@ fn accept_pending_sessions(
                         let lifecycle = lifecycle.clone();
                         let shutdown = lifecycle_shutdown.subscribe();
                         let query_control = query_control.clone();
+                        let shards = shards.clone();
+                        let token = session.client_token();
                         runtime.spawn(async move {
                             let _active = active;
-                            session::serve(stream, epoch, lifecycle, shutdown, query_control).await;
+                            session::serve(
+                                stream,
+                                epoch,
+                                lifecycle,
+                                shutdown,
+                                query_control,
+                                shards,
+                                token,
+                            )
+                            .await;
                         });
                     }
                     Err(error) => {
@@ -482,6 +511,7 @@ fn dispatch(
     hll_tracker: &Arc<std::sync::Mutex<MultiWindowHllTracker>>,
     queries: &mut pending::PendingQueries,
     request_shutdown: &mut bool,
+    shards: Option<&ShardQueries>,
 ) -> Response {
     let mut response = Response::ok(command);
     response.value1 = 0;
@@ -503,6 +533,11 @@ fn dispatch(
                 queries,
             );
         }
+        CommandCode::QueryShards
+        | CommandCode::CancelShardQuery
+        | CommandCode::ReleaseShardQuery => {
+            response = dispatch_shards(command, bootstrap, sessions, shards);
+        }
         CommandCode::Release => {
             response = dispatch_release(command, bootstrap, sessions, engine);
         }
@@ -513,6 +548,59 @@ fn dispatch(
         CommandCode::Restore => {
             response = dispatch_restore(command, bootstrap, sessions, grants, engine, runtime);
         }
+    }
+    response
+}
+
+fn dispatch_shards(
+    command: Command,
+    bootstrap: &BootstrapServer,
+    sessions: &mut HashMap<u64, BootstrapSession>,
+    shards: Option<&ShardQueries>,
+) -> Response {
+    let mut response = Response::ok(command);
+    response.value1 = 0;
+    let payload = match consume_descriptor(command, bootstrap, sessions, &mut response) {
+        Ok(payload) => payload,
+        Err(response) => return response,
+    };
+    let result = (|| -> Result<Vec<u8>, String> {
+        let shards = shards.ok_or_else(|| "registered query control is not enabled".to_owned())?;
+        match command.code {
+            CommandCode::QueryShards => shards
+                .execute(
+                    command.arg0,
+                    orbitkv_channel::QueryCommand::decode(&payload)
+                        .map_err(|error| error.to_string())?,
+                )
+                .map_err(|error| error.to_string())?
+                .encode()
+                .map_err(|error| error.to_string()),
+            CommandCode::CancelShardQuery => {
+                let request = orbitkv_channel::CancelQueryRequest::decode(&payload)
+                    .map_err(|error| error.to_string())?;
+                shards.cancel(command.arg0, request.ticket);
+                Ok(Vec::new())
+            }
+            CommandCode::ReleaseShardQuery => {
+                shards
+                    .release(command.arg0, &payload)
+                    .map_err(|error| error.to_string())?;
+                Ok(Vec::new())
+            }
+            _ => Err("unsupported shard command".to_owned()),
+        }
+    })();
+    let payload = match result {
+        Ok(payload) => payload,
+        Err(error) => return error_response(response, StatusCode::Invalid, &error),
+    };
+    match bootstrap
+        .arena()
+        .write_response(command.descriptor, &payload)
+    {
+        Ok(descriptor) => response.descriptor = descriptor,
+        Err(error) => return error_response(response, arena_error_status(&error), &error),
     }
     response
 }

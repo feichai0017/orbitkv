@@ -8,7 +8,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from orbitkv import BlockHashes, CacheManagerClient
+from orbitkv import BlockHashes, CacheManagerClient, QueryLoading, QueryReady
+from orbitkv import ShardedQueryReady as NativeShardedQueryReady
 from orbitkv.logging_utils import get_connector_logger, trace_transfer
 from orbitkv.vllm.config import ConnectorContext
 from orbitkv.vllm.layout import CacheGroupLayout
@@ -66,6 +67,7 @@ class _QueryProbe:
     # ``None`` means the backend is still loading.
     hit_blocks: int | None = None
     leases: tuple[bytes, ...] = ()
+    control_id: bytes = b""
     # Hybrid (HMA): pinned windows/checkpoints from the membership queries,
     # set when the shared validator found a complete recovery boundary.
     recovery_hold: RecoveryLoadHold | None = None
@@ -104,6 +106,7 @@ class _QueryProbe:
         self.hit_blocks = hit_blocks
         self.leased_blocks = hit_blocks
         self.leases = ready.leases
+        self.control_id = ready.control_id
         self.recovery_hold = ready.recovery_hold
         self.selected_boundary = ready.boundary
         self.attention_hit_blocks = ready.attention_hit_blocks
@@ -129,11 +132,14 @@ class SchedulerAdapter:
     ):
         self._ctx = context
         clients = tuple(clients or (context.client,))
-        expected_shards = context.tp_shards.shard_count if context.tp_shards is not None else 1
-        if len(clients) != expected_shards:
+        groups = CacheGroupLayout.from_config(kv_cache_config)
+        expected_clients = context.tp_shard_count if groups.group_count > 1 else 1
+        if len(clients) != expected_clients:
             raise ValueError(
-                f"scheduler has {len(clients)} OrbitKV data clients for {expected_shards} TP shards"
+                f"scheduler requires {expected_clients} local cache clients, got {len(clients)}"
             )
+        self.query_handshake_ready = not context.query_control
+        self._query_controls: dict[bytes, set[int]] = {}
         self._tp_shard_client = TpShardQueryClient(clients)
         self._clients = clients
         self._lora_bindings: dict[tuple[str, str], int] = {}
@@ -575,8 +581,11 @@ class SchedulerAdapter:
                 leases=pending_probe.leases,
                 num_tokens=num_external_tokens,
                 recovery_hold=pending_probe.recovery_hold,
+                control_id=pending_probe.control_id,
             )
             self._pending_load_intents[req_id] = load_intent
+            if load_intent.control_id:
+                self._query_controls[load_intent.control_id] = set()
             self._restores_awaiting_compute.add(req_id)
             self._pending_query_probes.pop(req_id, None)
             logger.debug(
@@ -996,8 +1005,20 @@ class SchedulerAdapter:
                 self._held_requests.discard(req_id)
 
         worker_meta = getattr(connector_output, "kv_connector_worker_meta", None)
-        if isinstance(worker_meta, OrbitKVWorkerMetadata) and worker_meta.completed_boundary_jobs:
-            self._release_boundary_jobs(worker_meta.completed_boundary_jobs)
+        if isinstance(worker_meta, OrbitKVWorkerMetadata):
+            if worker_meta.completed_boundary_jobs:
+                self._release_boundary_jobs(worker_meta.completed_boundary_jobs)
+            expected = set(range(self._ctx.tp_size))
+            for control_id, ranks in worker_meta.completed_query_controls.items():
+                if not ranks or not ranks <= expected:
+                    raise ValueError("query completion contains undeclared global TP ranks")
+                received = self._query_controls.get(control_id)
+                if received is None:
+                    continue
+                received.update(ranks)
+                if received == expected:
+                    self._ctx.client.release_shard_query(control_id)
+                    del self._query_controls[control_id]
 
     def request_finished(
         self,
@@ -1045,17 +1066,52 @@ class SchedulerAdapter:
             if self._cache_groups.group_count > 1:
                 ready = self._query_hybrid(req_id, probe, limit)
             elif probe.leases:
-                ready = ShardedQueryReady(probe.leased_blocks, probe.leases)
-            else:
-                ready = self._tp_shard_client.query(
-                    self._ctx.instance_id,
-                    probe.native_hashes,
-                    req_id,
-                    self._ctx.wait_for_full_prefix,
+                ready = ShardedQueryReady(
+                    probe.leased_blocks, probe.leases, control_id=probe.control_id
                 )
+            else:
+                if self._ctx.query_control:
+                    if not self.query_handshake_ready:
+                        raise RuntimeError("official worker query handshake is incomplete")
+                    result = self._ctx.client.query_shards(
+                        self._ctx.instance_id, probe.native_hashes, req_id
+                    )
+                    if isinstance(result, QueryLoading):
+                        ready = None
+                    elif isinstance(result, NativeShardedQueryReady):
+                        if len(result.leases) != self._ctx.tp_shard_count:
+                            self._ctx.client.release_shard_query(result.control_id)
+                            raise RuntimeError(
+                                "native query response does not cover every TP shard"
+                            )
+                        ready = ShardedQueryReady(
+                            result.num_hit_blocks, result.leases, control_id=result.control_id
+                        )
+                    else:
+                        raise TypeError("query_shards returned an unexpected response")
+                else:
+                    result = self._ctx.client.query_prefetch(
+                        self._ctx.instance_id,
+                        probe.native_hashes,
+                        req_id=req_id,
+                        wait_for_full_prefix=self._ctx.wait_for_full_prefix,
+                    )
+                    if isinstance(result, QueryLoading):
+                        ready = None
+                    elif isinstance(result, QueryReady):
+                        if result.num_hit_blocks > len(probe.native_hashes) or (
+                            result.num_hit_blocks and not result.lease
+                        ):
+                            if result.lease:
+                                self._ctx.client.release(result.lease)
+                            raise RuntimeError("invalid local prefix query result")
+                        ready = ShardedQueryReady(result.num_hit_blocks, (result.lease,))
+                    else:
+                        raise TypeError("query_prefetch returned unexpected outcome")
                 if ready is not None:
                     probe.leases = ready.leases
                     probe.leased_blocks = ready.num_hit_blocks
+                    probe.control_id = ready.control_id
         except Exception:
             self._release_query_probe(req_id, probe)
             if self._pending_query_probes.get(req_id) is probe:
@@ -1206,6 +1262,7 @@ class SchedulerAdapter:
             or self._pending_saves
             or self._held_requests
             or self._pinned_boundary_jobs
+            or self._query_controls
             or self._queued_at
         ):
             return False
@@ -1230,7 +1287,13 @@ class SchedulerAdapter:
 
     def _release_query_probe(self, req_id: str, probe: _QueryProbe) -> bool:
         released = True
-        if probe.leases and any(probe.leases):
+        if probe.control_id:
+            try:
+                self._ctx.client.release_shard_query(probe.control_id)
+            except Exception:
+                logger.exception("Could not release shard query: req=%s", req_id)
+                released = False
+        elif probe.leases and any(probe.leases):
             released = self._tp_shard_client.release(probe.leases, req_id)
         self._cancel_prefetch_tracking(req_id)
         for group_id in probe.candidates.keys() - probe.groups.keys():

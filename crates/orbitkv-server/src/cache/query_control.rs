@@ -191,6 +191,16 @@ impl QueryControlService {
         hll: Arc<Mutex<MultiWindowHllTracker>>,
         runtime: Handle,
     ) -> Self {
+        let book = Arc::new(BookMutex::new(ControlBook::default()));
+        let weak = Arc::downgrade(&book);
+        opentelemetry::global::meter("orbitkv-server")
+            .u64_observable_gauge("orbitkv_query_control_interests")
+            .with_callback(move |observer| {
+                if let Some(book) = weak.upgrade() {
+                    observer.observe(book.lock().interests.len() as u64, &[]);
+                }
+            })
+            .build();
         Self {
             queries: Arc::new(BookMutex::new(PendingQueries::default())),
             engine,
@@ -198,7 +208,7 @@ impl QueryControlService {
             runtime,
             endpoint,
             incarnation: Uuid::new_v4(),
-            book: Arc::default(),
+            book,
         }
     }
 

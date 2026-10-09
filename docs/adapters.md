@@ -354,14 +354,15 @@ Valid values are `read_write` and `save_only`.
 
 ## TP shards and host boundary
 
-CUDA IPC is host-local. When one tensor-parallel replica spans multiple hosts,
-one Cache Manager per host is necessary, but the current vLLM scheduler still
-has to query **every** TP shard through a local UDS socket. Thus cross-host TP
-sharding is not supported by this adapter yet. Configuring remote HTTP
-endpoints does not create an inference-to-Cache-Manager network path.
+CUDA IPC is host-local. Workers register with their local Manager, while the
+scheduler connects only to its own Manager over UDS. Official vLLM 0.31.0 worker
+handshake metadata carries opaque sealed query targets to the scheduler. Rust
+validates those targets against the declared topology and performs bounded
+parallel queries. Python does not query foreign Managers or choose the common prefix.
 
-For multiple Cache Managers on the *same* scheduler host, list their endpoints
-in global TP-rank order:
+The experimental profile requires `--enable-query-control` on every Manager.
+For one Manager, explicitly set `orbitkv.query_control=true`; multiple
+`orbitkv.tp_shard_endpoints` require native query control automatically. Example:
 
 ```json
 {
@@ -369,6 +370,7 @@ in global TP-rank order:
   "kv_role": "kv_both",
   "kv_connector_module_path": "orbitkv.vllm",
   "kv_connector_extra_config": {
+    "orbitkv.query_control": true,
     "orbitkv.tp_shard_endpoints": [
       "http://127.0.0.1:50055",
       "http://127.0.0.1:50056"
@@ -377,21 +379,36 @@ in global TP-rank order:
 }
 ```
 
-For TP8 and two endpoints, global ranks 0-3 register with the first manager and
-ranks 4-7 with the second. Both managers and the scheduler must be on the same
-host, and every vLLM process must receive the same ordered endpoint list.
+As a configuration example for TP8 and two endpoints, global ranks 0–3 register
+with the first Manager and 4–7 with the second. This physical topology is not
+qualified. The scheduler requires exactly all declared global ranks,
+and all workers in one node must export the identical registration. Every worker
+receives the same ordered endpoint list; custom local UDS paths can use
+`orbitkv.tp_shard_bootstrap_sockets`.
 
-The scheduler queries every shard and only reuses the prefix available from all
-of them. Each worker loads with the lease issued by its local server. The
-connector gives every shard a distinct namespace, so deployments with a
-different host split cannot reuse an incompatible cache layout.
+The Manager acquires initial source prefixes in parallel, cancels longer results
+before reacquiring the exact common prefix, and claims every selected source
+lease. It retains the source interests until all declared global ranks report
+successful native Restore completion through official worker metadata. Duplicate
+rank reports do not count twice. Cancel, replacement revision, unselected result,
+connection loss and shutdown have bounded ownership paths; TTL does not prove
+physical process-death reclamation.
 
-TP sharding currently requires equal contiguous shards and TP-only parallelism.
-Pipeline, decode-context, and prefill-context parallelism are rejected when
-more than one endpoint is configured.
+The profile accepts equal contiguous dense TP-only shards, one attention cache
+group and V1. PP, DP, EP, DCP, PCP, MLA replication, hybrid/recurrent recovery,
+speculative decoding, full-prefix waiting and queue preparation are rejected.
+Speculative V1 collects worker metadata before deferred finalization, so it
+cannot consume this completion contract safely. The ordinary single-Manager
+profile remains the default.
 
-An explicit `orbitkv.tp_shard_bootstrap_sockets` list is needed only for custom
-paths. Cross-host TP sharding needs a future node-local query fan-out design.
+This implementation currently accepts only trusted same-host literal loopback
+endpoints. Cross-host activation needs authenticated encrypted transport and its
+own physical topology/fault qualification. Two Manager processes on one GPU do
+not qualify TP8, multi-GPU NCCL, HA or S3 lifetime. The `1ab67a58` installed wheel
+is independently accepted for two-Manager DRAM/io_uring byte gates and official
+vLLM TP=1 eager handshake/cache recovery on H20. Physical multi-GPU serving and
+composition with the separate adapter/Graph profiles remain unqualified.
+See the scoped acceptance in the completion plan.
 
 ## Complete cache blocks and live prompt tails
 
@@ -442,8 +459,8 @@ admission. Consumers must open a fresh interest per lookup and close it after
 native ownership handoff/completion; idle expiry is a bounded failure fallback.
 
 This transport primitive is independently accepted for the trusted same-host
-loopback authority and lease scope. The official vLLM handshake and Rust
-common-prefix coordinator are still missing; current scheduler TP queries still
-require access to every node-local UDS. No cross-host native TP model, HA or S3
-fault qualification is implied. See S5.5 in the completion plan for the next
-bounded delivery and hardware gates.
+loopback authority and lease scope. The subsequent native common-prefix
+coordinator and official vLLM handshake are independently accepted at `1ab67a58`
+for the same-host installed-artifact scope above. Cross-host native TP model, HA
+and S3 fault qualification remain open. See S5.5 in the completion plan for
+physical topology and lifetime gates.

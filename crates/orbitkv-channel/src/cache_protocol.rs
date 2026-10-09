@@ -1092,6 +1092,8 @@ impl QueryBundleResponse {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum CacheProtocolError {
+    #[error("invalid dense shard query response")]
+    InvalidShardPayload,
     #[error("only selected recovery reads must carry complete compiled demand")]
     InvalidRecoveryDemand,
     #[error(transparent)]
@@ -1162,6 +1164,102 @@ pub enum CacheProtocolError {
     CompletionQueueTooWide(u32),
     #[error("completion resource evidence is inconsistent with admission")]
     InvalidCompletionResources,
+}
+
+/// Common dense prefix with one local lease per Manager and one control hold.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShardQueryResponse {
+    pub outcome: QueryOutcomeCode,
+    pub num_hit_blocks: u64,
+    pub leases: Vec<Vec<u8>>,
+    pub control_id: Vec<u8>,
+}
+
+impl ShardQueryResponse {
+    pub const MAX_SHARDS: usize = 32;
+
+    pub fn loading() -> Self {
+        Self {
+            outcome: QueryOutcomeCode::Loading,
+            num_hit_blocks: 0,
+            leases: Vec::new(),
+            control_id: Vec::new(),
+        }
+    }
+
+    pub fn encode(&self) -> Result<Vec<u8>, CacheProtocolError> {
+        self.validate()?;
+        let mut bytes = Vec::with_capacity(24 + 16 * (self.leases.len() + 1));
+        push_u32(&mut bytes, 0x4f52_5352);
+        push_u16(&mut bytes, CACHE_PROTOCOL_VERSION);
+        push_u16(&mut bytes, self.outcome as u16);
+        push_u64(&mut bytes, self.num_hit_blocks);
+        push_u32(&mut bytes, self.leases.len() as u32);
+        push_u32(&mut bytes, self.control_id.len() as u32);
+        bytes.extend_from_slice(&self.control_id);
+        for lease in &self.leases {
+            push_u16(&mut bytes, lease.len() as u16);
+            bytes.extend_from_slice(lease);
+        }
+        Ok(bytes)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, CacheProtocolError> {
+        let mut decoder = Decoder::new(bytes);
+        decoder.expect_magic(0x4f52_5352)?;
+        decoder.expect_version()?;
+        let outcome = QueryOutcomeCode::try_from(decoder.u16()?)?;
+        let num_hit_blocks = decoder.u64()?;
+        let count = decoder.usize_u32()?;
+        let control_len = decoder.usize_u32()?;
+        if count > Self::MAX_SHARDS || !matches!(control_len, 0 | 16) {
+            return Err(CacheProtocolError::InvalidShardPayload);
+        }
+        let control_id = decoder.bytes(control_len)?.to_vec();
+        let mut leases = Vec::with_capacity(count);
+        for _ in 0..count {
+            let len = decoder.u16()? as usize;
+            if !matches!(len, 0 | 16) {
+                return Err(CacheProtocolError::InvalidShardPayload);
+            }
+            leases.push(decoder.bytes(len)?.to_vec());
+        }
+        decoder.finish()?;
+        let response = Self {
+            outcome,
+            num_hit_blocks,
+            leases,
+            control_id,
+        };
+        response.validate()?;
+        Ok(response)
+    }
+
+    fn validate(&self) -> Result<(), CacheProtocolError> {
+        let nonzero_id = |bytes: &[u8]| bytes.len() == 16 && bytes.iter().any(|byte| *byte != 0);
+        let valid = self.leases.len() <= Self::MAX_SHARDS
+            && match self.outcome {
+                QueryOutcomeCode::Ready if self.num_hit_blocks > 0 => {
+                    !self.leases.is_empty()
+                        && nonzero_id(&self.control_id)
+                        && self.leases.iter().all(|lease| nonzero_id(lease))
+                }
+                QueryOutcomeCode::Ready => {
+                    !self.leases.is_empty()
+                        && self.control_id.is_empty()
+                        && self.leases.iter().all(Vec::is_empty)
+                }
+                QueryOutcomeCode::Loading | QueryOutcomeCode::Busy => {
+                    self.num_hit_blocks == 0 && self.leases.is_empty() && self.control_id.is_empty()
+                }
+                QueryOutcomeCode::Candidates => false,
+            };
+        if valid {
+            Ok(())
+        } else {
+            Err(CacheProtocolError::InvalidShardPayload)
+        }
+    }
 }
 
 struct Decoder<'a> {
