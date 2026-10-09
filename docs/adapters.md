@@ -441,7 +441,8 @@ identities remain retained for replay fencing, and Claim does not retire interes
 admission. Consumers must open a fresh interest per lookup and close it after
 native ownership handoff/completion; idle expiry is a bounded failure fallback.
 
-This is a transport primitive in review. The official vLLM handshake and Rust
+This transport primitive is independently accepted for the trusted same-host
+loopback authority and lease scope. The official vLLM handshake and Rust
 common-prefix coordinator are still missing; current scheduler TP queries still
 require access to every node-local UDS. No cross-host native TP model, HA or S3
 fault qualification is implied. See S5.5 in the completion plan for the next
