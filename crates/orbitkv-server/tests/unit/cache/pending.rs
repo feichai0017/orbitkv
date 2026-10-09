@@ -661,6 +661,7 @@ fn prepared_results_remain_owned_until_claim_or_expiry_without_further_polling()
 }
 
 #[tokio::test]
+#[ignore = "requires a CUDA pinned pool for Manager query drain ownership"]
 async fn query_drain_fences_admission_before_waiting_and_after_permits_return() {
     let engine = engine();
     let hll = tracker();
