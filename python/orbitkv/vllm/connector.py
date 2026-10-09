@@ -25,6 +25,7 @@ from orbitkv.vllm.config import (
     derive_namespace,
     detect_mla,
     resolve_instance_id,
+    resolve_static_loras,
     resolve_transfer_backend,
 )
 from orbitkv.vllm.layout import CacheGroupLayout
@@ -103,6 +104,7 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
                 )
 
         cross_layer_blocks = os.environ.get("ORBITKV_CROSS_LAYER_BLOCKS", "1") == "1"
+        static_loras = resolve_static_loras(vllm_config)
         base_namespace = derive_namespace(
             vllm_config,
             effective_tp_size,
@@ -110,6 +112,7 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             pcp_world_size,
             cross_layer_blocks=cross_layer_blocks,
             hash_block_size=hash_block_size,
+            static_loras=static_loras,
         )
 
         tp_rank: int | None = None
@@ -196,6 +199,7 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             wait_for_full_prefix=wait_for_full_prefix,
             tp_shards=tp_shards,
             hash_block_size=hash_block_size,
+            static_loras=static_loras,
         )
 
         # MLA attention backends expose no num-layers stride dimension, so vLLM

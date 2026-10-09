@@ -4,6 +4,7 @@ The validator is mocked here; its rules are exercised by Rust and native
 integration gates, without requiring a compiled extension for default tests.
 """
 
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call
 
@@ -379,3 +380,59 @@ def test_reset_preparation_probes_native_hbm_and_only_scopes_external_gaps(
         client.query_prefetch.assert_not_called()
     finally:
         scheduler.shutdown()
+
+
+@pytest.mark.parametrize(
+    "invalid", ["unknown", "id_reuse", "id_change", "reload", "tensorizer", "3d"]
+)
+def test_static_lora_admission_rejects_unsafe_selection_before_native_hbm(hybrid, invalid):
+    original, clients, _ = hybrid()
+    scheduler = SchedulerAdapter(
+        replace(original._ctx, static_loras=(("a", "/a"), ("b", "/b"))), clients=clients
+    )
+    req = request(tokens=32)
+    req.lora_request = SimpleNamespace(
+        lora_name="a",
+        lora_path="/a",
+        lora_int_id=1,
+        load_inplace=False,
+        tensorizer_config_dict=None,
+        is_3d_lora_weight=False,
+    )
+    scheduler.on_new_request(req)
+    assert scheduler._request_block_hashes(req) == tuple(req.block_hashes)
+    scheduler._gpu_block_pool = SimpleNamespace(get_cached_block=MagicMock(return_value=object()))
+    if invalid == "unknown":
+        req.lora_request.lora_path = "/unknown"
+    elif invalid == "id_reuse":
+        req.lora_request.lora_name, req.lora_request.lora_path = "b", "/b"
+    elif invalid == "id_change":
+        req.lora_request.lora_int_id = 2
+    elif invalid == "reload":
+        req.lora_request.load_inplace = True
+    elif invalid == "tensorizer":
+        req.lora_request.tensorizer_config_dict = {}
+    else:
+        req.lora_request.is_3d_lora_weight = True
+    with pytest.raises(ValueError):
+        scheduler.on_new_request(req)
+    scheduler._gpu_block_pool.get_cached_block.assert_not_called()
+    assert scheduler._lora_ids == {1: ("a", "/a")}
+    assert scheduler._lora_bindings == {("a", "/a"): 1}
+    scheduler.shutdown()
+
+
+@pytest.mark.parametrize("with_adapter", [False, True])
+def test_static_lora_rejects_resumable_updates_that_skip_public_admission(hybrid, with_adapter):
+    original, clients, _ = hybrid()
+    scheduler = SchedulerAdapter(
+        replace(original._ctx, static_loras=(("a", "/a"),)), clients=clients
+    )
+    req = request()
+    req.resumable = True
+    req.lora_request = SimpleNamespace(lora_name="a", lora_path="/a") if with_adapter else None
+    with pytest.raises(ValueError, match="resumable"):
+        scheduler.on_new_request(req)
+    assert not scheduler._queued_at
+    assert not scheduler._lora_ids
+    scheduler.shutdown()

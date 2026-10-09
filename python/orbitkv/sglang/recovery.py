@@ -16,6 +16,8 @@ from sglang.srt.mem_cache.unified_cache.unified_cache_linker import (
     UnifiedCacheLinkerWrapper,
 )
 
+from .config import validate_lora_request
+
 
 class RecurrentComponent(MambaComponent):
     """Persist sealed tree checkpoints, then copy restored state into request slots."""
@@ -124,6 +126,7 @@ class RecoveryLinkerWrapper(UnifiedCacheLinkerWrapper):
         cache.write_through_threshold = 1
 
     def match(self, key, req, result):
+        validate_lora_request(req, self.cache_linker._static_lora_ids)
         if not self.restore_from_store:
             return result
         self.cache_linker._origins[req.rid] = int(result.device_indices.numel())

@@ -6,7 +6,12 @@ import os
 from importlib.metadata import version
 from typing import TYPE_CHECKING, Any
 
-from orbitkv.identity import artifact_identity, model_identity, state_namespace
+from orbitkv.identity import (
+    artifact_identity,
+    model_identity,
+    state_namespace,
+    static_adapter_identity,
+)
 
 if TYPE_CHECKING:
     from .layout import GpuLayout
@@ -19,11 +24,42 @@ def resolve_transfer_backend() -> str:
     return backend
 
 
-def derive_namespace(server_args: Any, params: Any, layout: GpuLayout) -> str:
-    if server_args.enable_lora:
+def resolve_static_loras(server_args: Any) -> tuple[Any, ...]:
+    if not server_args.enable_lora:
+        return ()
+    if os.environ.get("ORBITKV_STATIC_LORA") != "1":
         raise ValueError(
-            "OrbitKV requires immutable adapter identities; dynamic LoRA is unsupported"
+            "OrbitKV requires immutable adapter identities; dynamic LoRA is unsupported. "
+            "Set ORBITKV_STATIC_LORA=1 only for fixed startup --lora-paths."
         )
+    refs = tuple(getattr(server_args, "lora_paths", ()) or ())
+    if not refs:
+        raise ValueError("OrbitKV static LoRA requires startup --lora-paths")
+    ids = [getattr(ref, "lora_id", None) for ref in refs]
+    if any(not isinstance(uid, str) or not uid for uid in ids) or len(set(ids)) != len(ids):
+        raise ValueError("OrbitKV static LoRA requires normalized unique startup adapter IDs")
+    if getattr(server_args, "enable_session_radix_cache", False):
+        raise ValueError("OrbitKV static LoRA does not support session RadixCache")
+    return refs
+
+
+def validate_lora_request(req: Any, static_ids: frozenset[str]) -> None:
+    if static_ids and getattr(req, "session", None) is not None:
+        raise ValueError("OrbitKV static LoRA does not support streaming sessions")
+    uid = getattr(req, "lora_id", None)
+    if uid is not None and uid not in static_ids:
+        raise ValueError("OrbitKV request selects an undeclared static LoRA adapter")
+    if static_ids and getattr(req, "extra_key", None) != uid:
+        # SGLang concatenates user extra_key and adapter UID. A user key equal
+        # to a LoRA UID would otherwise alias its native HBM pages.
+        raise ValueError("OrbitKV static LoRA does not support caller extra_key")
+
+
+def derive_namespace(
+    server_args: Any, params: Any, layout: GpuLayout, *, static_loras: tuple[Any, ...] | None = None
+) -> str:
+    if static_loras is None:
+        static_loras = resolve_static_loras(server_args)
     from sglang.srt.runtime_context import get_parallel
 
     parallel = get_parallel()
@@ -50,6 +86,26 @@ def derive_namespace(server_args: Any, params: Any, layout: GpuLayout) -> str:
             )
         },
     }
+    if server_args.enable_lora:
+        computation["static_lora"] = {
+            "adapters": static_adapter_identity(
+                tuple((ref.lora_name, ref.lora_path) for ref in static_loras)
+            ),
+            "native_ids": sorted((ref.lora_name, ref.lora_id) for ref in static_loras),
+            "configuration": {
+                name: getattr(server_args, name, None)
+                for name in (
+                    "lora_backend",
+                    "max_lora_rank",
+                    "max_loras_per_batch",
+                    "max_lora_chunk_size",
+                    "experts_shared_outer_loras",
+                    "lora_use_virtual_experts",
+                    "lora_strict_loading",
+                )
+            },
+            "target_modules": sorted(getattr(server_args, "lora_target_modules", ()) or ()),
+        }
     scale_path = getattr(server_args, "quantization_param_path", None)
     representation = {
         "kv_scale_artifact": artifact_identity(scale_path) if scale_path else None,

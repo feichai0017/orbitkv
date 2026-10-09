@@ -1427,8 +1427,16 @@ Do not delete consumed safety behavior based on these proposals.
   376-file evidence manifest passes. Final scoped review:
   `/root/orbitkv-artifacts/s5-external-reset-20261008/reviewer/FINAL-REVIEW.md`.
   This closes only the idle reset contract, not S5.3 or the whole S5 stage.
-- **Implemented support boundary:** both adapters reject dynamic LoRA.
-  **Implementation open:** immutable per-adapter reuse and live-weight invalidation.
+- **Immutable static adapter identity implemented; qualification open:**
+  fixed local PEFT adapter bytes and LoRA configuration now contribute to the
+  complete deployment namespace. Native keys preserve base/adapter separation;
+  same-name/path replacement between restarts changes the external domain.
+  vLLM public admission rejects ID reassignment/reload/unknown adapters and
+  resumable requests. SGLang validates startup UIDs and disallows caller
+  `extra_key`, radix sessions and streaming sessions through its existing
+  wrapper/admission boundaries. Dynamic SDK/RPC mutation and live-weight
+  invalidation still require a consumed engine contract. See
+  [static adapter restrictions](adapters.md#immutable-static-lora).
   Preserve cache salt, computation identity, multimodal inputs and representation
   boundaries; reject unsupported combinations instead of sharing unsafe keys.
 - **Qualification open:** Full + SWA + temporal recurrent native serving, page

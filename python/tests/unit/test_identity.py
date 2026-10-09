@@ -7,7 +7,12 @@ import shutil
 
 import pytest
 
-from orbitkv.identity import artifact_identity, model_identity, state_namespace
+from orbitkv.identity import (
+    artifact_identity,
+    model_identity,
+    state_namespace,
+    static_adapter_identity,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -91,3 +96,29 @@ def test_namespace_binds_engine_computation_format_and_scope(monkeypatch):
 def test_unknown_local_artifact_set_is_rejected(tmp_path):
     with pytest.raises(ValueError, match="no model/tokenizer artifacts"):
         artifact_identity(str(tmp_path))
+
+
+def test_static_adapters_fingerprint_contents_and_ignore_model_override(tmp_path, monkeypatch):
+    adapter = tmp_path / "adapter"
+    adapter.mkdir()
+    (adapter / "adapter_config.json").write_text('{"r":8,"lora_alpha":16}')
+    weights = adapter / "adapter_model.safetensors"
+    weights.write_bytes(b"original")
+    monkeypatch.setenv("ORBITKV_MODEL_FINGERPRINT", "a" * 64)
+    declared = (("fixed", str(adapter)),)
+    original = static_adapter_identity(declared)
+    replica = tmp_path / "copy"
+    shutil.copytree(adapter, replica)
+    assert static_adapter_identity((("fixed", str(replica)),)) == original
+    weights.write_bytes(b"replaced")
+    assert static_adapter_identity(declared) != original
+    weights.write_bytes(b"original")
+    (adapter / "adapter_config.json").write_text('{"r":8,"lora_alpha":32}')
+    assert static_adapter_identity(declared) != original
+    with pytest.raises(ValueError, match="unique"):
+        static_adapter_identity(declared + declared)
+    with pytest.raises(ValueError, match="non-empty"):
+        static_adapter_identity(())
+    weights.unlink()
+    with pytest.raises(ValueError, match="weights"):
+        static_adapter_identity(declared)
