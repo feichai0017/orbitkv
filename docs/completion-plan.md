@@ -1640,6 +1640,16 @@ transport bug or end-to-end advantage is inferred from a microbenchmark.
 Use [the serving method](benchmark-evidence.md#serving-comparisons). This readiness
 work does not change S2/S5 status or qualify any new engine/topology profile.
 
+**TENT allocation triage (2026-10-10):** the independent CUDA API probe passes on
+both H20 hosts and confirms that valid VMM memory requires its dedicated
+shareable-handle API; legacy IPC export rejects it. No TENT payload defect is
+reproduced by that probe. Existing upstream issue #2511/PR #3538 covers a
+different DMA-BUF registration defect. Our official `v0.3.13.post1` pin also
+lacks merged NVLink fixes #3678/#3679; peer ordinal and suballocation-handle
+controls are required before local NVLink qualification. Retain separate
+released/upstream-main evidence and preserve the current frozen runtime. See
+[the allocation and upstream limits](benchmark-evidence.md#tent-and-fabric-diagnostics).
+
 **Local gates passed; independent review open (2026-10-07):** test commit
 `06d00d53` adds a reproducible two-engine shared-Manager gate for official
 vLLM 0.31.0/SGLang 0.5.21. One A100 runs dense Qwen3-8B, TP=1/PP=1 eager,

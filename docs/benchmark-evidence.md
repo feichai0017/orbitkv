@@ -138,6 +138,27 @@ transport can still be ineligible for a particular allocation. Preserve the
 producer-readiness edge and device/source lifetime when investigating its
 caller synchronization cost; a faster copy that races a producer is invalid.
 
+The 2026-10-10 CUDA API triage on both H20 hosts verifies 2 MiB of valid VMM
+bytes, successful cudaMalloc IPC export and successful VMM POSIX-handle export;
+legacy IPC export of VMM returns `invalid argument`. This tests the allocation
+API boundary, not TENT payload routing. Skipping VMM in the legacy IPC path is
+an explicit eligibility restriction, not a newly reproduced transport defect.
+The existing expandable-segments registration
+[issue #2511](https://github.com/kvcache-ai/Mooncake/issues/2511) is closed by
+[PR #3538](https://github.com/kvcache-ai/Mooncake/pull/3538), which fixes the
+DMA-BUF export range and addresses a different RDMA registration path.
+
+The currently selected official `v0.3.13.post1` source does not contain the
+merged NVLink fixes for
+[peer device ordinals (#3678)](https://github.com/kvcache-ai/Mooncake/pull/3678)
+and [shared suballocation IPC handles (#3679)](https://github.com/kvcache-ai/Mooncake/pull/3679).
+Validate those shapes before qualifying the local NVLink profile. A separately
+frozen upstream-main control can assess the existing repairs; it does not
+replace released-runtime evidence or authorize a default dependency change.
+Keep the original RDMA cohort and runtime untouched. Source snapshots, upstream
+records, probe source, results, library hashes and empty GPU postflight are at
+`/root/orbitkv-artifacts/forge-rdma-gds-20426175-20261009/tent-vmm-triage-20261010/`.
+
 Investigate cold READ segment discovery, metadata fetch, QP setup, memory
 registration and progress/completion independently before labeling a TENT bug.
 Reproduce a suspected upstream issue outside the Manager wrapper on the pinned
