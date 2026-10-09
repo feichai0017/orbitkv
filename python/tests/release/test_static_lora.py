@@ -1,6 +1,7 @@
 """Installed static LoRA cache domains across real engine restart and weight replacement."""
 
 import json
+import math
 import os
 import shutil
 import sys
@@ -188,8 +189,14 @@ def test_static_adapters_keep_native_hits_and_separate_changed_contents(engine, 
                     compare(hot, baseline[name])
                     assert cached_tokens(engine, hot) >= 704, hot
                     hot_metrics = snapshot(f"hot-{name}")
-                    for counter in ("orbitkv_load_bytes_total", "orbitkv_hll_total_requests"):
-                        assert hot_metrics.get(counter, 0) == cold_metrics.get(counter, 0)
+                    query_counter = "orbitkv_hll_total_requests"
+                    assert math.isfinite(cold_metrics[query_counter])
+                    assert math.isfinite(hot_metrics[query_counter])
+                    assert cold_metrics[query_counter] >= 0
+                    assert hot_metrics[query_counter] == cold_metrics[query_counter]
+                    assert hot_metrics.get("orbitkv_load_bytes_total", 0) == cold_metrics.get(
+                        "orbitkv_load_bytes_total", 0
+                    )
             evict_dram_after_ssd_writes(http_port)
             with service(command + options, url, env, tmp_path, f"{engine}-cache-restart"):
                 for name in selections:
