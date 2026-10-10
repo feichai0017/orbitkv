@@ -1674,6 +1674,20 @@ fork-only factory, callback, default configuration or CI dependency may remain.
 
 ### S5.5 — Deployment matrix and upstream maintenance
 
+
+**Cross-host official serving gate implementation (2026-10-10); hardware gate
+pending:** `benches.shared_cache_serving` adds exact remote/H2D byte deltas,
+complete cold-text and token-count comparisons, source SSD read evidence and
+required ownership gauges for first and repeated remote requests. Repeated
+requests clear HBM and consumer DRAM without resetting external identity;
+preparation/fences stay outside their request timer and failed responses retain
+their raw metrics boundaries. The separate Forge two-H20 substage freezes the
+unchanged installed runtime and selected official releases before launch.
+Consumer epoch/incarnation restart and source restart without surviving payload
+are explicit topology-owner gates. This implementation does not close S5, S2,
+HA or formal serving-performance qualification. Reproduction:
+[the serving restore driver](../benches/README.md#first-and-repeated-cross-host-serving-restores).
+
 **Matched eager controls and service-exit evidence implemented (2026-10-10);
 model comparison qualification open:** the installed benchmark now consumes
 the official eager configuration of both selected releases and records the
