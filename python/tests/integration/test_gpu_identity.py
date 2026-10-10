@@ -9,6 +9,7 @@ ORBITKV_GPU_IDENTITY_OUTPUT to an external evidence directory.
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import time
@@ -20,6 +21,7 @@ from tests.support.cache_manager import CacheManagerProcess, find_available_port
 from tests.support.gpu_identity import (
     drain_identity_processes,
     identity_gpu_locks,
+    owned_process,
     quarantine_identity_gpus,
     require_clean_identity_log,
 )
@@ -139,6 +141,8 @@ def test_gpu_identity_restore_and_numa(identity_devices, monkeypatch, case):
         "rejection": rejection,
         "medium": medium,
         "forced_cleanup": False,
+        "ports": [port, http_port],
+        "bootstrap_socket": server.bootstrap_socket,
     }
     client = None
     completed = False
@@ -146,6 +150,7 @@ def test_gpu_identity_restore_and_numa(identity_devices, monkeypatch, case):
     try:
         assert server.start(), server.read_logs()
         result.update(manager_pid=server.process.pid, manager_command=server.command)
+        result["manager_identity"] = owned_process(server.process)
         (directory / "manager-maps.txt").write_text(
             Path(f"/proc/{server.process.pid}/maps").read_text()
         )
@@ -178,6 +183,7 @@ def test_gpu_identity_restore_and_numa(identity_devices, monkeypatch, case):
                 pass_fds=values["lock_fds"],
             )
         result["client_pid"] = client.pid
+        result["client_identity"] = owned_process(client)
         deadline = time.monotonic() + 90
         while not worker_output.with_suffix(".ready.json").exists():
             assert client.poll() is None, (directory / "client.log").read_text()
@@ -236,6 +242,11 @@ def test_gpu_identity_restore_and_numa(identity_devices, monkeypatch, case):
         assert server.terminate_gracefully(timeout=30)[0] == 0, server.read_logs()
         result["manager_exit"] = 0
         require_clean_identity_log(server.read_logs())
+        assert not Path(server.bootstrap_socket).exists()
+        for listener in (port, http_port):
+            with socket.socket() as probe:
+                probe.settimeout(1)
+                assert probe.connect_ex(("127.0.0.1", listener)) != 0, listener
         completed = True
     except BaseException as error:
         values["failed"] = True
