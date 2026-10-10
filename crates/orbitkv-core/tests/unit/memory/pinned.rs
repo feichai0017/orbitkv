@@ -48,6 +48,28 @@ fn invalid_sizes_fail_before_allocation() {
 }
 
 #[test]
+fn unavailable_numa_node_fails_before_cuda_registration() {
+    let node = std::fs::read_dir("/sys/devices/system/node")
+        .unwrap()
+        .filter_map(|entry| {
+            entry
+                .ok()?
+                .file_name()
+                .to_str()?
+                .strip_prefix("node")?
+                .parse::<u32>()
+                .ok()
+        })
+        .max()
+        .unwrap()
+        + 1;
+    assert!(matches!(
+        PinnedMemory::allocate(4096, PagePolicy::Regular, NumaNode(node)),
+        Err(PinnedMemError::NumaBindFailed(NumaNode(actual), _)) if actual == node
+    ));
+}
+
+#[test]
 fn test_read_hugepage_size() {
     let size = read_hugepage_size_from_proc().expect("Hugepagesize missing from /proc/meminfo");
     assert!(size >= 2 * 1024 * 1024);
