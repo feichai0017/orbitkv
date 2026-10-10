@@ -58,7 +58,22 @@ def identity_devices():
     output.mkdir(parents=True, exist_ok=False)
     lock_root = Path(os.environ.get("ORBITKV_TEST_GPU_LOCK_DIR", str(output.parent / "gpu-locks")))
     with identity_gpu_locks(lock_root, selected) as lock_fds:
-        yield {
+
+        def gpu_snapshot():
+            observed = subprocess.check_output(
+                ["nvidia-smi", "--query-gpu=uuid,memory.used", "--format=csv,noheader,nounits"],
+                text=True,
+            )
+            memory = {
+                uuid: int(used)
+                for uuid, used in (line.split(", ") for line in observed.splitlines())
+            }
+            return {uuids[device]: memory[uuids[device]] for device in selected}
+
+        before = gpu_snapshot()
+        (output / "gpu-preflight.json").write_text(json.dumps(before, indent=2) + "\n")
+        assert not any(before.values()), before
+        values = {
             "target": selected[0],
             "other": selected[1],
             "target_uuid": uuids[selected[0]],
@@ -69,6 +84,24 @@ def identity_devices():
             "lock_fds": lock_fds,
             "failed": False,
         }
+        try:
+            yield values
+        finally:
+            deadline = time.monotonic() + 10
+            while True:
+                after = gpu_snapshot()
+                if not any(after.values()) or time.monotonic() >= deadline:
+                    break
+                time.sleep(0.1)
+            (output / "gpu-postflight.json").write_text(json.dumps(after, indent=2) + "\n")
+            if any(after.values()):
+                quarantine_identity_gpus(
+                    lock_root,
+                    selected,
+                    output,
+                    {"remaining_processes": [{"gpu_memory_mib": after}], "errors": []},
+                )
+            assert not any(after.values()), after
 
 
 @pytest.mark.parametrize("case", CASES, ids=[f"{c[0]}-{c[-1]}" for c in CASES])
@@ -86,7 +119,7 @@ def test_gpu_identity_restore_and_numa(identity_devices, monkeypatch, case):
     server = CacheManagerProcess(
         port,
         pool_size="128mb",
-        devices="0",
+        devices=",".join(str(ordinal) for ordinal in range(len(manager_visible.split(",")))),
         http_port=http_port,
         bootstrap_socket=f"/tmp/okv-id-{port}.sock",
         ssd_cache_path=directory / "ssd" if medium == "ssd" else None,
