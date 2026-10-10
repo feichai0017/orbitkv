@@ -9,6 +9,7 @@ not a matched backend performance qualification.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import time
 
@@ -101,16 +102,30 @@ def profile(args: argparse.Namespace, prompts: list[list[int]]) -> dict:
         "/"
     ) == args.target_manager.rstrip("/"):
         raise ValueError("Independent source and consumer services are required")
-    if args.bytes_per_token <= 0 or args.block_tokens <= 0 or not 1 <= args.remote_repeats <= 10000:
+    warmup_repeats = getattr(args, "warmup_repeats", 0)
+    if (
+        args.bytes_per_token <= 0
+        or args.block_tokens <= 0
+        or not 1 <= args.remote_repeats <= 10000
+        or not 0 <= warmup_repeats <= 10000 - args.remote_repeats
+    ):
         raise ValueError("Invalid payload geometry or repeat count")
     if args.output.exists():
         raise FileExistsError(f"Preserve the existing profile: {args.output}")
     result = {
         "engine": args.engine,
+        "model": args.model,
         "source_medium": args.source_medium,
+        "bytes_per_token": args.bytes_per_token,
+        "block_tokens": args.block_tokens,
+        "prompt_token_ids_sha256": hashlib.sha256(
+            json.dumps(prompts, separators=(",", ":")).encode()
+        ).hexdigest(),
         "samples": [],
         "status": "RUNNING",
         "performance_qualified": False,
+        "warmup_repeats_per_prompt": warmup_repeats,
+        "measured_repeats_per_prompt": args.remote_repeats,
         "timing_scope": "Client TTFT to first nonempty text; preparation and drain excluded",
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -149,7 +164,7 @@ def profile(args: argparse.Namespace, prompts: list[list[int]]) -> dict:
                 < payload_bytes
             ):
                 raise AssertionError("Source did not commit the complete prefix to SSD")
-            for repeat in range(args.remote_repeats):
+            for repeat in range(warmup_repeats + args.remote_repeats):
                 preparation_started = time.monotonic_ns()
                 preparation = {"source_fence": source_fence}
                 if repeat:
@@ -169,6 +184,7 @@ def profile(args: argparse.Namespace, prompts: list[list[int]]) -> dict:
                     "prompt": index,
                     "repeat": repeat,
                     "phase": "first_peer_read" if index == 0 and repeat == 0 else "warm_peer_read",
+                    "sample_kind": "warmup" if repeat < warmup_repeats else "measured",
                     "payload_bytes": payload_bytes,
                     "preparation": preparation,
                     "manager_before": before,
@@ -177,9 +193,12 @@ def profile(args: argparse.Namespace, prompts: list[list[int]]) -> dict:
                 }
                 result["samples"].append(row)
                 save()
+                row["request_start_mono_ns"] = time.monotonic_ns()
+                row["request_start_wall_ns"] = time.time_ns()
                 actual = generate(
                     args.target_url, args.engine, args.model, prompt, args.output_tokens
                 )
+                row["request_end_mono_ns"] = time.monotonic_ns()
                 after = drain(args.source_manager, args.target_manager)
                 row.update(consumer_response=actual, manager_after=after, status="CHECKING")
                 save()
@@ -210,6 +229,7 @@ def main() -> None:
     parser.add_argument("--bytes-per-token", type=int, required=True)
     parser.add_argument("--block-tokens", type=int, default=64)
     parser.add_argument("--remote-repeats", type=int, default=10)
+    parser.add_argument("--warmup-repeats", type=int, default=0)
     parser.add_argument("--output-tokens", type=int, default=8)
     parser.add_argument("--source-medium", choices=("dram", "ssd"), default="dram")
     parser.add_argument("--output", type=external_path, required=True)

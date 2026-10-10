@@ -25,6 +25,8 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | `single_node.py` | Fixed-capacity cold, HBM-hit, and post-pressure experiment |
 | `shared_manager_pressure.py` | Two installed official engines sharing one SSD Manager: bounded sustained mixed traffic, native output controls, per-instance progress and an isolated sampler |
 | `shared_cache.py` | Independent-replica serving requests with remote-byte, GPU-copy, output and reservation-drain evidence |
+| `shared_cache_serving.py` | First/repeated serving recovery, retained warmup, source SSD bytes and terminal ownership |
+| `shared_cache_compare.py` | Frozen independent-pair serial read-batch comparisons with consumed batch counts and no automatic promotion |
 | `launch.py` | Engine/backend commands and matched memory budgets |
 | `runtime.py` | Owned process groups, readiness, teardown, and launch manifest |
 | `workload.py` | Token-exact requests, streaming timings, and pressure traffic |
@@ -1040,7 +1042,7 @@ python -m benches.shared_cache_serving \
   --source-url http://source:8000 --target-url http://consumer:8000 \
   --source-manager http://source:50056 --target-manager http://consumer:50056 \
   --prompts /var/tmp/serving-inputs/fresh-prompts.json \
-  --block-tokens 64 --bytes-per-token 147456 --remote-repeats 10 \
+  --block-tokens 64 --bytes-per-token 147456 --remote-repeats 10 --warmup-repeats 0 \
   --source-medium dram --output /var/tmp/serving-results/profile.json
 ```
 

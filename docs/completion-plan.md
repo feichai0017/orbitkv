@@ -1709,6 +1709,22 @@ engine/backend comparisons. Existing peer lookahead remains the baseline;
 authorization/materialization observations alone do not justify a CUDA kernel
 change. Require device-event DMA/kernel evidence before a KDA candidate.
 
+**SSD peer read-batch comparison implemented; prelaunch review pending
+(2026-10-10):** the ordinary serving driver retains explicitly labelled warmup,
+exact prompt-ID fingerprints and request-clock boundaries. Its offline comparison
+checks complete frozen cells, consumed authorization/READ batch counts, exact
+remote/H2D/SSD bytes and native outputs before resampling independent process
+pairs. The bounded candidate changes only the consumer's existing ordinary
+`--query-read-batch` from 32 to 128 MiB; the source, installed production, budgets,
+reader threads, lookahead and official engine releases remain unchanged.
+Five alternating pairs per engine use five warmup and 20 measured restores for
+each 513/1,025-token prefix on the same two physical H20 hosts. Serial median
+improvement is a component gate; pressure and cancellation/drain controls are
+required before production promotion. No stable p99, backend superiority, kernel
+improvement or support expansion follows from this comparison. The fresh freeze
+and raw evidence are outside Git at
+`/tmp/orbitkv-ssd-peer-batch-artifacts-20261010/`.
+
 **Matched eager controls and service-exit evidence implemented (2026-10-10);
 model comparison qualification open:** the installed benchmark now consumes
 the official eager configuration of both selected releases and records the
