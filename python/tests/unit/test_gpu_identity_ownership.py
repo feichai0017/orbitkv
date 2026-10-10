@@ -1,4 +1,5 @@
 import ctypes
+import errno
 import fcntl
 import json
 import os
@@ -80,6 +81,42 @@ def test_unknown_client_drain_preserves_owner_and_blocks_next_admission(tmp_path
 def test_zero_exit_does_not_hide_manager_lifecycle_failure(failure):
     with pytest.raises(AssertionError):
         require_clean_identity_log(f"INFO normal work\n{failure}\nINFO shutdown complete")
+
+
+@pytest.mark.parametrize(
+    ("failure", "inspection_failed"),
+    [
+        pytest.param(FileNotFoundError(errno.ENOENT, "gone"), False, id="disappeared-path"),
+        pytest.param(ProcessLookupError(errno.ESRCH, "gone"), False, id="disappeared-process"),
+        pytest.param(PermissionError(errno.EACCES, "denied"), True, id="denied-inspection"),
+        pytest.param(OSError(errno.EIO, "unreadable"), True, id="failed-inspection"),
+    ],
+)
+def test_disappearing_process_scan_keeps_live_owners_and_inspection_errors(
+    monkeypatch, failure, inspection_failed
+):
+    fields = ["S", "1", "77", *(["0"] * 16), "42"]
+
+    class ProcessStat:
+        def __init__(self, pid, error=None):
+            self.parent = SimpleNamespace(name=str(pid))
+            self.error = error
+
+        def read_text(self):
+            if self.error is not None:
+                raise self.error
+            return f"{self.parent.name} (live owner) " + " ".join(fields)
+
+        def __str__(self):
+            return f"/proc/{self.parent.name}/stat"
+
+    root = SimpleNamespace(glob=lambda _: [ProcessStat(123), ProcessStat(456, failure)])
+    monkeypatch.setattr(gpu_identity, "Path", lambda _: root)
+    members, errors = gpu_identity.identity_group_members(77)
+    assert members == [{"pid": 123, "state": "S", "start_ticks": 42}]
+    assert bool(errors) is inspection_failed
+    if inspection_failed:
+        assert "/proc/456/stat" in errors[0]
 
 
 def test_inspection_failure_preserves_quarantine_record(monkeypatch, tmp_path):

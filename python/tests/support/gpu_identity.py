@@ -77,7 +77,7 @@ def identity_group_members(group: int):
                         "start_ticks": int(fields[19]),
                     }
                 )
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError):
             continue
         except (OSError, ValueError, IndexError) as error:
             errors.append(f"{path}: {error}")
