@@ -1725,8 +1725,9 @@ A vLLM pair also exceeds the frozen 5% TTFT regression guard. A separate
 CPU-only controller remedy checks that both engines unregister while their
 Managers remain available and rejects worker shutdown errors; it does not repair
 or relabel the hardware cohort.
-The 128 MiB setting is not promoted, the production default stays 32 MiB, and
-full S2/S5, isolation and owner support boundaries remain unchanged. Frozen
+The 128 MiB setting is not promoted; 32 MiB remains the comparison baseline,
+while the production CLI default stays `0` (demand baseline). Full S2/S5,
+isolation and owner support boundaries remain unchanged. Frozen
 inputs, failures, raw logs, postflight and reviews are outside Git at
 `/root/orbitkv-artifacts/s5-ssd-peer-batch-20261010/`.
 See [the comparison methodology](../benches/README.md#independent-ssd-read-batch-comparisons).

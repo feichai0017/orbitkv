@@ -158,7 +158,8 @@ All 550 retained restores have exact output and payload bytes. Actual
 authorization/READ counts fall from 3/6 to 1/2 for 72/144 MiB payloads, but the
 complete comparison is invalid and a vLLM pair also exceeds its 5% TTFT guard.
 Fewer calls do not establish a stable latency improvement. The 128 MiB setting
-is not promoted and the default stays 32 MiB.
+is not promoted. The comparison baseline stays 32 MiB; the production CLI
+default stays `0` (demand baseline).
 
 A separate CPU-only control reproduces the shutdown fault, checks engine
 unregister before Manager shutdown and rejects worker shutdown errors. It does
