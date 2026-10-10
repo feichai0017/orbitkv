@@ -113,12 +113,20 @@ def main():
                 before_metrics=before,
                 after_metrics=after,
             )
+            args.output.with_suffix(".observation.json").write_text(
+                json.dumps(result, indent=2) + "\n"
+            )
             if args.medium == "ssd":
                 assert (
-                    after.get("orbitkv_ssd_read_bytes_total", 0)
-                    - before.get("orbitkv_ssd_read_bytes_total", 0)
+                    after["orbitkv_ssd_prefetch_bytes_total"]
+                    - before.get("orbitkv_ssd_prefetch_bytes_total", 0)
                     == tensor.numel()
-                )
+                ), result
+                assert (
+                    after["orbitkv_ssd_uring_read_operations_total"]
+                    - before.get("orbitkv_ssd_uring_read_operations_total", 0)
+                    == len(hashes)
+                ), result
         args.output.with_suffix(".ready.json").write_text(json.dumps(result, indent=2) + "\n")
         deadline = time.monotonic() + 60
         while not args.output.with_suffix(".release").exists():
@@ -129,8 +137,13 @@ def main():
             assert ok, message
             registered = False
     finally:
-        client.close()
-        torch.cuda.synchronize()
+        try:
+            if registered:
+                ok, message = client.unregister_context("identity")
+                assert ok, message
+        finally:
+            client.close()
+            torch.cuda.synchronize()
     result["normal_unregister"] = True
     args.output.write_text(json.dumps(result, indent=2) + "\n")
 
