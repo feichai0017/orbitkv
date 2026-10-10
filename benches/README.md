@@ -1120,9 +1120,15 @@ does not qualify p99, throughput or an advantage over another cache backend.
 
 `benches.single_node` consumes the same native log check. Its service owner sends
 normal SIGTERM to the leader so the engine can drain its own workers, then waits
-for the leader and live members of its process group. A required group SIGKILL,
-an unreaped zombie, an early/nonzero exit, a missing/truncated shutdown log or a
-native failure prevents `summary.json` from being written. Cleanup records retain
+for the leader and live members of its process group. It rejects a mismatched
+`/proc` PID namespace before launching any service. A required group SIGKILL,
+an unreaped zombie, an early/nonzero exit, an inspection error, a missing/truncated
+shutdown log or a native failure prevents `summary.json` from being written.
+The Linux owner adopts orphaned workers and reaps only its registered process
+group. If inspection fails, it retains the caller's ownership while checking
+kernel group existence and terminating/reaping that group; it never treats an
+inspection error as an empty group. Cleanup records retain adopted child exits,
+inspection failures and
 the shutdown byte range and failure; a workload failure stays the primary error.
 These Linux process checks do not establish physical CUDA/RDMA lifetime proof.
 

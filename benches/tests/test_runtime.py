@@ -15,6 +15,22 @@ import pytest
 from benches import runtime
 
 
+def test_server_rejects_a_different_proc_pid_namespace_before_spawning(monkeypatch, tmp_path):
+    actual_pid = os.getpid()
+    monkeypatch.setattr(runtime.os, "getpid", lambda: actual_pid + 1)
+
+    def launch(*args, **kwargs):
+        pytest.fail("service launched before checking the PID namespace")
+
+    monkeypatch.setattr(runtime.subprocess, "Popen", launch)
+    with (
+        pytest.raises(RuntimeError, match="PID namespace"),
+        runtime.server(["manager"], {}, "http://manager", tmp_path / "manager.log"),
+    ):
+        pass
+    assert not (tmp_path / "manager.log").exists()
+
+
 @pytest.mark.parametrize(
     ("steps", "body_failure", "expected_error", "broken_stderr"),
     [
@@ -197,3 +213,71 @@ def test_leader_exit_alone_does_not_establish_successful_service_cleanup(
     assert cleanup["remaining_group"] == ([123457] if fault == "unreaped_child" else [])
     assert (Process.pid, signal.SIGKILL) in sent if fault == "forced_group_cleanup" else True
     assert not sent if fault == "early_exit" else sent[0] == (Process.pid, signal.SIGTERM)
+
+
+@pytest.mark.parametrize("body_failure", [False, True])
+def test_proc_inspection_failure_retains_ownership_until_real_orphan_is_killed_and_reaped(
+    monkeypatch, tmp_path, body_failure
+):
+    ready = tmp_path / "ready"
+    log = tmp_path / "engine.log"
+    command = [
+        sys.executable,
+        "-u",
+        "-c",
+        """
+import signal, subprocess, sys
+from pathlib import Path
+
+child = subprocess.Popen([sys.executable, '-c', 'import signal; signal.pause()'])
+
+def stop(signum, frame):
+    print('API server: engine client stopped', flush=True)
+    print('Application shutdown complete.', flush=True)
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, stop)
+Path(sys.argv[1]).write_text(str(child.pid))
+while True:
+    signal.pause()
+""",
+        str(ready),
+    ]
+    owner_held = True
+    child_pid = None
+    inspect = runtime._process_group_members
+
+    def denied(pgid):
+        assert owner_held, "inspection failed after the caller released its exports"
+        if child_pid is not None and Path(f"/proc/{child_pid}").exists():
+            raise PermissionError(13, "controlled worker stat failure", f"/proc/{child_pid}/stat")
+        return inspect(pgid)
+
+    monkeypatch.setattr(runtime.requests, "get", lambda *a, **kw: SimpleNamespace(ok=True))
+    monkeypatch.setattr(runtime, "_process_group_members", denied)
+    expected = "original workload failure" if body_failure else "Service shutdown failed"
+    try:
+        with (
+            pytest.raises(RuntimeError, match=expected),
+            runtime.server(command, dict(os.environ), "http://cpu-control", log, engine="vllm"),
+        ):
+            deadline = time.monotonic() + 10
+            while not ready.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert ready.exists(), log.read_text()
+            child_pid = int(ready.read_text())
+            if body_failure:
+                raise RuntimeError("original workload failure")
+    finally:
+        owner_held = False
+        if child_pid is not None:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(child_pid, signal.SIGKILL)
+            with contextlib.suppress(ChildProcessError):
+                os.waitpid(child_pid, 0)
+    cleanup = json.loads(log.with_suffix(".cleanup.json").read_text())
+    assert cleanup["exit_code"] == 0 and cleanup["reaped"]
+    assert cleanup["forced_kill"] and cleanup["process_group_errors"] >= 1
+    assert cleanup["remaining_group"] == []
+    assert cleanup["adopted_children"] == [{"pid": child_pid, "exit_code": -signal.SIGKILL}]
+    assert not Path(f"/proc/{child_pid}").exists()

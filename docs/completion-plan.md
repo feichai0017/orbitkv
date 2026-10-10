@@ -1738,8 +1738,11 @@ engine-before-Manager stop order and native shutdown error checks. The offline
 read-batch comparator validates all four stop records independently of cell PASS
 labels. Single-node benchmarks signal the engine leader, wait for its process
 group and reject early/nonzero exits, forced cleanup, unreaped workers and missing,
-truncated or failed native shutdown protocols before emitting a summary. CPU
-parent/child controls verify leader-only SIGTERM and actual child reap; these
+truncated or failed native shutdown protocols before emitting a summary. Launch
+requires matching PID/proc namespaces; the owner adopts orphaned workers and
+retains cleanup ownership across process-inspection failures. CPU parent/child
+controls verify leader-only SIGTERM, actual child reap and inspection-error
+cleanup with and without a primary workload failure; these
 controls do not repair or relabel the retained hardware cohort.
 
 The consumer vLLM log matches the intentional-shutdown ordering reported in
