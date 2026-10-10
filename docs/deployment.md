@@ -113,7 +113,9 @@ host registration. Huge-page mode requires reserved huge pages and permission
 to create hugetlb memfds; it does not silently switch to regular pages.
 NUMA placement binds the Manager payload mapping to the GPU-local node before
 first-touch, overriding inherited interleave policies. A rejected binding fails
-allocation with the target node and OS error. GPU registration exports
+allocation with the target node and OS error. The host or container must permit
+`mbind` and include the GPU-local node in its allowed memory nodes; CPU affinity
+alone does not establish payload placement. GPU registration exports
 the payload arena FDs to the engine's native executor, which maps and registers
 them independently for raw DRAM restores. The Manager retains source leases
 and admission permits through the authoritative engine drain.
