@@ -1063,3 +1063,49 @@ and their metrics boundaries remain in the output; an existing result is never
 replaced. TTFT means client time to the first nonempty streamed text. This is a
 correctness gate with descriptive timings; one first read and correlated repeated
 reads do not establish throughput, a tail SLO or a matched backend advantage.
+
+### Independent SSD read-batch comparisons
+
+`benches.shared_cache_compare` evaluates a complete, separately frozen serial
+cohort. The topology owner must retain `FROZEN-CONTRACT.json`, `CAMPAIGN.json`
+and every `<cell>-profile.json` together in an external artifact directory.
+The comparator rejects incomplete cells, changed profile hashes, mismatched
+model/token IDs or output, missing rows, incorrect bytes and a batch setting
+that does not change the consumed authorization/READ counts. Compare complete
+generated text and native prompt/completion counts; retain process-specific
+SGLang usage metadata without requiring UUIDs or timing fields to match.
+
+```bash
+python -m benches.shared_cache_compare \
+  --root /var/tmp/ssd-peer-batch/cohort \
+  --contract /var/tmp/ssd-peer-batch/cohort/FROZEN-CONTRACT.json \
+  --output /var/tmp/ssd-peer-batch/analysis.json
+```
+
+The 2026-10-10 component contract freezes five independent, alternating-order
+process pairs per engine. Each cell retains five warmup and 20 measured restores
+for each 513/1,025-token prefix; warmup exclusion is declared before launch.
+Source and consumer use the same two physical H20 hosts, official releases,
+immutable Qwen3-8B model, layouts and byte budgets in both variants. Only the
+consumer's existing ordinary `--query-read-batch` changes from 32 to 128 MiB.
+The source uses io_uring SSD and a 32 MiB read batch throughout. TENT reads into
+consumer DRAM, followed by local H2D; this does not measure remote GPU-buffer
+RDMA or native GDS. No timer sampler or tracer is enabled; reset, metadata fences,
+drain and metrics collection remain outside request timing.
+
+Stop and reap both engines while their node-local Managers remain available
+for context unregister, then stop the Managers. Preserve literal service exit
+codes, native child termination and cleanup failures separately. The first
+invalid runtime, correctness or cleanup cell stops dependent launches; retain
+its profile rows and never analyze the completed subset as a qualified cohort.
+Valid performance failures remain in the predeclared comparison.
+
+Compute one measured TTFT/E2E median per process cell and bootstrap the matched
+pair ratios, never the correlated requests. The frozen component guard requires
+at least a 5% geometric-mean TTFT reduction, a 95% pair-bootstrap upper bound
+below parity, and no pair's TTFT or E2E median ratio above 1.05. Report the
+intervals and every pair, including performance failures. A zero analysis-process
+exit means the analysis completed: inspect its `state` for the component result.
+Even `VALID_COMPONENT_PASS` leaves `production_qualified=false`; matched pressure
+and cancellation/drain controls precede a production recommendation. This cohort
+does not qualify p99, throughput or an advantage over another cache backend.

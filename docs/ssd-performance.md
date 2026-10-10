@@ -141,6 +141,34 @@ starts. The candidate is reverted; source, complete wheels, raw samples and
 controls remain at `/root/orbitkv-artifacts/s4-ssd-read-fanout-20261008/` and
 `/workspace/orbitkv-ssd-fanout-20261008/`.
 
+## Cross-host SSD read-batch component
+
+The 2026-10-10 physical two-H20 comparison changes only consumer ordinary
+read-batch admission from 32 to 128 MiB, using unchanged production `1ab67a58`,
+official vLLM 0.31.0/SGLang 0.5.21, Qwen3-8B BF16 TP=1/PP=1 eager, equal
+budgets and a source io_uring SSD. Remote TENT reads end in consumer DRAM before
+local H2D; native GDS and remote GPU-buffer RDMA are outside this measurement.
+
+The first SGLang cell passes all 50 restores but fails shutdown because the
+external controller closes its source Manager before engine context unregister.
+The frozen SGLang no-traceback guard correctly stops the campaign. The controller
+labels ten preceding vLLM cells PASS, but raw logs reveal source unregister
+tracebacks and one consumer `EngineDeadError`; their lifecycle is not accepted.
+All 550 retained restores have exact output and payload bytes. Actual
+authorization/READ counts fall from 3/6 to 1/2 for 72/144 MiB payloads, but the
+complete comparison is invalid and a vLLM pair also exceeds its 5% TTFT guard.
+Fewer calls do not establish a stable latency improvement. The 128 MiB setting
+is not promoted and the default stays 32 MiB.
+
+A separate CPU-only control reproduces the shutdown fault, checks engine
+unregister before Manager shutdown and rejects worker shutdown errors. It does
+not repair the consumer vLLM shutdown failure. A new, independently reviewed
+bundle and cohort are required; neither a retry nor a replacement changes the
+stopped campaign. Preserve failures and raw evidence at
+`/root/orbitkv-artifacts/s5-ssd-peer-batch-20261010/`.
+See [S5.5](completion-plan.md#s55--deployment-matrix-and-upstream-maintenance)
+and [the comparison methodology](../benches/README.md#independent-ssd-read-batch-comparisons).
+
 ## Shared-Manager mixed-pressure qualification
 
 `benches.shared_manager_pressure` runs installed official vLLM 0.31.0 and
