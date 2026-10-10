@@ -1024,3 +1024,40 @@ and `ORBITKV_PRESSURE_STALL_MS=38`; every event must remain present and the
 intentional invalid-exposure control: it must fail the 100 ms upper bound while
 retaining explicit drain and graceful cleanup evidence. These fault variables
 are not part of the ordinary formal workload.
+
+### First and repeated cross-host serving restores
+
+Use `benches.shared_cache_serving` against two dedicated, already-started official
+engine replicas and their node-local Managers. Configure matching immutable
+model artifacts, dtype, cache pages and computation identity, plus a separately
+verified RDMA-only TENT profile. This driver does not launch services or detect
+RDMA. The topology owner must freeze inputs, record physical NIC counters and
+mapped native libraries, and clean up both hosts after success or failure.
+
+```bash
+python -m benches.shared_cache_serving \
+  --engine vllm --model /path/to/immutable-model \
+  --source-url http://source:8000 --target-url http://consumer:8000 \
+  --source-manager http://source:50056 --target-manager http://consumer:50056 \
+  --prompts /var/tmp/serving-inputs/fresh-prompts.json \
+  --block-tokens 64 --bytes-per-token 147456 --remote-repeats 10 \
+  --source-medium dram --output /var/tmp/serving-results/profile.json
+```
+
+The byte geometry above is for BF16 Qwen3-8B, TP=1/PP=1 and one dense attention
+cache group. Derive it from the selected model and registered layout for other
+profiles. With 513/1025-token prompts this gate requires exactly 72/144 MiB of
+remote fetch and local H2D restoration for every response, complete cold-text
+and input/completion-count equality, acknowledged release and exported ownership
+gauges at zero. SSD mode additionally evicts source DRAM and requires the exact
+physical SSD prefetch byte delta.
+
+Repeated reads use an idle HBM-only reset and consumer DRAM eviction, preserving
+the external prefix identity. The official vLLM test server needs
+`VLLM_SERVER_DEV_MODE=1` for `/reset_prefix_cache`; `reset_external=true` changes
+identity and must not be used. SGLang uses `/flush_cache`. These preparation and
+metadata-fence costs are recorded outside the request timer. Failed responses
+and their metrics boundaries remain in the output; an existing result is never
+replaced. TTFT means client time to the first nonempty streamed text. This is a
+correctness gate with descriptive timings; one first read and correlated repeated
+reads do not establish throughput, a tail SLO or a matched backend advantage.

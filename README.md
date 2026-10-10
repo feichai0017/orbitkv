@@ -74,7 +74,10 @@ Multi-node cache sharing is experimental. Interfaces may change before 1.0.
   recorded [H20/A100 TCP natural-text recovery and restart gates](docs/shared-cache-qualification.md#two-host-tcp-2026-09-28),
   with cross-GPU numerical and RDMA limits documented separately. Peer SSD reads use
   exact-generation, bounded source-side io_uring staging before the same
-  Mooncake transfer path; physical two-host qualification remains open.
+  Mooncake transfer path. Both official engines also pass scoped
+  [two-H20 RDMA serving and controlled restart gates](docs/shared-cache-qualification.md#official-engine-cross-host-serving-restores)
+  for dense TP=1/PP=1 eager DRAM/SSD recovery. HA, native GDS, broader topology
+  and transfer-lifetime qualification remain open.
 - **Native P/D composition candidates.** Official vLLM uses NIXL and
   MultiConnector; official SGLang uses native disaggregation. OrbitKV supplies
   independent cache adapters and keeps Manager shared-cache traffic on TENT.

@@ -362,3 +362,60 @@ four rails carry payload. Report descriptive median, nearest-rank p95 and max;
 thirty samples do not establish stable p99, saturation throughput, a hardware
 advantage or S2/S5 performance qualification. Raw per-request timing, metrics,
 logs, hashes, workload order and failure/cleanup evidence stay outside Git.
+
+## Official-engine cross-host serving restores
+
+Use [the serving restore driver](../benches/README.md#first-and-repeated-cross-host-serving-restores)
+for two dedicated official-engine replicas, each connected to its local
+Manager. Freeze matching checkpoint assets, dtype, page layout and computation
+identity. The topology controller records the installed wheel, engine and native
+library hashes, actual mapped TENT libraries, payload transport policy and
+physical NIC counters. Source DRAM and source io_uring SSD are separate cells;
+SSD requires source DRAM eviction and an exact completed io_uring SSD read-byte delta.
+
+Every request compares complete generated text and native input/output counts
+with a fresh source control, requires exact remote/H2D bytes and acknowledged
+release, and drains the exported ownership gauges. Clear consumer HBM and DRAM
+between repetitions while preserving external identity. Keep reset, eviction,
+inventory fences and startup outside request timing, retaining first requests
+and failed responses. Client TTFT includes HTTP transport and ends at the first
+nonempty streamed text; it is not isolated RDMA or DMA latency. Correlated
+repetitions are descriptive evidence, not a formal matched performance campaign.
+
+Test consumer Manager restart with the source still alive: observe the old member
+disappear, require an advanced epoch and new incarnation, reinstall complete
+inventory coverage and repeat remote recovery. Separately stop the source and
+restart it without surviving payload. After removing consumer HBM/DRAM copies,
+require zero source inventory, zero remote/H2D byte deltas and matching output
+from recomputation. This controlled empty-source restart is distinct from crash
+reclamation, host failure or etcd HA.
+
+Persist literal service-stop results before validating them. Require a running
+engine before requested idle SIGTERM, leader exit zero, complete reap, empty
+owned process groups and no harness forced cleanup. SGLang's released normal
+path also records SIGTERM, zero remaining requests and child-only native process
+termination; retain child exit statuses separately. A native leader exit -9 is
+not evidence of healthy shutdown. Manager exit zero, source/receiver drain and
+final ports, sockets, GPU memory and installed-file verification remain separate
+checks. A PyTorch CUDA IPC producer warning must stay in the handoff; final GPU
+zero and successful outputs do not prove the producer/importer lifetime contract.
+
+The separately frozen 2026-10-10 remediation cohort has scoped independent
+acceptance for both official releases on two physical H20 hosts: dense Qwen3-8B,
+BF16, TP=1/PP=1 eager, serial 513/1,025-token prompts and eight output tokens.
+Each of the four engine/medium cells passes 20 profile restores, a consumer
+restart restore and an empty-source recomputation. Remote/H2D bytes agree, SSD
+read bytes are exact, selected physical NIC counters advance and the exported
+ownership gauges drain. Inputs are unchanged and final services, GPU memory,
+ports and sockets are clean without harness forced cleanup. The original
+controller's SGLang stop-assertion failure remains an immutable invalid cohort.
+
+The accepted payload path is source DRAM, or source SSD through bounded
+O_DIRECT/io_uring staging, then TENT RDMA to consumer DRAM and a local GPU copy.
+The source SSD filesystem is ext4 on an exposed NVMe partition; native GDS is not
+used. A single-member etcd fixture supplies membership, so this is not etcd HA.
+Eight SGLang CUDA IPC producer warnings remain recorded. Output and native token
+count equality do not establish raw GPU page-value equality, GPU-buffer network
+RDMA, crash reclamation or stable tail performance. The independently reviewed
+inputs, original invalid run, fresh cohort and full storage archives are at
+`/root/orbitkv-artifacts/s5-rdma-serving-20261010/`; full S2/S5 remain Partial.

@@ -29,6 +29,13 @@ restarts in DRAM/io_uring SSD. The final wheel also passes H20 direct/kernel
 900-second shared-Manager io_uring gates with exact native controls and bounded
 resource drain; S5.5 records its scoped independent acceptance and broader limits.
 
+Both selected official releases also pass the
+[physical two-H20 ordinary-cache gate](shared-cache-qualification.md#official-engine-cross-host-serving-restores):
+dense Qwen3-8B TP=1/PP=1 eager source DRAM/io_uring SSD recovery over TENT RDMA,
+consumer restart and controlled empty-source restart. The consumer receives peer
+bytes in DRAM before its local GPU copy. This does not qualify native P/D faults,
+cross-host rank coordination, HA or the remaining CUDA IPC lifetime contracts.
+
 ## Ownership contract
 
 | Responsibility | Owner |

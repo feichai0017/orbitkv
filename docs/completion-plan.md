@@ -36,10 +36,10 @@ record submitted, merged and released as different states.
 | --- | --- |
 | S0 | Agent handoff and Codex skill migration merged in PR #190. |
 | S1 | Evidence separation independently verified at `ec3add9b`; this delivery consolidates plans and release-based integration guidance. Acceptance covers S1 only; native CUDA qualification remains blocked on this host. |
-| S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. Independent final review accepts the second frozen S2.10 same-host formal handoff: all 25 cells are valid and five 16-owner ordinary visibility runs pass 50 ms, while both DRAM and SSD isolation fail the frozen per-pair/CI contract. S2.10b lifecycle, low-overhead observation and 14-cell diagnosis are complete. Independent review accepts the diagnostic archive but blocks a production repair: the dominant measured tail is after native return at the Python observer boundary, while no repeatable Manager, metadata-lock, completion-notification or SSD-owner shift is established. The supported envelope stays four owners and all prior formal campaigns remain immutable. Physical cross-host cache/HA, independent etcd failure domains and native GDS are qualification blocked on missing hardware; final serving, RDMA and S3-dependent cells remain open. |
+| S2 | Partial: S2.1–S2.9 and S2.10 same-host correctness are independently accepted, the latter at `65c51aaa`. Independent final review accepts the second frozen S2.10 same-host formal handoff: all 25 cells are valid and five 16-owner ordinary visibility runs pass 50 ms, while both DRAM and SSD isolation fail the frozen per-pair/CI contract. S2.10b lifecycle, low-overhead observation and 14-cell diagnosis are complete. Independent review accepts the diagnostic archive but blocks a production repair: the dominant measured tail is after native return at the Python observer boundary, while no repeatable Manager, metadata-lock, completion-notification or SSD-owner shift is established. The supported envelope stays four owners and all prior formal campaigns remain immutable. Physical two-H20 ordinary-cache RDMA serving has separate scoped S5.5 acceptance below; HA, independent etcd failure domains, native GDS and S3-dependent cells remain unqualified. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
-| S5 | Partial: the S5.1 release/interface audit is independently accepted at `38f8dbb2`. Official 0.31.0/0.5.21 installed ordinary-cache/restart and bounded native P/D model gates pass locally. The final wheel and intact H20 cohort are independently accepted for ordinary-cache GPU recovery and 900-second direct/kernel two-engine shared-Manager io_uring pressure gates with exact native outputs, bounded reservations and normal drain. Recovered original review records and missing reviewer raw files are explicitly documented below. Idle process-scoped vLLM external reset is independently accepted at `6d874384`. Immutable local PEFT adapter identity is independently accepted at `47fea821` for dense TP=1/PP=1 eager official-engine reuse. Explicit serial batch-1 FULL decode Graph cache recovery is independently accepted at `c3f55060` for both official engines on H20 with direct/kernel io_uring SSD. Registered loopback query-control authority and lease ownership are independently accepted at `b1ea00a7`; native common-prefix coordination and the consumed official worker handshake are independently accepted at `1ab67a58` for trusted-loopback two-Manager byte gates and TP=1 eager model recovery. Public lifecycle migration, dynamic adapter/live-weight identity, cross-host TP and broader lifetime/deployment qualification remain open. |
+| S5 | Partial: the S5.1 release/interface audit is independently accepted at `38f8dbb2`. Official 0.31.0/0.5.21 installed ordinary-cache/restart and bounded native P/D model gates pass locally. The final wheel and intact H20 cohort are independently accepted for ordinary-cache GPU recovery and 900-second direct/kernel two-engine shared-Manager io_uring pressure gates with exact native outputs, bounded reservations and normal drain. Recovered original review records and missing reviewer raw files are explicitly documented below. Idle process-scoped vLLM external reset is independently accepted at `6d874384`. Immutable local PEFT adapter identity is independently accepted at `47fea821` for dense TP=1/PP=1 eager official-engine reuse. Explicit serial batch-1 FULL decode Graph cache recovery is independently accepted at `c3f55060` for both official engines on H20 with direct/kernel io_uring SSD. Registered loopback query-control authority and lease ownership are independently accepted at `b1ea00a7`; native common-prefix coordination and the consumed official worker handshake are independently accepted at `1ab67a58` for trusted-loopback two-Manager byte gates and TP=1 eager model recovery. Physical two-H20 RDMA serving from DRAM/io_uring SSD, consumer restart and controlled empty-source restart now have scoped independent acceptance on both official engines, consuming unchanged production `1ab67a58`. Public lifecycle migration, dynamic adapter/live-weight identity, cross-host TP and broader lifetime/deployment qualification remain open. |
 | S6 | Partial: observations/limited choices exist; unified executed decisions remain open. |
 | S7 | Open: consumed retention/checkpoint compiler beyond recovery validation. |
 | S8 | Partial: existing wheel workflow; final images, artifact gates and publication remain open. |
@@ -60,7 +60,8 @@ authorizes a repair; the next discriminating harness experiment requires a new
 reviewed freeze. Keep any replacement formal qualification as a separately
 reviewed future cohort. Do not enter S3, S6 or S7 from this delivery. Existing S3
 lifetime gates still control any new payload concurrency, reuse or reclamation.
-Cross-host qualification remains open until actual failure-domain evidence exists.
+Cross-host HA qualification remains open until actual failure-domain evidence exists.
+The separate S5.5 ordinary-cache RDMA serving gate does not close those fault cells.
 
 ## Baseline: preserve these implementations
 
@@ -1187,7 +1188,7 @@ or broader profile.
 | S5.2 | Scoped ordinary dense cache/restart, shared-Manager pressure and serial batch-1 FULL decode SSD recovery accepted; see S5.5 evidence | Broader model/topology and lifetime profiles remain unqualified |
 | S5.3 | Idle vLLM external reset accepted at `6d874384`; immutable local PEFT adapter identity accepted at `47fea821`; official dense query handshake consumption accepted at `1ab67a58` within the scope below | Public SGLang lifecycle, dynamic adapter/live-weight identity and native hybrid-state contracts remain open |
 | S5.4 | Official native P/D cutover implemented with bounded model checks | Independent native fault, transfer cancellation, delayed-ACK and page-reuse qualification depend on S3 |
-| S5.5 | Same-host dense TP=1/PP=1 eager DRAM/io_uring deployment, direct/kernel pressure and bounded native common-prefix coordination scoped acceptance | Protected cross-host activation is missing; physical TP/rank/container, isolation and broader deployment gates remain open |
+| S5.5 | Same-host deployment/pressure/common-prefix coordination and physical two-H20 ordinary dense TP=1/PP=1 eager DRAM/io_uring RDMA serving with controlled restarts have scoped acceptance | Protected cross-host query-control activation is missing; physical TP/rank/container, isolation, HA and broader lifetime/deployment gates remain open |
 
 ### S5.1 — Release and interface audit
 
@@ -1674,6 +1675,40 @@ fork-only factory, callback, default configuration or CI dependency may remain.
 
 ### S5.5 — Deployment matrix and upstream maintenance
 
+
+**Physical two-H20 ordinary serving independently accepted (2026-10-10):**
+benchmark `efbe8323` consumes unchanged production `1ab67a58`, its frozen wheel,
+official vLLM 0.31.0 and SGLang 0.5.21. All four dense Qwen3-8B TP=1/PP=1 eager
+DRAM/io_uring SSD cells pass: 80 profile restores, four consumer-restart restores
+and four controlled empty-source recomputations. Complete generated text and
+native token counts match fresh source controls; remote and H2D byte totals agree,
+source SSD reads are exact, physical NIC counters advance in the required
+direction and exported ownership gauges drain. Required service leaders exit
+zero with complete reap and no harness forced cleanup; etcd's literal SIGTERM
+exit is retained separately. Installed inputs and final GPU/ports/sockets are
+independently verified. The network destination is consumer DRAM, followed by a
+local GPU copy; this gate does not measure remote GPU-buffer RDMA.
+
+The original cohort remains `INVALID_FAIL_STOP`: its SGLang profile passed, but
+an external controller incorrectly required a leader exit of -9. A separately
+frozen controller remediation requires leader zero and records native child
+termination separately. It changes no engine, adapter, wheel or Manager bytes.
+The new four-cell cohort is independent evidence, not a replacement or relabeling
+of the original. Eight SGLang CUDA IPC producer warnings remain in the accepted
+handoff; normal drain and final GPU zero do not close S3 lifetime proof. No HA,
+native GDS, cross-host TP, stable p99 or matched performance advantage is claimed.
+Full S2/S5 remain Partial. Inputs, both cohorts, raw evidence and reviews are at
+`/root/orbitkv-artifacts/s5-rdma-serving-20261010/`.
+See [the serving methodology](shared-cache-qualification.md#official-engine-cross-host-serving-restores)
+and [the reproduction driver](../benches/README.md#first-and-repeated-cross-host-serving-restores).
+
+The next S5.5 performance substage is a separately frozen, order-alternated
+source-SSD materialization/read-batch comparison with equal byte budgets and
+correctness, pressure and cancellation controls, followed by matched official
+engine/backend comparisons. Existing peer lookahead remains the baseline;
+authorization/materialization observations alone do not justify a CUDA kernel
+change. Require device-event DMA/kernel evidence before a KDA candidate.
+
 **Matched eager controls and service-exit evidence implemented (2026-10-10);
 model comparison qualification open:** the installed benchmark now consumes
 the official eager configuration of both selected releases and records the
@@ -1685,8 +1720,10 @@ request outputs match the cold references and matched backends; post-run install
 file hashes remain unchanged. SGLang LMCache startup is blocked by its missing
 released `lmcache_mp_metadata` module; the existing upstream MP fix is not in
 0.5.5. Each cell's cleanup retains literal service exit codes and reaped workers:
-SGLang's own shutdown kills its engine process tree, so its leader exit is -9,
-not zero, without a harness SIGKILL. These are readiness controls with one sample
+That earlier SGLang readiness cohort records leader exit -9 and native process
+tree termination without a harness SIGKILL; it does not establish healthy
+shutdown. The later cross-host gate above requires leader zero. These are
+readiness controls with one sample
 per phase, unqualified sampler overhead and possible shape/JIT warmup; formal
 order-alternated serving comparisons remain open. Inputs, failures, raw cells
 and postflight evidence are at
