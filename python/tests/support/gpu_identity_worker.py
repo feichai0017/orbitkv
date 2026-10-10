@@ -6,6 +6,7 @@ import json
 import os
 import time
 from pathlib import Path
+from uuid import UUID
 
 
 def main():
@@ -27,7 +28,10 @@ def main():
     args = parser.parse_args()
     torch.cuda.set_device(args.device)
     actual_uuid = str(torch.cuda.get_device_properties(args.device).uuid)
-    assert actual_uuid == args.uuid, (actual_uuid, args.uuid)
+    assert UUID(actual_uuid.removeprefix("GPU-")) == UUID(args.uuid.removeprefix("GPU-")), (
+        actual_uuid,
+        args.uuid,
+    )
     expected = (
         torch.arange(8 * 4096, dtype=torch.int64).remainder(251).to(torch.uint8).view(8, 4096)
     )

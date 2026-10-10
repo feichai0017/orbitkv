@@ -67,3 +67,25 @@ def test_registration_device_is_the_client_local_ordinal(monkeypatch, visible):
         gpu, "torch", SimpleNamespace(cuda=SimpleNamespace(current_device=lambda: 0))
     )
     assert gpu.resolve_device_id() == 0
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "c4930667-4d65-aae5-8205-fe785c3654be",
+        "GPU-c4930667-4d65-aae5-8205-fe785c3654be",
+        "C4930667-4D65-AAE5-8205-FE785C3654BE",
+    ],
+)
+def test_registration_and_ipc_share_canonical_gpu_uuid(monkeypatch, value):
+    seen = []
+
+    def properties(device):
+        seen.append(device)
+        return SimpleNamespace(uuid=value)
+
+    monkeypatch.setattr(
+        gpu, "torch", SimpleNamespace(cuda=SimpleNamespace(get_device_properties=properties))
+    )
+    assert CudaIPCWrapper._get_device_uuid(1) == "GPU-c4930667-4d65-aae5-8205-fe785c3654be"
+    assert seen == [1]

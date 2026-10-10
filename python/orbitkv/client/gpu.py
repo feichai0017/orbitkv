@@ -2,6 +2,7 @@
 
 import pickle
 import threading
+from uuid import UUID
 
 import torch
 
@@ -47,7 +48,8 @@ class CudaIPCWrapper:
         Returns:
             UUID string of the GPU device
         """
-        return str(torch.cuda.get_device_properties(device_index).uuid)
+        value = str(torch.cuda.get_device_properties(device_index).uuid)
+        return f"GPU-{UUID(value.removeprefix('GPU-'))}"
 
     @staticmethod
     def _discover_gpu_devices():

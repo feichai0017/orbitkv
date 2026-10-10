@@ -390,12 +390,10 @@ impl PyCacheManagerClient {
             ));
         }
         let device_uuid = py
-            .import("torch")?
-            .getattr("cuda")?
-            .call_method1("get_device_properties", (device,))?
-            .getattr("uuid")?
-            .str()?
-            .to_string();
+            .import("orbitkv.client.gpu")?
+            .getattr("CudaIPCWrapper")?
+            .call_method1("_get_device_uuid", (device,))?
+            .extract::<String>()?;
         let request = RegisterContextRequest {
             instance_id,
             namespace,
