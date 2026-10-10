@@ -83,6 +83,8 @@ def drain_identity_processes(client, server, release: Path, timeout: float = 60)
                 errors.append(f"Client normal exit code {code}")
         except subprocess.TimeoutExpired:
             errors.append("Client normal unregister/exit timed out")
+        except OSError as error:
+            errors.append(f"Client wait failed: {error}")
     client_members, inspection_errors = (
         identity_group_members(client.pid) if client is not None else ([], [])
     )
@@ -100,6 +102,8 @@ def drain_identity_processes(client, server, release: Path, timeout: float = 60)
                 errors.append(f"Manager normal exit code {code}")
         except subprocess.TimeoutExpired:
             errors.append("Manager normal drain timed out")
+        except OSError as error:
+            errors.append(f"Manager normal drain failed: {error}")
     processes = [owned_process(process) for process in (client, manager)]
     remaining = [process for process in processes if process and process["exit_code"] is None]
     for process in (client, manager):

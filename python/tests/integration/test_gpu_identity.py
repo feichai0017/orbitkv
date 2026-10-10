@@ -256,10 +256,15 @@ def test_gpu_identity_restore_and_numa(identity_devices, monkeypatch, case):
     finally:
         cleanup = drain_identity_processes(client, server, worker_output.with_suffix(".release"))
         result["cleanup"] = cleanup
-        quarantine_identity_gpus(values["lock_root"], values["devices"], directory, cleanup)
         values["failed"] |= not completed or bool(cleanup["errors"])
+        try:
+            quarantine_identity_gpus(values["lock_root"], values["devices"], directory, cleanup)
+        except OSError as error:
+            values["failed"] = True
+            cleanup["errors"].append(f"Quarantine write failed: {error}")
         result.update(
-            completed=completed, client_exit=None if client is None else client.returncode
+            completed=completed and not cleanup["errors"],
+            client_exit=None if client is None else client.returncode,
         )
         (directory / "result.json").write_text(json.dumps(result, indent=2) + "\n")
         if cleanup["errors"]:
