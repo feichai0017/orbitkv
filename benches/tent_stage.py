@@ -42,6 +42,14 @@ class Status(c.Structure):
     _fields_ = [("status", c.c_int), ("transferred_bytes", c.c_uint64)]
 
 
+class Notification(c.Structure):
+    _fields_ = [("handle", c.c_uint64), ("name", c.c_char * 256), ("msg", c.c_char * 4096)]
+
+
+class Notifications(c.Structure):
+    _fields_ = [("num_records", c.c_int), ("records", c.POINTER(Notification))]
+
+
 def emit(value: dict) -> None:
     print(json.dumps({"tent_stage_probe": True, **value}), flush=True)
 
@@ -123,12 +131,56 @@ def load_api(directory: Path):
         "tent_task_status": ([c.c_void_p, c.c_uint64, c.c_size_t, c.POINTER(Status)], c.c_int),
         "tent_cancel_task": ([c.c_void_p, c.c_uint64, c.c_size_t], c.c_int),
         "tent_free_batch": ([c.c_void_p, c.c_uint64], c.c_int),
+        "tent_send_notifs": ([c.c_void_p, c.c_uint64, c.c_char_p, c.c_char_p], c.c_int),
+        "tent_recv_notifs": ([c.c_void_p, c.POINTER(Notifications)], c.c_int),
+        "tent_free_notifs": ([c.POINTER(Notifications)], None),
     }
     for name, (arguments, result) in signatures.items():
         function = getattr(api, name)
         function.argtypes = arguments
         function.restype = result
     return libraries, api
+
+
+def notification_messages(run_id: str, count: int) -> dict[bytes, bytes]:
+    if not run_id.isascii() or not 1 <= len(run_id) <= 64 or not 1 <= count <= 1024:
+        raise ValueError("Notifications require an ASCII run id and 1..1024 messages")
+    return {
+        f"{run_id}/{index:04d}".encode(): hashlib.shake_256(f"{run_id}:{index}".encode())
+        .hexdigest(1024)
+        .encode()
+        for index in range(count)
+    }
+
+
+def receive_notifications(api, engine, expected: dict[bytes, bytes], timeout: float) -> dict:
+    remaining = dict(expected)
+    deadline = time.monotonic() + timeout
+    quiet_until = None
+    polls = 0
+    while True:
+        info = Notifications()
+        try:
+            checked(api.tent_recv_notifs(engine, c.byref(info)), "receive notifications")
+            polls += 1
+            if not 0 <= info.num_records <= len(expected) or (
+                info.num_records and not info.records
+            ):
+                raise RuntimeError("Invalid native notification records")
+            for index in range(info.num_records):
+                record = info.records[index]
+                if remaining.pop(record.name, None) != record.msg:
+                    raise RuntimeError("Unexpected, duplicate or corrupt notification")
+        finally:
+            api.tent_free_notifs(c.byref(info))
+        now = time.monotonic()
+        if not remaining:
+            quiet_until = quiet_until or now + 0.025
+            if now >= quiet_until:
+                return {"received": len(expected), "polls": polls, "quiet_ms": 25}
+        if now >= deadline:
+            raise RuntimeError(f"Notification deadline: {len(remaining)} missing")
+        time.sleep(0.001)
 
 
 def wait_source_stop() -> None:
@@ -221,6 +273,34 @@ def main() -> None:
             if message["operation"] == "stop":
                 source_revoked = True
                 break
+            if message["operation"] in ("send_notifications", "receive_notifications"):
+                notifications = notification_messages(message["id"], message["count"])
+                if message["operation"] == "receive_notifications":
+                    emit({"event": "receiving_notifications", "id": message["id"]})
+                    received = receive_notifications(api, engine, notifications, timeout=30)
+                    emit({"event": "notifications_received", "id": message["id"], **received})
+                else:
+                    segment = c.c_uint64()
+                    checked(
+                        api.tent_open_segment(
+                            engine, c.byref(segment), message["endpoint"].encode()
+                        ),
+                        "open notification segment",
+                    )
+                    segment_ids.add(segment.value)
+                    for name, payload in notifications.items():
+                        checked(
+                            api.tent_send_notifs(engine, segment.value, name, payload),
+                            "send notification",
+                        )
+                    emit(
+                        {
+                            "event": "notifications_sent",
+                            "id": message["id"],
+                            "sent": len(notifications),
+                        }
+                    )
+                continue
             if args.role != "consumer":
                 raise ValueError("Source accepts only stop after every reader has drained")
             if message["operation"] != "read" or not 1 <= message["iterations"] <= 1000:

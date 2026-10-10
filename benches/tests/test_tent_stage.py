@@ -75,6 +75,36 @@ def test_pinned_tent_c_abi_layout_on_64_bit_hosts():
     assert tent_stage.MemoryOptions.internal.offset == 336
     assert c.sizeof(tent_stage.Status) == 16
     assert tent_stage.Status.transferred_bytes.offset == 8
+    assert c.sizeof(tent_stage.Notification) == 4360
+    assert tent_stage.Notification.msg.offset == 264
+    assert c.sizeof(tent_stage.Notifications) == 16
+    assert tent_stage.Notifications.records.offset == 8
+
+
+@pytest.mark.parametrize("fault", ["corrupt", "duplicate", "native_error", "missing"])
+def test_notification_validation_releases_every_native_record_allocation(monkeypatch, fault):
+    record = (tent_stage.Notification * 1)(tent_stage.Notification(0, b"name", b"payload"))
+    state = {"calls": 0, "frees": 0}
+
+    def receive(engine, pointer):
+        assert engine == 1
+        info = c.cast(pointer, c.POINTER(tent_stage.Notifications)).contents
+        assert info.num_records == 0 and not info.records
+        state["calls"] += 1
+        info.num_records = int(fault != "missing")
+        info.records = record if info.num_records else None
+        if fault == "corrupt":
+            record[0].msg = b"wrong"
+        return -1 if fault == "native_error" else 0
+
+    def free(pointer):
+        state["frees"] += 1
+
+    monkeypatch.setattr(tent_stage.time, "sleep", lambda _: None)
+    api = SimpleNamespace(tent_recv_notifs=receive, tent_free_notifs=free)
+    with pytest.raises(RuntimeError):
+        tent_stage.receive_notifications(api, 1, {b"name": b"payload"}, timeout=0.01)
+    assert state["calls"] == state["frees"]
 
 
 def test_exporter_control_errors_wait_for_explicit_source_stop(monkeypatch):

@@ -165,6 +165,18 @@ Upstream already has an open [segment warmup proposal](https://github.com/kvcach
 and a merged [duplicate-bootstrap correctness fix](https://github.com/kvcache-ai/Mooncake/pull/1705).
 These are reference material, not newly qualified OrbitKV capabilities.
 
+The selected `v0.3.13.post1` source still has 256 notification receive MRs per
+RDMA endpoint. Upstream merged [PR #3820](https://github.com/kvcache-ai/Mooncake/pull/3820)
+after that release to use one receive MR covering the same 256 slots. An
+isolated comparison should rebuild both the release baseline and only that
+three-file repair with identical compiler/configuration/dependencies. Verify
+all other shared libraries are identical, test slot adjacency and wraparound,
+and retain release cleanup ownership when adapting source context. Use
+[`benches.tent_compare`](../benches/README.md#native-tent-library-comparison)
+without tracing; source deltas, hashes, input readiness failures, valid smoke
+and formal results belong outside the checkout. Neither upstream's own
+measurements nor a private-buffer result qualifies OrbitKV's consumed path.
+
 NVLink is a same-host GPU fabric. Hardware link status is readiness evidence,
 not measured payload bandwidth or proof that TENT selects a local path. Verify
 the available pinned TENT transport first, then record the actual route and

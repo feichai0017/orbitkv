@@ -11,6 +11,7 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | `client.py` | Admitted-query polling overhead with a held byte budget; no storage or model compute in the timed loop |
 | `communication.py` | Real Query miss/hit, Publish D2H, Restore submit-to-ready and empty-restore controls using matching external artifacts |
 | `tent_stage.py` | Frozen native C ABI CPU-buffer READ stages; explicit source/consumer control and terminal batch drain |
+| `tent_compare.py` | Two-host frozen-library A/B READ comparison with independent pairs, notification-slot reuse and physical RDMA counters |
 | `tent_native_trace.cpp` / `tent_trace.py` | Bounded pinned-native metadata/QP/bootstrap interposition and offline per-host trace validation |
 | `cpu_codec.rs` | Production scalar/AVX2/AVX-512/auto CPU FP8 conversion with an independent oracle before timing |
 | `cost_observations.py` | Same-binary off/on observation overhead, three reversed-order pairs on both engines |
@@ -131,6 +132,52 @@ Run modes `complete`, `active` and `unpublished` with separate
 `TENT_NATIVE_TRACE_PATH` files. `complete` must exit zero with 1,024 fully published
 events; `active` and `unpublished` must exit 2 and cannot produce acceptable
 evidence. These synthetic writer controls do not measure transport performance.
+
+### Native TENT library comparison
+
+`benches.tent_compare` consumes an external frozen JSON contract. It records two
+hosts and their addresses, an SSH config path, RDMA NICs/GID, remote probe/config
+paths, the baseline/candidate/original library directories and SHA256 sets,
+controller/probe/config hashes, payload and sample counts, pair ordering,
+bootstrap seed/draw count and explicit performance guards. Copy the probe and
+configuration to **both** hosts, verify their hashes and ELF dependencies, then
+freeze the contract before launching endpoints. Keep libraries in separate
+directories; never rebuild or replace a mapped runtime.
+
+```bash
+python -m benches.tent_compare \
+  --contract /external/native-comparison/FORMAL-CONTRACT.json \
+  --output /external/native-comparison/formal
+```
+
+Each cell creates a fresh source and consumer, performs one first READ, separate
+warmups and measured READs, and clears/checks the entire destination each time.
+Timing covers open, allocation, submit, terminal observation and accepted batch
+free; clearing and SHA256 are outside that timer. Notifications run **after**
+the READ samples. Send 512 unique names and deterministic 2,048-byte payloads to
+wrap the pinned 256-slot ring; receive the complete exact set, reject duplicates
+or corrupt messages, free every native result allocation, and poll for 25 ms
+after the set is complete. This bounded quiet window is a diagnostic check, not
+a proof against arbitrarily delayed duplicates.
+
+The consumer must normally drain and exit zero before source stop. Record actual
+native mappings, CPU ticks, physical port data/packet counters (data counters
+use four-byte units), zero exits and absent PIDs. Bootstrap matched independent
+endpoint pairs, never individual requests within a process. Report first READ,
+warm median and descriptive p99 separately, including absolute times and
+uncertainty. A readiness smoke is not performance qualification. An invalid
+prelaunch input starts no endpoint; preserve its evidence and repair/verify
+inputs before a separately frozen launch. The first invalid native cell stops
+the cohort without retry or replacement. A completed cohort that misses any
+frozen performance guard stays failed.
+
+The probe deliberately holds an exported source on control loss or uncertain
+native drain, has no reconnect channel, and ignores SIGTERM/SIGINT. A controller
+timeout is not normal cleanup or an authorization to reuse its memory. Private
+CPU-buffer results do not qualify Manager grants, registered engine pages,
+GPUDirect RDMA, serving latency or requester-crash reclamation. Applying an
+already merged upstream repair in this isolated comparison does not change the
+production dependency pin or create a supported patched runtime.
 
 ### S2.10 metadata performance qualification
 

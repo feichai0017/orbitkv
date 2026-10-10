@@ -1129,6 +1129,31 @@ layer hooks. The current contracts live in [transport](transport.md) and
   its overhead result does not qualify the revised recorder. Source, failed
   final pilot and controls are separate at
   `/root/orbitkv-artifacts/s4-tent-native-trace-remediation-20261010/`.
+- **Upstream notification-MR repair measured (2026-10-10), component target
+  failed; independent review open:** the selected `v0.3.13.post1` has 256 receive
+  MRs per RDMA endpoint. The already merged upstream
+  [PR #3820](https://github.com/kvcache-ai/Mooncake/pull/3820) uses one MR covering
+  those same slots. An isolated release-source baseline and three-file repair
+  build differ only in `libtent_shared.so`; seven other shared libraries are
+  identical. No production pin, library, wheel or engine is changed, and no
+  duplicate upstream issue/PR is filed.
+  One untraced 20-cell, five-pair-per-direction formal cohort passes 10,120
+  complete 8 MiB READ and 10,240 unique notification oracles. Cold paired ratios
+  are 0.9025/0.8698, with 95% independent-pair intervals [0.8130, 0.9901] and
+  [0.8578, 0.8820]. Warm median and observed p99 regression guards pass, but
+  both directions miss the frozen cold ratio <=0.75 target. Keep
+  `VALID_COMPONENT_FAIL`; no replacement cohort or full-Manager promotion.
+  Separate readiness checks retain 64 READ and 2,048 notification oracles;
+  all 48 endpoint exits are zero and recorded PIDs/listeners disappear.
+  Both-host native units pass 130 cases without skips; 312 benchmark tests
+  pass. Missing unit GoogleTest libraries and a missing host-1 probe/config
+  preflight are preserved; the latter starts no endpoint or payload sample.
+  Corrected inputs are verified before a separately frozen smoke/formal launch.
+  Frozen builds, contracts, physical port counters, raw samples, failed
+  preparation and cleanup evidence are at
+  `/root/orbitkv-artifacts/s4-tent-notify-mr-20261010/`.
+  These are private CPU-buffer controls, not Manager grants, engine GPU pages,
+  serving latency or S3 controller-loss reclamation. S2/S4/S5 remain Partial.
 - **Implementation partial:** direct registered engine-page SSD I/O and multi-writer
   GPU assembly remain beyond the existing staged GPU path. Include registration,
   source-page hold time, fragmentation and extra HBM in their admission decision.
