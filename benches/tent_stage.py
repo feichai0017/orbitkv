@@ -82,6 +82,8 @@ def drain_batch(api, engine, batch: int, failure: str | None, timeout: float) ->
                     return {
                         "poll_to_terminal_ms": (terminal_ns - started) / 1e6,
                         "free_ms": (freed_ns - terminal_ns) / 1e6,
+                        "terminal_mono_ns": terminal_ns,
+                        "freed_mono_ns": freed_ns,
                         "poll_calls": polls,
                         "transferred_bytes": terminal.transferred_bytes,
                     }
@@ -255,6 +257,8 @@ def main() -> None:
                 samples.append(
                     {
                         "index": index,
+                        "begin_mono_ns": begin,
+                        "submit_return_mono_ns": submit_end,
                         "open_ms": (opened - begin) / 1e6,
                         "allocate_ms": (allocated - opened) / 1e6,
                         "submit_ms": (submit_end - allocated) / 1e6,

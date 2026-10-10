@@ -147,6 +147,24 @@ drain. See [the protocol](../benches/README.md#native-tent-first-read-diagnostic
 This cannot establish Manager or model latency, physical GPUDirect RDMA, or
 native requester-crash reclamation.
 
+For the pinned native build, the benchmark-only `tent_native_trace.cpp` records
+metadata RPC, endpoint construction, connect and bootstrap RPC without changing
+their arguments, results or transport policy. Its exact C++ ABI, bounded event
+array and trace-off/on overhead pilot are part of the frozen input contract.
+`benches.tent_trace` validates process identity, event completeness and consumer
+READ boundaries offline. Overlapping calls do not form an additive latency
+breakdown; compare timestamps only within one host. Missing events, failed output
+or failed native drain invalidate the diagnosis. See the build and protocol in
+[the benchmark guide](../benches/README.md#native-tent-first-read-diagnostic).
+
+Separate experiments with existing RPC-thread and RDMA-lane configuration need
+fresh endpoints, one changed knob, matched ordering, full bytes and explicit
+warm-read regression guards. Account connection warming as setup work and record
+when it is consumed; moving it before a timer does not prove an end-to-end gain.
+Upstream already has an open [segment warmup proposal](https://github.com/kvcache-ai/Mooncake/pull/3685)
+and a merged [duplicate-bootstrap correctness fix](https://github.com/kvcache-ai/Mooncake/pull/1705).
+These are reference material, not newly qualified OrbitKV capabilities.
+
 NVLink is a same-host GPU fabric. Hardware link status is readiness evidence,
 not measured payload bandwidth or proof that TENT selects a local path. Verify
 the available pinned TENT transport first, then record the actual route and

@@ -11,6 +11,7 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | `client.py` | Admitted-query polling overhead with a held byte budget; no storage or model compute in the timed loop |
 | `communication.py` | Real Query miss/hit, Publish D2H, Restore submit-to-ready and empty-restore controls using matching external artifacts |
 | `tent_stage.py` | Frozen native C ABI CPU-buffer READ stages; explicit source/consumer control and terminal batch drain |
+| `tent_native_trace.cpp` / `tent_trace.py` | Bounded pinned-native metadata/QP/bootstrap interposition and offline per-host trace validation |
 | `cpu_codec.rs` | Production scalar/AVX2/AVX-512/auto CPU FP8 conversion with an independent oracle before timing |
 | `cost_observations.py` | Same-binary off/on observation overhead, three reversed-order pairs on both engines |
 | `metadata.py` | Explicit full-Manager 0/2/5 ms metadata coalescing comparison using frozen binaries |
@@ -64,6 +65,53 @@ Do not force-kill an isolated owner and infer DMA completion from that signal.
 Check recorded PIDs, RPC listeners, NIC counters and native-library hashes before
 accepting cleanup. This benchmark excludes Manager grants/indexes, pinned pools,
 GPU destination writes, serving, GDS and S3 crash-reclamation qualification.
+
+For finer diagnosis, `tent_native_trace.cpp` interposes four exported C++ symbols
+from Mooncake `719735896c86b56fabec6cf3e825fb2ea640597a` on Linux x86-64 with
+libstdc++. Build against that revision's exact `tent/common/status.h`; its
+nontrivial `Status` return ABI and mangled symbols are not a public API:
+
+```bash
+g++ -std=c++20 -O2 -Wall -Wextra -Werror -shared -fPIC \
+  -I third-party/mooncake/mooncake-transfer-engine/tent/include \
+  benches/tent_native_trace.cpp -ldl -o /external/native-trace/libtent_native_trace.so
+```
+
+Verify all four interposed symbols exist in the frozen `libtent_shared.so` before
+launch. Set `LD_PRELOAD` to the diagnostic library and `TENT_NATIVE_TRACE_PATH` to
+a unique external JSON path on each endpoint. The fixed 4,096-event array records
+metadata RPC, endpoint construction, connect and bootstrap RPC; it writes only
+after normal process teardown. An absent symbol, output failure, nonzero exit,
+overflow, unsuccessful call or missing required stage invalidates the cell.
+Run matched trace-off/on warm-READ overhead controls before deeper diagnosis,
+with fresh endpoints and the same frozen payload, order, configuration and native
+libraries. Preserve failed controls; do not use instrumented timing as a new
+production performance qualification.
+
+After both endpoints have drained and exited zero, reconstruct one consumer:
+
+```bash
+python -m benches.tent_trace \
+  --trace /external/native-trace/consumer.trace.json \
+  --endpoint-stdout /external/native-trace/consumer.stdout --role consumer \
+  --output /external/native-trace/consumer-summary.json
+```
+
+Use `--role source` with the source's own files to summarize its construction
+calls. The analyzer checks the process identity, retained event count, statuses,
+clock boundaries and required stages. Its consumer window comes from that
+endpoint's first READ. Stage calls overlap: the analyzer reports their interval
+union rather than adding durations. Source and consumer monotonic epochs cannot
+be compared across hosts. The controller must separately prove reaped zero exits
+and absent PIDs; a parsed stop record alone cannot establish that cleanup.
+
+Existing `rpc_server_threads` and `transports.rdma.num_lanes` settings are
+experimental candidates, not OrbitKV defaults. Change one knob per frozen
+cohort, keep first-READ and warmed samples separate, alternate matched run order,
+and report independent-pair uncertainty and CPU/thread costs. Reducing lanes also
+reduces worker/QP/CQ parallelism, so it needs throughput and consumed Manager
+recovery controls. A private-buffer improvement alone cannot promote either
+configuration or establish model latency.
 
 ### S2.10 metadata performance qualification
 

@@ -1098,6 +1098,26 @@ layer hooks. The current contracts live in [transport](transport.md) and
   repair, isolate segment discovery, registration, QP/progress and wrapper
   completion, reproduce against the pinned upstream and retain fault/drain
   controls. Follow [the maintained method](benchmark-evidence.md#tent-and-fabric-diagnostics).
+- **First RDMA READ diagnosed (2026-10-10), independent review open; no production
+  candidate promoted:** bounded native interposition splits metadata RPC,
+  endpoint construction, connect and bootstrap on the frozen `71973589` TENT.
+  Eight trace-off/on cells pass the declared warm-observation overhead guards
+  and 448 exact 8 MiB byte oracles. Metadata calls are about 1 ms; endpoint
+  construction is about 23–33 ms, with overlapping bootstrap calls and source
+  RPC serialization. These per-host intervals cannot be added into an end-to-end
+  breakdown or identify a CUDA kernel bottleneck.
+  Two separate 20-cell, five-pair-per-direction configuration cohorts are valid
+  but rejected. RPC threads 1→4 lower paired cold READ ratios to 0.769/0.807,
+  above the frozen 0.75 target; one warmed p99 increase is 0.273 ms against a
+  0.25 ms guard. RDMA lanes 6→2 do not lower cold READ and regress paired warm
+  medians by about 9–10%. All 12,688 pilot/candidate payload oracles pass;
+  all 96 endpoints exit zero and recorded PIDs disappear. Native libraries and
+  production defaults remain unchanged. No full-Manager candidate promotion or
+  replacement run follows these failures. Keep the upstream segment-warmup
+  proposal distinct from a released consumed interface; evaluate setup cost,
+  first recovery, contention and source/drain ownership before activation.
+  Frozen contracts, raw samples, traces and rejected configurations are at
+  `/root/orbitkv-artifacts/s4-tent-native-diagnosis-20261010/`.
 - **Implementation partial:** direct registered engine-page SSD I/O and multi-writer
   GPU assembly remain beyond the existing staged GPU path. Include registration,
   source-page hold time, fragmentation and extra HBM in their admission decision.
@@ -1908,10 +1928,13 @@ passes a six-READ byte/drain smoke; all native libraries remain unchanged.
 Raw cohorts and prior preparation failures are at
 `/root/orbitkv-artifacts/s4-serving-cold-read-20261010/`.
 
-The next measured execution gap is TENT's first post-submit completion path;
-separate lazy metadata/QP/bootstrap and worker scheduling before a production
-candidate. Keep buffer registration and source authorization outside speculative
-warmup, and require matched first-recovery controls for any promoted change.
+The bounded native decomposition and rejected RPC-thread/lane controls are
+recorded in S4 above. The next first-recovery candidate needs a consumed explicit
+connection-warming interface, accounting for its setup cost and fabric resources;
+the upstream proposal is still open. Source authorization, buffer registration
+and physical drain remain with the existing owners. Require matched first-recovery
+and contention controls before promotion; do not use a dummy payload READ to
+unowned addresses or omit warming cost from an end-to-end claim.
 CUDA optimization requires separate device-event DMA/kernel measurements and a matched KDA
 comparison; client restore timing alone does not establish a kernel bottleneck.
 See [the maintained methodology](shared-cache-qualification.md#full-manager-remote-dram-path-timing).
