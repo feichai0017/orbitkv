@@ -400,6 +400,7 @@ class CacheManagerProcess:
         log_path: Path | None = None,
         extra_args: tuple[str, ...] = (),
         runtime_python_paths: tuple[str, ...] | None = None,
+        inherited_fds: tuple[int, ...] = (),
     ):
         self.port = port
         self.pool_size = pool_size
@@ -417,6 +418,7 @@ class CacheManagerProcess:
         self._configured_log_path = log_path
         self.extra_args = extra_args
         self.runtime_python_paths = runtime_python_paths
+        self.inherited_fds = inherited_fds
         self.pythonpath: tuple[str, ...] | None = None
         self.process: subprocess.Popen | None = None
         self.command: tuple[str, ...] | None = None
@@ -519,6 +521,7 @@ class CacheManagerProcess:
                 stderr=subprocess.STDOUT,
                 cwd="/tmp",
                 preexec_fn=os.setsid,
+                pass_fds=self.inherited_fds,
             )
         except (FileNotFoundError, PermissionError):
             self._close_log()

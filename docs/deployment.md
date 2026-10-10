@@ -207,8 +207,11 @@ The current runtime requires:
 - A shared bootstrap socket directory, iceoryx2 discovery files and shared-memory
   resources. Sharing only the socket file is insufficient.
 - Shared IPC resources for PyTorch CUDA registration and access to the same
-  physical GPUs. Keep Manager device ordinals consistent with the IDs sent by
-  engines; arbitrary container GPU remapping is not qualified.
+  physical GPUs. Registration joins stable tensor UUIDs to Manager-local CUDA
+  ordinals; native client owners retain that route for Publish/Restore. NUMA
+  lookup uses the Manager's CUDA-visible UUIDs. The identity repair requires
+  matching lifecycle-version-7 client and Manager artifacts; broader container
+  remapping and physical TP deployment qualification remain open.
 - Peer-process visibility and permission to open the Manager's pidfd. Publish
   uses this to distinguish process exit from a stalled transfer. Separate PID
   namespaces are not qualified; shared PID visibility is required in addition

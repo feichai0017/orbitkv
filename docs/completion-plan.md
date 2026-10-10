@@ -1675,6 +1675,25 @@ fork-only factory, callback, default configuration or CI dependency may remain.
 
 ### S5.5 — Deployment matrix and upstream maintenance
 
+**Next scoped delivery — CUDA device identity and NUMA (2026-10-10):**
+resolve registration through the tensor's stable GPU UUID, independently of the
+client and Manager CUDA ordinals. Retain the resolved Manager ordinal in the
+existing native registration owner for Publish/Restore; do not infer physical
+identity from `CUDA_VISIBLE_DEVICES` strings. Build NUMA affinity from only
+CUDA-visible devices joined to physical UUIDs. Validate numeric, UUID, reordered
+and partial visibility, unseen/mixed-device rejection, exact GPU restore bytes,
+worker affinity, pinned allocation placement and normal ownership drain with a
+fresh installed artifact. CPU implementation and hardware qualification are
+separate; this does not qualify physical TP, S3, isolation or performance.
+
+The requested `Qwen/Qwen3.8-27B` and `deepseek-ai/DeepSeek-V4.1-Flash` belong to
+subsequent model/state qualification: inspect immutable configurations and
+released-engine support before any weights/download or serving launch. Qwen3.8
+includes recurrent DeltaNet state; neither weight fit nor native inference
+establishes OrbitKV recovery support. Larger dense models, longer prefixes and
+concurrency can provide pressure within the accepted state contract, while
+physical TP and hybrid-state delivery keep their existing gates.
+
 
 **Physical two-H20 ordinary serving independently accepted (2026-10-10):**
 benchmark `efbe8323` consumes unchanged production `1ab67a58`, its frozen wheel,
