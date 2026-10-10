@@ -101,9 +101,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--trace", type=Path, required=True)
     parser.add_argument("--endpoint-stdout", type=Path, required=True)
+    parser.add_argument("--endpoint-exit-code", type=int, required=True)
     parser.add_argument("--role", choices=("source", "consumer"), required=True)
     parser.add_argument("--output", type=external_path, required=True)
     args = parser.parse_args()
+    if args.endpoint_exit_code != 0:
+        raise ValueError("Endpoint process must exit zero")
     records = []
     for line in args.endpoint_stdout.read_text().splitlines():
         try:

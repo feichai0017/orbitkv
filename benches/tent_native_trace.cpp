@@ -36,6 +36,9 @@ struct Event {
 };
 Event events[kLimit];
 std::atomic<size_t> count{0};
+std::atomic<bool> published[kLimit]{};
+constexpr uint64_t kSealed = uint64_t{1} << 63;
+std::atomic<uint64_t> active_spans{0};
 
 uint64_t now() {
     timespec value{};
@@ -55,11 +58,17 @@ Function original(const char* symbol) {
 
 class Span {
    public:
-    explicit Span(const char* stage) : stage_(stage), begin_(now()), tid_(syscall(SYS_gettid)) {}
+    explicit Span(const char* stage) : stage_(stage), begin_(now()), tid_(syscall(SYS_gettid)) {
+        if (active_spans.fetch_add(1, std::memory_order_acq_rel) & kSealed) _exit(2);
+    }
     ~Span() {
         const uint64_t end = now();
         const size_t index = count.fetch_add(1, std::memory_order_relaxed);
-        if (index < kLimit) events[index] = Event{stage_, begin_, end, tid_, status_};
+        if (index < kLimit) {
+            events[index] = Event{stage_, begin_, end, tid_, status_};
+            published[index].store(true, std::memory_order_release);
+        }
+        active_spans.fetch_sub(1, std::memory_order_release);
     }
     void finish(int status) { status_ = status; }
 
@@ -73,6 +82,7 @@ class Span {
 __attribute__((destructor)) void write_events() {
     const char* path = std::getenv("TENT_NATIVE_TRACE_PATH");
     if (!path) return;
+    if (active_spans.exchange(kSealed, std::memory_order_acq_rel) != 0) _exit(2);
     const int fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
     if (fd < 0) {
         perror("TENT trace output");
@@ -91,6 +101,7 @@ __attribute__((destructor)) void write_events() {
                  "\"limit\":%zu,\"overflow\":%s,\"events\":[",
                  static_cast<long>(getpid()), seen, kLimit, seen > kLimit ? "true" : "false");
     for (size_t i = 0; i < retained; ++i) {
+        if (!published[i].load(std::memory_order_acquire)) _exit(2);
         const auto& event = events[i];
         std::fprintf(output,
                      "%s{\"stage\":\"%s\",\"begin_mono_ns\":%llu,"

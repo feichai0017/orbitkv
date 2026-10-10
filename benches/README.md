@@ -81,7 +81,9 @@ Verify all four interposed symbols exist in the frozen `libtent_shared.so` befor
 launch. Set `LD_PRELOAD` to the diagnostic library and `TENT_NATIVE_TRACE_PATH` to
 a unique external JSON path on each endpoint. The fixed 4,096-event array records
 metadata RPC, endpoint construction, connect and bootstrap RPC; it writes only
-after normal process teardown. An absent symbol, output failure, nonzero exit,
+after normal process teardown. Per-slot publication uses release/acquire;
+teardown seals span admission and rejects unfinished calls or unpublished slots.
+An absent symbol, output failure, nonzero exit,
 overflow, unsuccessful call or missing required stage invalidates the cell.
 Run matched trace-off/on warm-READ overhead controls before deeper diagnosis,
 with fresh endpoints and the same frozen payload, order, configuration and native
@@ -93,11 +95,13 @@ After both endpoints have drained and exited zero, reconstruct one consumer:
 ```bash
 python -m benches.tent_trace \
   --trace /external/native-trace/consumer.trace.json \
-  --endpoint-stdout /external/native-trace/consumer.stdout --role consumer \
+  --endpoint-stdout /external/native-trace/consumer.stdout \
+  --endpoint-exit-code 0 --role consumer \
   --output /external/native-trace/consumer-summary.json
 ```
 
-Use `--role source` with the source's own files to summarize its construction
+Pass the actual exit code returned by the controller's `wait`, not a value
+inferred from the stop record. Use `--role source` with the source's own files to summarize its construction
 calls. The analyzer checks the process identity, retained event count, statuses,
 clock boundaries and required stages. Its consumer window comes from that
 endpoint's first READ. Stage calls overlap: the analyzer reports their interval
@@ -112,6 +116,21 @@ and report independent-pair uncertainty and CPU/thread costs. Reducing lanes als
 reduces worker/QP/CQ parallelism, so it needs throughput and consumed Manager
 recovery controls. A private-buffer improvement alone cannot promote either
 configuration or establish model latency.
+
+When changing the C++ recorder, compile and run the CPU writer controls against
+the same pinned header. These controls require a C++ compiler and are separate
+from the default Python gate:
+
+```bash
+g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread \
+  -I third-party/mooncake/mooncake-transfer-engine/tent/include \
+  benches/tests/tent_native_trace_writer.cpp -ldl -o /external/native-trace/writer-control
+```
+
+Run modes `complete`, `active` and `unpublished` with separate
+`TENT_NATIVE_TRACE_PATH` files. `complete` must exit zero with 1,024 fully published
+events; `active` and `unpublished` must exit 2 and cannot produce acceptable
+evidence. These synthetic writer controls do not measure transport performance.
 
 ### S2.10 metadata performance qualification
 

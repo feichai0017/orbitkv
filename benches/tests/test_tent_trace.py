@@ -1,6 +1,7 @@
 """Reject incomplete native evidence and preserve concurrent stage timing."""
 
 import copy
+import json
 
 import pytest
 
@@ -87,3 +88,46 @@ def test_source_cannot_borrow_consumer_clock_or_claim_full_decomposition():
         tent_trace.summarize(evidence, "source", 42, sample)
     with pytest.raises(ValueError, match="do not overlap"):
         tent_trace.summarize(copy.deepcopy(trace()), "consumer", 42, sample)
+
+
+@pytest.mark.parametrize("exit_code", [0, 1, -15])
+def test_cli_requires_actual_zero_exit_even_with_a_drained_stop(tmp_path, monkeypatch, exit_code):
+    native = tmp_path / "native.json"
+    native.write_text(json.dumps(trace()))
+    stdout = tmp_path / "endpoint.stdout"
+    sample = {
+        "begin_mono_ns": 0,
+        "submit_return_mono_ns": 1,
+        "terminal_mono_ns": 500,
+        "freed_mono_ns": 501,
+    }
+    records = [
+        {"event": "ready", "pid": 42},
+        {"event": "read_complete", "samples": [sample]},
+        {"event": "stopped", "registered_regions": 0, "active_batches": 0},
+    ]
+    stdout.write_text("\n".join(json.dumps({"tent_stage_probe": True, **row}) for row in records))
+    output = tmp_path / "summary.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "tent_trace",
+            "--trace",
+            str(native),
+            "--endpoint-stdout",
+            str(stdout),
+            "--endpoint-exit-code",
+            str(exit_code),
+            "--role",
+            "consumer",
+            "--output",
+            str(output),
+        ],
+    )
+    if exit_code:
+        with pytest.raises(ValueError, match="must exit zero"):
+            tent_trace.main()
+        assert not output.exists()
+    else:
+        tent_trace.main()
+        assert json.loads(output.read_text())["pid"] == 42

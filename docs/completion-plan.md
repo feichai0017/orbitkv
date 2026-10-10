@@ -1118,6 +1118,17 @@ layer hooks. The current contracts live in [transport](transport.md) and
   first recovery, contention and source/drain ownership before activation.
   Frozen contracts, raw samples, traces and rejected configurations are at
   `/root/orbitkv-artifacts/s4-tent-native-diagnosis-20261010/`.
+  **Final recorder remediation implemented, observation qualification blocked:**
+  review adds release/acquire event publication, sealed span admission and
+  explicit zero-exit validation in the offline analyzer. CPU writer controls
+  pass 1,024 concurrent events and reject active calls/unpublished slots;
+  306 benchmark tests pass. The separately frozen final eight-cell pilot passes
+  448 byte checks and 16 normal exits, but direction 1 warm median ratio 1.0585
+  exceeds 1.05 and observed p99 increase 0.3468 ms exceeds 0.25 ms. Stop without
+  retry or deeper diagnosis. The initial `5b1ca6bb` cohort stays immutable;
+  its overhead result does not qualify the revised recorder. Source, failed
+  final pilot and controls are separate at
+  `/root/orbitkv-artifacts/s4-tent-native-trace-remediation-20261010/`.
 - **Implementation partial:** direct registered engine-page SSD I/O and multi-writer
   GPU assembly remain beyond the existing staged GPU path. Include registration,
   source-page hold time, fragmentation and extra HBM in their admission decision.
