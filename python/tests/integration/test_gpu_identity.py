@@ -146,6 +146,7 @@ def test_gpu_identity_restore_and_numa(identity_devices, monkeypatch, case):
     }
     client = None
     completed = False
+    cleanup = None
     worker_output = directory / "worker-result.json"
     try:
         assert server.start(), server.read_logs()
@@ -240,8 +241,10 @@ def test_gpu_identity_restore_and_numa(identity_devices, monkeypatch, case):
         ):
             assert gauge in final_metrics and final_metrics[gauge] == 0, (gauge, final_metrics)
         result["final_metrics"] = final_metrics
-        assert server.terminate_gracefully(timeout=30)[0] == 0, server.read_logs()
-        result["manager_exit"] = 0
+        cleanup = drain_identity_processes(client, server, worker_output.with_suffix(".release"))
+        assert not cleanup["errors"] and not cleanup["remaining_processes"], cleanup
+        result["manager_exit"] = cleanup["processes"][1]["exit_code"]
+        assert result["manager_exit"] == 0
         require_clean_identity_log(server.read_logs())
         assert not Path(server.bootstrap_socket).exists()
         for listener in (port, http_port):
@@ -254,7 +257,10 @@ def test_gpu_identity_restore_and_numa(identity_devices, monkeypatch, case):
         result["failure"] = f"{type(error).__name__}: {error}"
         raise
     finally:
-        cleanup = drain_identity_processes(client, server, worker_output.with_suffix(".release"))
+        if cleanup is None:
+            cleanup = drain_identity_processes(
+                client, server, worker_output.with_suffix(".release")
+            )
         result["cleanup"] = cleanup
         values["failed"] |= not completed or bool(cleanup["errors"])
         try:

@@ -117,7 +117,8 @@ def test_inspection_failure_preserves_quarantine_record(monkeypatch, tmp_path):
     assert child.returncode == 0
 
 
-def test_clean_leader_exit_does_not_hide_live_descendant(tmp_path):
+@pytest.mark.parametrize("role", ["client", "manager"])
+def test_clean_leader_exit_does_not_hide_live_descendant(tmp_path, role):
     libc = ctypes.CDLL(None, use_errno=True)
     previous = ctypes.c_int()
     assert libc.prctl(37, ctypes.byref(previous), 0, 0, 0) == 0
@@ -143,8 +144,18 @@ def test_clean_leader_exit_does_not_hide_live_descendant(tmp_path):
             )
             assert leader.wait(timeout=5) == 0
             child_pid = int((tmp_path / "pid").read_text())
+            manager = SimpleNamespace(process=leader if role == "manager" else None)
+
+            def terminate_gracefully(**_):
+                manager.process = None
+                return leader.wait(timeout=5), 0.0
+
+            manager.terminate_gracefully = terminate_gracefully
             cleanup = drain_identity_processes(
-                leader, SimpleNamespace(process=None), tmp_path / "client-release", timeout=0.02
+                leader if role == "client" else None,
+                manager,
+                tmp_path / "client-release",
+                timeout=0.02,
             )
             assert any(
                 process.get("pid") == child_pid for process in cleanup["remaining_processes"]
