@@ -1732,7 +1732,7 @@ inputs, failures, raw logs, postflight and reviews are outside Git at
 `/root/orbitkv-artifacts/s5-ssd-peer-batch-20261010/`.
 See [the comparison methodology](../benches/README.md#independent-ssd-read-batch-comparisons).
 
-**Serving shutdown validation implemented; runtime qualification open
+**Serving shutdown validation accepted for CPU software; runtime qualification open
 (2026-10-10):** the reusable benchmark now consumes the controller's required
 engine-before-Manager stop order and native shutdown error checks. The offline
 read-batch comparator validates all four stop records independently of cell PASS
@@ -1753,8 +1753,12 @@ vLLM 0.31.0. This is an inference from the source and log ordering, not proof th
 all `EngineDeadError` occurrences are harmless. Keep the official installation
 unchanged and the benchmark's failure check active. Evidence for this software
 substage is outside Git at
-`/root/orbitkv-artifacts/s5-serving-shutdown-20261010/`;
-independent acceptance is pending.
+`/root/orbitkv-artifacts/s5-serving-shutdown-20261010/`.
+Independent review accepts commit `5a30417a` for this CPU
+software substage: 45 targeted and 364 benchmark tests, six real process-fault
+controls and optimized-Python rejection of all eleven retained invalid cells.
+The initial rejection and final review remain preserved with their raw controls;
+no new GPU run or physical lifetime qualification is implied.
 
 The next S5.5 delivery is a fresh runtime bundle and independent launch review.
 Resolve the consumer vLLM shutdown failure on the unchanged official release
