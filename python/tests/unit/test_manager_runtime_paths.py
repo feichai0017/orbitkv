@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from tests.support.cache_manager import manager_pythonpath
 from tests.support.paths import PYTHON_ROOT
-from tests.support.vllm_helpers import CacheManager
+from tests.support.vllm_helpers import CacheManager, VLLMServer
 
 
 def test_manager_pythonpath_defaults_to_source_then_inherited_paths():
@@ -45,4 +45,18 @@ def test_vllm_manager_keeps_gpu_mask_and_installed_package_priority(monkeypatch)
     manager = CacheManager(server_binary="/installed-wheel/manager", cargo_features=[])
     manager.__enter__()
     assert launched["env"]["CUDA_VISIBLE_DEVICES"] == "GPU-target"
+    assert launched["env"]["PYTHONPATH"].split(":")[:2] == ["/installed-wheel", "/tests"]
+
+
+def test_vllm_worker_keeps_installed_package_priority(monkeypatch):
+    launched = {}
+
+    def start(command, **kwargs):
+        launched.update(kwargs)
+        return SimpleNamespace(pid=1)
+
+    monkeypatch.setenv("PYTHONPATH", "/installed-wheel:/tests")
+    monkeypatch.setattr("tests.support.vllm_helpers.subprocess.Popen", start)
+    monkeypatch.setattr(VLLMServer, "_wait_for_ready", lambda *args, **kwargs: None)
+    VLLMServer(model="/test/model", port=12345).__enter__()
     assert launched["env"]["PYTHONPATH"].split(":")[:2] == ["/installed-wheel", "/tests"]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import importlib.metadata
 import json
 import math
 import os
@@ -18,6 +19,7 @@ import pytest
 import requests
 
 from tests.support.cache_manager import evict_dram_after_ssd_writes, find_available_port
+from tests.support.gpu_identity import identity_group_members, inherited_gpu_lock_fds
 from tests.support.metrics import fetch_orbitkv_codec_bytes, fetch_orbitkv_metrics
 from tests.support.paths import PYTHON_ROOT
 
@@ -38,14 +40,16 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
     if not Path(model).exists():
         pytest.skip("pass --model with a local model path")
 
-    # A source checkout has no installed entry-point metadata. Publish only the
-    # test plugin metadata into PYTHONPATH so every SGLang subprocess discovers it.
-    plugin_dir = tmp_path / "orbitkv_source_plugin-0.0.dist-info"
-    plugin_dir.mkdir()
-    (plugin_dir / "METADATA").write_text("Name: orbitkv-source-plugin\nVersion: 0.0\n")
-    (plugin_dir / "entry_points.txt").write_text(
-        "[sglang.srt.plugins]\norbitkv = orbitkv.sglang.plugin:register\n"
-    )
+    if not any(
+        entry.value == "orbitkv.sglang.plugin:register"
+        for entry in importlib.metadata.entry_points(group="sglang.srt.plugins")
+    ):
+        plugin_dir = tmp_path / "orbitkv_source_plugin-0.0.dist-info"
+        plugin_dir.mkdir()
+        (plugin_dir / "METADATA").write_text("Name: orbitkv-source-plugin\nVersion: 0.0\n")
+        (plugin_dir / "entry_points.txt").write_text(
+            "[sglang.srt.plugins]\norbitkv = orbitkv.sglang.plugin:register\n"
+        )
 
     cmd = [
         sys.executable,
@@ -103,7 +107,7 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
         ]
     env = dict(os.environ)
     env["PYTHONPATH"] = os.pathsep.join(
-        [str(PYTHON_ROOT), str(tmp_path), env.get("PYTHONPATH", "")]
+        [env.get("PYTHONPATH", ""), str(PYTHON_ROOT), str(tmp_path)]
     )
     env["ORBITKV_SGLANG_ENDPOINT"] = f"unix://{channel_server.bootstrap_socket}"
     env["ORBITKV_TRANSFER_BACKEND"] = request.config.getoption("--orbitkv-transfer-backend")
@@ -128,6 +132,7 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
+                pass_fds=inherited_gpu_lock_fds(),
             )
         try:
             deadline = time.monotonic() + 600
@@ -148,14 +153,30 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
             raise
 
     def stop_server(process: subprocess.Popen) -> None:
+        forced_kill = False
         with contextlib.suppress(ProcessLookupError):
             os.killpg(process.pid, signal.SIGTERM)
         try:
             process.wait(timeout=10)
         except subprocess.TimeoutExpired:
+            forced_kill = True
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=5)
+        members, errors = identity_group_members(process.pid)
+        (tmp_path / f"sglang-{process.pid}.cleanup.json").write_text(
+            json.dumps(
+                {
+                    "pid": process.pid,
+                    "exit_code": process.returncode,
+                    "forced_kill": forced_kill,
+                    "remaining_processes": members,
+                    "inspection_errors": errors,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
 
     from transformers import AutoTokenizer
 

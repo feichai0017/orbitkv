@@ -2,10 +2,20 @@
 
 import fcntl
 import json
+import os
 import subprocess
 import time
 from contextlib import contextmanager
 from pathlib import Path
+
+
+def inherited_gpu_lock_fds() -> tuple[int, ...]:
+    descriptors = tuple(json.loads(os.environ.get("ORBITKV_TEST_GPU_LOCK_FDS", "[]")))
+    for descriptor in descriptors:
+        if isinstance(descriptor, bool) or not isinstance(descriptor, int) or descriptor < 0:
+            raise ValueError("GPU lease descriptors must be nonnegative integers")
+        fcntl.fcntl(descriptor, fcntl.F_GETFD)
+    return descriptors
 
 
 @contextmanager

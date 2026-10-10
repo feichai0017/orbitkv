@@ -6,6 +6,7 @@ and test helpers for connector testing against a running server.
 
 import contextlib
 import errno
+import json
 import logging
 import os
 import secrets
@@ -22,6 +23,7 @@ from typing import TYPE_CHECKING
 import pytest
 import requests
 
+from .gpu_identity import identity_group_members, inherited_gpu_lock_fds
 from .metrics import fetch_orbitkv_metrics
 from .paths import PYTHON_ROOT, REPO_ROOT
 
@@ -418,7 +420,7 @@ class CacheManagerProcess:
         self._configured_log_path = log_path
         self.extra_args = extra_args
         self.runtime_python_paths = runtime_python_paths
-        self.inherited_fds = inherited_fds
+        self.inherited_fds = inherited_fds or inherited_gpu_lock_fds()
         self.pythonpath: tuple[str, ...] | None = None
         self.process: subprocess.Popen | None = None
         self.command: tuple[str, ...] | None = None
@@ -534,17 +536,35 @@ class CacheManagerProcess:
         if self.process is None:
             self._close_log()
             return
+        process = self.process
+        forced_kill = False
         try:
             if self.process.poll() is None:
                 os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
             self.process.wait(timeout=5)
         except subprocess.TimeoutExpired:
+            forced_kill = True
             with contextlib.suppress(ProcessLookupError, OSError):
                 os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
             self.process.wait(timeout=2)
         except (ProcessLookupError, OSError):
             self.process.wait(timeout=2)
         finally:
+            members, errors = identity_group_members(process.pid)
+            if self._configured_log_path is not None:
+                Path(str(self._configured_log_path) + ".cleanup.json").write_text(
+                    json.dumps(
+                        {
+                            "pid": process.pid,
+                            "exit_code": process.returncode,
+                            "forced_kill": forced_kill,
+                            "remaining_processes": members,
+                            "inspection_errors": errors,
+                        },
+                        indent=2,
+                    )
+                    + "\n"
+                )
             self.process = None
             self._close_log()
             if self.bootstrap_socket is not None:
