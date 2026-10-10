@@ -148,31 +148,12 @@ impl PinnedMemory {
             return Err(PinnedMemError::MmapFailed(io::Error::last_os_error()));
         }
 
-        if node.is_valid() {
-            let bits = libc::c_ulong::BITS as usize;
-            let maxnode = node.0 as usize + 1;
-            let mut mask = vec![0 as libc::c_ulong; maxnode.div_ceil(bits)];
-            mask[node.0 as usize / bits] |= 1 << (node.0 as usize % bits);
-            // SAFETY: ptr is a live, unfaulted mapping of size bytes. mask holds
-            // maxnode bits and remains live for mbind. The memfd's shared policy
-            // overrides inherited interleave before any CUDA registration.
-            let bound = unsafe {
-                libc::syscall(
-                    libc::SYS_mbind,
-                    ptr,
-                    size,
-                    libc::MPOL_BIND | libc::MPOL_F_STATIC_NODES,
-                    mask.as_ptr(),
-                    maxnode,
-                    0 as libc::c_uint,
-                )
-            };
-            if bound != 0 {
-                let error = io::Error::last_os_error();
-                // SAFETY: ptr was successfully mmap'd above, but never exported.
-                unsafe { libc::munmap(ptr, size) };
-                return Err(PinnedMemError::NumaBindFailed(node, error));
-            }
+        if node.is_valid()
+            && let Err(error) = bind_payload_mapping(ptr, size, node)
+        {
+            // SAFETY: ptr was successfully mmap'd above, but never exported.
+            unsafe { libc::munmap(ptr, size) };
+            return Err(PinnedMemError::NumaBindFailed(node, error));
         }
         parallel_pre_touch(ptr.cast::<u8>(), size, node);
 
@@ -225,6 +206,36 @@ impl PinnedMemory {
     pub(crate) fn size(&self) -> usize {
         self.size
     }
+}
+
+fn numa_binding_mask(node: NumaNode) -> (Vec<libc::c_ulong>, usize) {
+    let bits = libc::c_ulong::BITS as usize;
+    let mut mask = vec![0 as libc::c_ulong; (node.0 as usize + 1).div_ceil(bits)];
+    mask[node.0 as usize / bits] |= 1 << (node.0 as usize % bits);
+    let maxnode = mask.len() * bits + 1;
+    (mask, maxnode)
+}
+
+fn bind_payload_mapping(ptr: *mut libc::c_void, size: usize, node: NumaNode) -> io::Result<()> {
+    let (mask, maxnode) = numa_binding_mask(node);
+    // SAFETY: caller owns an unfaulted mapping of size bytes. mask holds the
+    // kernel's maxnode-1 bits and remains live for mbind. Shared policy overrides
+    // inherited interleave before any CUDA registration.
+    let bound = unsafe {
+        libc::syscall(
+            libc::SYS_mbind,
+            ptr,
+            size,
+            libc::MPOL_BIND | libc::MPOL_F_STATIC_NODES,
+            mask.as_ptr(),
+            maxnode,
+            0 as libc::c_uint,
+        )
+    };
+    if bound != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 fn create_backing(size: usize, pages: PagePolicy) -> Result<(OwnedFd, usize), PinnedMemError> {
