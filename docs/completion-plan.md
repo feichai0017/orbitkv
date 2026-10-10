@@ -1702,12 +1702,46 @@ Full S2/S5 remain Partial. Inputs, both cohorts, raw evidence and reviews are at
 See [the serving methodology](shared-cache-qualification.md#official-engine-cross-host-serving-restores)
 and [the reproduction driver](../benches/README.md#first-and-repeated-cross-host-serving-restores).
 
-The next S5.5 performance substage is a separately frozen, order-alternated
-source-SSD materialization/read-batch comparison with equal byte budgets and
-correctness, pressure and cancellation controls, followed by matched official
-engine/backend comparisons. Existing peer lookahead remains the baseline;
-authorization/materialization observations alone do not justify a CUDA kernel
-change. Require device-event DMA/kernel evidence before a KDA candidate.
+**SSD peer read-batch measurement implemented; qualification blocked
+(2026-10-10):** frozen harness `ab23dd35` consumes unchanged production
+`1ab67a58`. Only the consumer's existing ordinary `--query-read-batch` changes
+from 32 to 128 MiB; source settings, byte budgets, reader threads, lookahead and
+official engine releases remain unchanged. The external controller stops at the
+first SGLang cell: its 50 restores pass, but it closes the source Manager before
+the source engine unregisters its context, producing a `Broken pipe` traceback.
+The frozen shutdown guard correctly marks that cell `INVALID_FAIL_STOP`; the
+remaining nine cells are not launched. The frozen controller labels the ten
+preceding vLLM cells PASS, but independent raw-log review also finds source
+unregister tracebacks and one consumer `EngineDeadError` during shutdown. Leader
+exit zero does not establish worker cleanup; those lifecycle labels are not
+accepted. All 550 retained rows have exact native outputs and remote/H2D/SSD
+bytes, with actual authorization/READ counts reduced from 3/6 to 1/2 for the
+72/144 MiB payloads. Both hosts finish with zero exported ownership and GPU use.
+
+Accepted offline analysis `6b356f2d` compares native token counts without
+requiring process-specific SGLang timing/UUID metadata to match. It rejects this
+incomplete campaign; valid vLLM rows are retained without subset qualification.
+A vLLM pair also exceeds the frozen 5% TTFT regression guard. A separate
+CPU-only controller remedy checks that both engines unregister while their
+Managers remain available and rejects worker shutdown errors; it does not repair
+or relabel the hardware cohort.
+The 128 MiB setting is not promoted; 32 MiB remains the comparison baseline,
+while the production CLI default stays `0` (demand baseline). Full S2/S5,
+isolation and owner support boundaries remain unchanged. Frozen
+inputs, failures, raw logs, postflight and reviews are outside Git at
+`/root/orbitkv-artifacts/s5-ssd-peer-batch-20261010/`.
+See [the comparison methodology](../benches/README.md#independent-ssd-read-batch-comparisons).
+
+The next S5.5 delivery is independent acceptance of the controller remedy and
+a fresh runtime bundle. Resolve the consumer vLLM shutdown failure on the
+unchanged official release before a separately frozen full read-batch cohort;
+CPU ordering controls do not establish that repair. No retry or replacement
+cell belongs to the stopped campaign. A passing serial
+component still needs matched pressure and cancellation/drain controls before
+production promotion, followed by matched official engine/backend comparisons.
+Existing peer lookahead remains the baseline. Authorization/materialization
+timers alone do not justify a CUDA kernel change; require device-event DMA/kernel
+evidence before a KDA candidate.
 
 **Matched eager controls and service-exit evidence implemented (2026-10-10);
 model comparison qualification open:** the installed benchmark now consumes

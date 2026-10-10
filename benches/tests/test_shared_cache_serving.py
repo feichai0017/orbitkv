@@ -124,3 +124,52 @@ def test_failed_restore_preserves_response_and_both_metrics_boundaries(tmp_path,
     assert result["samples"][0]["manager_before"] == [{}, {}]
     assert result["samples"][0]["manager_after"][1]["orbitkv_remote_fetch_bytes_total"] == 2048
     assert result["samples"][0]["status"] == "CHECKING"
+
+
+def test_declared_warmup_is_retained_and_excluded_by_label(tmp_path, monkeypatch):
+    from benches.shared_cache_serving import profile
+
+    monkeypatch.setattr(
+        "benches.shared_cache_serving.drain",
+        lambda *args: [{"orbitkv_save_bytes_total": 4096}, {}],
+    )
+    # The source pre-publication snapshot must precede its fresh save.
+    import benches.shared_cache_serving as serving
+
+    snapshots = serving.drain
+    first = True
+
+    def drain(*args):
+        nonlocal first
+        if first:
+            first = False
+            return [{}, {}]
+        return snapshots(*args)
+
+    monkeypatch.setattr(serving, "drain", drain)
+    monkeypatch.setattr(serving, "synchronize", lambda *args: {})
+    monkeypatch.setattr(serving, "reset_hbm", lambda *args: {})
+    monkeypatch.setattr(serving, "clear_dram", lambda *args: {})
+    monkeypatch.setattr(serving, "restore_evidence", lambda *args: {})
+    monkeypatch.setattr(serving, "generate", lambda *args: {"text": "same"})
+    args = SimpleNamespace(
+        engine="vllm",
+        model="model",
+        source_url="http://source",
+        target_url="http://target",
+        source_manager="http://source-manager",
+        target_manager="http://target-manager",
+        source_medium="dram",
+        bytes_per_token=64,
+        block_tokens=64,
+        remote_repeats=2,
+        warmup_repeats=1,
+        output_tokens=8,
+        output=tmp_path / "profile.json",
+    )
+    result = profile(args, [[1] * 64])
+    assert [row["sample_kind"] for row in result["samples"]] == ["warmup", "measured", "measured"]
+    assert result["samples"][0]["phase"] == "first_peer_read"
+    assert all(
+        row["request_end_mono_ns"] >= row["request_start_mono_ns"] for row in result["samples"]
+    )
