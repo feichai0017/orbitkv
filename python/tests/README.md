@@ -40,6 +40,7 @@ hybrid recovery E2Es continue to qualify ordinary selected-range reads.
 | Clean source-only Python changes, docs touching test layout, CI test dependency changes | Source-only default | `uv run --isolated --no-project --with pytest --with numpy --with 'requests>=2.26.0' pytest` | Default test accidentally depends on torch, vLLM, CUDA, or native extension |
 | vLLM upgrade or MultiConnector delivery semantics | Native connector contract | `python -m pytest -m integration tests/integration/test_vllm_connector_contract.py` | Use the selected native P/D engine revision; ordinary cache must not weaken reliable P/D delivery. |
 | Server client, native extension, CUDA IPC registration, session lifecycle | Integration | `uv run --group test pytest -m integration` | Server/native/GPU lifecycle regression |
+| CUDA-visible device identity, receiver route, NUMA allocator | Installed GPU identity | `python -B -m pytest -m integration tests/integration/test_gpu_identity.py` | Requires an installed wheel and two physical CUDA devices; see the installed identity gate below |
 | Distributed startup, placement, embedded catalog protocol and packaged Manager | Distributed process gate | `ETCD_BIN=/path/to/etcd pytest -m integration tests/integration/test_distributed_cache.py` | Starts two Managers and real etcd, checks remote Mooncake/GPU bytes and local recovery after coordinator loss; requires built native artifacts and CUDA. |
 | Peer transfer, source ownership, catalog recovery or either engine adapter | Shared-replica serving gate | `ETCD_BIN=/path/to/etcd ORBITKV_CACHE_MANAGER_BINARY=/path/to/manager pytest -m e2e tests/e2e/test_shared_cache.py -k vllm --model /path/to/qwen3-8b` | Repeat in SGLang's environment with `-k sglang`; checks remote bytes, output, catalog replay, source restart and reservation drain. Same-host TCP only. |
 | vLLM connector correctness, cache semantics, save/load/hit behavior, release candidate confidence | vLLM correctness E2E | `../.venv/vllm-release/bin/python -m pytest -m e2e tests/e2e/test_vllm_e2e_correctness.py --model /path/to/model` | Native prefix-cache control follows the same prompt plan; `long_warm` must load saved KV after vLLM restart. |
@@ -88,6 +89,31 @@ notifications, deadlines, and client-bound handles. These replace the old mocked
 Python facade tests. The GPU process-boundary gate below verifies the PyO3 API.
 
 ## Server Integration Gate
+
+### Installed GPU identity gate
+
+Run `test_gpu_identity.py` for registration routing or NUMA allocation changes
+with a complete installed wheel and working CUDA on two physical devices. Use a
+harness containing `python/tests/` and `python/pyproject.toml`, without a source
+`python/orbitkv/` package. Put the installed wheel directory first in
+`PYTHONPATH`, and set `ORBITKV_CACHE_MANAGER_BINARY` to its packaged Manager.
+
+```bash
+export ORBITKV_GPU_IDENTITY_DEVICES=7,0
+export ORBITKV_GPU_IDENTITY_OUTPUT=/var/tmp/orbitkv-gpu-identity/run-001
+export ORBITKV_TEST_GPU_LOCK_DIR=/var/tmp/orbitkv-resource-locks
+python -B -m pytest -q -m integration --maxfail=1 tests/integration/test_gpu_identity.py
+```
+
+The twelve positive cells use real Torch CUDA IPC for DRAM and forced io_uring
+SSD recovery under numeric, UUID, reordered and partial visibility. They check
+full GPU bytes, native receiver routing, worker affinity, resident memfd NUMA
+pages and normal ownership drain. The three rejection controls use unissued
+metadata-only sentinels to check guards before import. They do not qualify real
+issued-ticket rejection or partial-import rollback lifetime. Keep failed runs
+and frozen inputs alongside the final external evidence.
+
+### Other integration gates
 
 ```bash
 cd python

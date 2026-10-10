@@ -1675,6 +1675,49 @@ fork-only factory, callback, default configuration or CI dependency may remain.
 
 ### S5.5 — Deployment matrix and upstream maintenance
 
+**CUDA device identity and NUMA independently accepted (2026-10-11):**
+registration uses the tensor's full GPU UUID independently of client and Manager
+CUDA ordinals. The existing native owner retains the resolved Manager ordinal
+for Publish/Restore; local execution retains the client's ordinal. CUDA-visible
+UUIDs select worker affinity and explicit `mbind` payload placement before
+first-touch, including hosts that inherit interleave policy. Lifecycle version 7
+requires matching installed client and Manager artifacts.
+
+Production `8570f6f9`, installed wheel `04a519a0…` and harness `c8469592` pass
+all fifteen H20 identity cells with independent native-component acceptance.
+Twelve positive cells use real CUDA IPC and compare 32,768 GPU bytes each across
+DRAM and forced io_uring SSD under numeric, UUID, reordered and partial views.
+Three negative cells use unissued metadata-only sentinels for pre-import guards.
+Real issued-ticket rejection and partial-import rollback lifetime remain
+unqualified. All clients and Managers exit zero without forced cleanup, and
+frozen installed inputs are unchanged. Original failed cohorts remain invalid;
+recovered raw archives and the local-file-loss record are retained at
+`/root/orbitkv-artifacts/s5-gpu-numa-identity-20261011/`. The independent report is
+`/root/orbitkv-artifacts/gpu-numa-identity-r8-independent-review-20261011/REVIEW.md`.
+The old detached supervisor exited zero with no FDs but remains an unreaped
+zombie under the platform's PID 1; full launcher wait/reap is not qualified.
+
+The next consumer gate uses the same installed wheel with official vLLM 0.31.0
+and SGLang 0.5.21 ordinary Qwen3-8B recovery. Physical TP, S3, isolation and
+performance qualification remain separate.
+
+The requested `Qwen/Qwen3.8-27B` and `deepseek-ai/DeepSeek-V4.1-Flash` belong to
+subsequent model/state qualification: inspect immutable configurations and
+released-engine support before any weights/download or serving launch. Qwen3.8
+includes recurrent DeltaNet state; neither weight fit nor native inference
+establishes OrbitKV recovery support. Larger dense models, longer prefixes and
+concurrency can provide pressure within the accepted state contract, while
+physical TP and hybrid-state delivery keep their existing gates. The next dense
+pressure candidate is `Qwen/Qwen3-32B` at immutable revision
+`9216db5781bf21249d130ec9da846c4624c16137`: its configuration implies 4 GiB
+of raw BF16 attention KV for a 16,384-token prefix before allocator overhead.
+That estimate is not a measured performance result. Configuration inspection
+is complete. Forge has no direct public route for weights, so input preparation
+uses a separately recorded local stream relay with official hashes; model serving
+and performance remain unqualified. Matched native and external-cache
+comparisons must use the same actual tokens, reuse shape,
+precision, HBM/DRAM/SSD budgets and independent run uncertainty.
+
 
 **Physical two-H20 ordinary serving independently accepted (2026-10-10):**
 benchmark `efbe8323` consumes unchanged production `1ab67a58`, its frozen wheel,
