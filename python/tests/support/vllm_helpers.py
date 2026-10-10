@@ -375,12 +375,6 @@ class CacheManager:
         import sysconfig
 
         env = os.environ.copy()
-        # The connector reports global device ids (it un-maps
-        # CUDA_VISIBLE_DEVICES before registering); the server must see every
-        # GPU so those ids and the IPC tensor devices line up. Without this, a
-        # masked pytest run (e.g. CUDA_VISIBLE_DEVICES=1,2 on a shared box)
-        # fails registration with "pinned to device N but got M".
-        env.pop("CUDA_VISIBLE_DEVICES", None)
         env["PYTHONHASHSEED"] = "0"
         env.setdefault("VLLM_USE_V2_MODEL_RUNNER", "0")
         env["PYO3_PYTHON"] = sys.executable
@@ -392,7 +386,12 @@ class CacheManager:
             )
         python_dir = str(PYTHON_ROOT)
         site_packages = sysconfig.get_path("purelib")
-        env["PYTHONPATH"] = f"{python_dir}" + (f":{site_packages}" if site_packages else "")
+        configured_paths = [path for path in env.get("PYTHONPATH", "").split(os.pathsep) if path]
+        env["PYTHONPATH"] = os.pathsep.join(
+            dict.fromkeys(
+                [*configured_paths, python_dir, *([site_packages] if site_packages else [])]
+            )
+        )
 
         if self.server_binary is None:
             launch_label = f"cargo run -r features={','.join(self.cargo_features) or 'default'}"
