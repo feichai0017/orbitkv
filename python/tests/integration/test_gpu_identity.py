@@ -181,6 +181,7 @@ def test_gpu_identity_restore_and_numa(identity_devices, monkeypatch, case):
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 pass_fds=values["lock_fds"],
+                start_new_session=True,
             )
         result["client_pid"] = client.pid
         result["client_identity"] = owned_process(client)
@@ -262,4 +263,6 @@ def test_gpu_identity_restore_and_numa(identity_devices, monkeypatch, case):
         )
         (directory / "result.json").write_text(json.dumps(result, indent=2) + "\n")
         if cleanup["errors"]:
-            pytest.fail(f"Identity drain failed; resources quarantined if still live: {cleanup}")
+            pytest.fail(
+                f"Identity drain failed: {cleanup}; primary failure: {result.get('failure')}"
+            )
