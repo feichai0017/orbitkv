@@ -115,9 +115,11 @@ def summarize(root: Path, contract: dict) -> dict:
                     for field in ("model", "prompt_token_ids_sha256")
                 ):
                     raise ValueError("Matched pair used different model or prompt token IDs")
-                for field in ("text", "usage"):
-                    if baseline["output"][field] != candidate["output"][field]:
-                        raise ValueError("Matched pair has different native output or token counts")
+                if baseline["output"]["text"] != candidate["output"]["text"]:
+                    raise ValueError("Matched pair has different native output")
+                for field in ("prompt_tokens", "completion_tokens"):
+                    if baseline["output"]["usage"][field] != candidate["output"]["usage"][field]:
+                        raise ValueError("Matched pair has different native token counts")
                 group.append(
                     {
                         "pair": pair_index,

@@ -160,3 +160,44 @@ def test_valid_regression_is_retained_as_component_failure(tmp_path):
             run["profile_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
     (tmp_path / "CAMPAIGN.json").write_text(json.dumps(campaign))
     assert summarize(tmp_path, contract)["state"] == "VALID_COMPONENT_FAIL"
+
+
+@pytest.mark.parametrize("changed_count", [None, "prompt_tokens", "completion_tokens"])
+def test_sglang_request_metadata_is_preserved_but_only_native_counts_must_match(
+    tmp_path, changed_count
+):
+    contract, campaign = comparison(tmp_path)
+    contract["design"]["engines"] = ["sglang"]
+    for index, run in enumerate(campaign["cells"]):
+        run["spec"]["engine"] = "sglang"
+        path = tmp_path / f"{run['name']}-profile.json"
+        profile = json.loads(path.read_text())
+        profile["engine"] = "sglang"
+        for row in profile["samples"]:
+            usage = row["source_response"]["usage"]
+            usage.update(
+                id=f"request-{index}",
+                finish_reason={"type": "length", "length": 8},
+                request_received_ts=1000 + index,
+                forward_entry_time=1000.1 + index,
+                prefill_finished_time=1000.2 + index,
+                queue_time=0.01 * index,
+                e2e_latency=0.2 + index,
+                first_token_latency=0.1 + index,
+                decode_throughput=10 + index,
+            )
+            if changed_count and index == 0:
+                usage[changed_count] += 1
+        path.write_text(json.dumps(profile))
+        run["profile_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    (tmp_path / "CAMPAIGN.json").write_text(json.dumps(campaign))
+    if changed_count:
+        with pytest.raises(ValueError):
+            summarize(tmp_path, contract)
+    else:
+        result = summarize(tmp_path, contract)
+        assert result["state"] == "VALID_COMPONENT_PASS"
+        pair = result["summary"][0]["pairs"][0]
+        assert pair["baseline"]["output"]["usage"]["id"] == "request-0"
+        assert pair["candidate"]["output"]["usage"]["id"] == "request-1"
+        assert not result["production_qualified"]
