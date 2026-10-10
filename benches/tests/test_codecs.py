@@ -18,6 +18,7 @@ def launch_arguments(tmp_path, engine="vllm", codec="none", ssd_gib=4):
         engine=engine,
         backend="orbitkv",
         installed_artifact=False,
+        enforce_eager=False,
         model=tmp_path / "model",
         output=tmp_path,
         host_gib=1,
@@ -90,6 +91,25 @@ def test_installed_benchmark_rejects_missing_or_shadowed_wheel(tmp_path, monkeyp
     args.installed_artifact = True
     with pytest.raises(RuntimeError, match="complete OrbitKV wheel|outside site-packages"):
         configure(args, 147456)
+
+
+@pytest.mark.parametrize("engine", ["vllm", "sglang"])
+@pytest.mark.parametrize("eager", [False, True])
+def test_matched_execution_mode_uses_released_engine_controls(tmp_path, engine, eager):
+    args = launch_arguments(tmp_path, engine)
+    args.backend = "native"
+    args.enforce_eager = eager
+    launch = configure(args, 147456)
+    assert launch.backend_configuration["execution_mode"] == (
+        "eager" if eager else "engine-default"
+    )
+    if engine == "vllm":
+        assert ("--enforce-eager" in launch.command) == eager
+    else:
+        for flag in ("--cuda-graph-backend-decode", "--cuda-graph-backend-prefill"):
+            assert (flag in launch.command) == eager
+            if eager:
+                assert launch.command[launch.command.index(flag) + 1] == "disabled"
 
 
 @pytest.mark.parametrize("engine", ["vllm", "sglang"])

@@ -215,6 +215,7 @@ def configure(args: Namespace, bytes_per_token: int) -> Launch:
         if args.engine == "vllm"
         else sglang_command(args, port, cache_config)
     )
+    backend_configuration["execution_mode"] = "eager" if args.enforce_eager else "engine-default"
     return Launch(
         command,
         env,
@@ -265,6 +266,8 @@ def vllm_command(
     ]
     if args.deterministic_inference:
         command += ["--attention-backend", "FLASH_ATTN"]
+    if args.enforce_eager:
+        command.append("--enforce-eager")
     if args.backend == "cpu":
         connector = {
             "kv_connector": "OffloadingConnector",
@@ -340,6 +343,13 @@ def sglang_command(args: Namespace, port: int, cache_config: Path | None) -> lis
     ]
     if args.deterministic_inference:
         command.append("--enable-deterministic-inference")
+    if args.enforce_eager:
+        command += [
+            "--cuda-graph-backend-decode",
+            "disabled",
+            "--cuda-graph-backend-prefill",
+            "disabled",
+        ]
     if args.backend == "cpu":
         command += [
             "--enable-hierarchical-cache",

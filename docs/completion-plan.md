@@ -1098,6 +1098,62 @@ layer hooks. The current contracts live in [transport](transport.md) and
   repair, isolate segment discovery, registration, QP/progress and wrapper
   completion, reproduce against the pinned upstream and retain fault/drain
   controls. Follow [the maintained method](benchmark-evidence.md#tent-and-fabric-diagnostics).
+- **First RDMA READ diagnosed (2026-10-10), independent review open; no production
+  candidate promoted:** bounded native interposition splits metadata RPC,
+  endpoint construction, connect and bootstrap on the frozen `71973589` TENT.
+  Eight trace-off/on cells pass the declared warm-observation overhead guards
+  and 448 exact 8 MiB byte oracles. Metadata calls are about 1 ms; endpoint
+  construction is about 23–33 ms, with overlapping bootstrap calls and source
+  RPC serialization. These per-host intervals cannot be added into an end-to-end
+  breakdown or identify a CUDA kernel bottleneck.
+  Two separate 20-cell, five-pair-per-direction configuration cohorts are valid
+  but rejected. RPC threads 1→4 lower paired cold READ ratios to 0.769/0.807,
+  above the frozen 0.75 target; one warmed p99 increase is 0.273 ms against a
+  0.25 ms guard. RDMA lanes 6→2 do not lower cold READ and regress paired warm
+  medians by about 9–10%. All 12,688 pilot/candidate payload oracles pass;
+  all 96 endpoints exit zero and recorded PIDs disappear. Native libraries and
+  production defaults remain unchanged. No full-Manager candidate promotion or
+  replacement run follows these failures. Keep the upstream segment-warmup
+  proposal distinct from a released consumed interface; evaluate setup cost,
+  first recovery, contention and source/drain ownership before activation.
+  Frozen contracts, raw samples, traces and rejected configurations are at
+  `/root/orbitkv-artifacts/s4-tent-native-diagnosis-20261010/`.
+  **Final recorder remediation implemented, observation qualification blocked:**
+  review adds release/acquire event publication, sealed span admission and
+  explicit zero-exit validation in the offline analyzer. CPU writer controls
+  pass 1,024 concurrent events and reject active calls/unpublished slots;
+  306 benchmark tests pass. The separately frozen final eight-cell pilot passes
+  448 byte checks and 16 normal exits, but direction 1 warm median ratio 1.0585
+  exceeds 1.05 and observed p99 increase 0.3468 ms exceeds 0.25 ms. Stop without
+  retry or deeper diagnosis. The initial `5b1ca6bb` cohort stays immutable;
+  its overhead result does not qualify the revised recorder. Source, failed
+  final pilot and controls are separate at
+  `/root/orbitkv-artifacts/s4-tent-native-trace-remediation-20261010/`.
+- **Upstream notification-MR repair measured (2026-10-10), component target
+  failed; independent review open:** the selected `v0.3.13.post1` has 256 receive
+  MRs per RDMA endpoint. The already merged upstream
+  [PR #3820](https://github.com/kvcache-ai/Mooncake/pull/3820) uses one MR covering
+  those same slots. An isolated release-source baseline and three-file repair
+  build differ only in `libtent_shared.so`; seven other shared libraries are
+  identical. No production pin, library, wheel or engine is changed, and no
+  duplicate upstream issue/PR is filed.
+  One untraced 20-cell, five-pair-per-direction formal cohort passes 10,120
+  complete 8 MiB READ and 10,240 unique notification oracles. Cold paired ratios
+  are 0.9025/0.8698, with 95% independent-pair intervals [0.8130, 0.9901] and
+  [0.8578, 0.8820]. Warm median and observed p99 regression guards pass, but
+  both directions miss the frozen cold ratio <=0.75 target. Keep
+  `VALID_COMPONENT_FAIL`; no replacement cohort or full-Manager promotion.
+  Separate readiness checks retain 64 READ and 2,048 notification oracles;
+  all 48 endpoint exits are zero and recorded PIDs/listeners disappear.
+  Both-host native units pass 130 cases without skips; 312 benchmark tests
+  pass. Missing unit GoogleTest libraries and a missing host-1 probe/config
+  preflight are preserved; the latter starts no endpoint or payload sample.
+  Corrected inputs are verified before a separately frozen smoke/formal launch.
+  Frozen builds, contracts, physical port counters, raw samples, failed
+  preparation and cleanup evidence are at
+  `/root/orbitkv-artifacts/s4-tent-notify-mr-20261010/`.
+  These are private CPU-buffer controls, not Manager grants, engine GPU pages,
+  serving latency or S3 controller-loss reclamation. S2/S4/S5 remain Partial.
 - **Implementation partial:** direct registered engine-page SSD I/O and multi-writer
   GPU assembly remain beyond the existing staged GPU path. Include registration,
   source-page hold time, fragmentation and extra HBM in their admission decision.
@@ -1618,6 +1674,26 @@ fork-only factory, callback, default configuration or CI dependency may remain.
 
 ### S5.5 — Deployment matrix and upstream maintenance
 
+**Matched eager controls and service-exit evidence implemented (2026-10-10);
+model comparison qualification open:** the installed benchmark now consumes
+the official eager configuration of both selected releases and records the
+execution policy. Service cleanup exports the actual reaped leader exit code,
+forced-kill status and interruption separately. Benchmark contract tests pass;
+the dedicated Forge H20 controls pass for native HBM, native CPU offload/HiCache
+and OrbitKV on both selected releases, plus vLLM LMCache 0.5.5. All 21 successful
+request outputs match the cold references and matched backends; post-run installed
+file hashes remain unchanged. SGLang LMCache startup is blocked by its missing
+released `lmcache_mp_metadata` module; the existing upstream MP fix is not in
+0.5.5. Each cell's cleanup retains literal service exit codes and reaped workers:
+SGLang's own shutdown kills its engine process tree, so its leader exit is -9,
+not zero, without a harness SIGKILL. These are readiness controls with one sample
+per phase, unqualified sampler overhead and possible shape/JIT warmup; formal
+order-alternated serving comparisons remain open. Inputs, failures, raw cells
+and postflight evidence are at
+`/root/orbitkv-artifacts/s4-serving-cold-read-20261010/`;
+independent review remains open. These measurement changes do not change
+production cache policy, transfer backend defaults or S2/S5 qualification.
+
 **Serving comparison readiness implemented; runtime qualification open
 (2026-10-09):** `benches.single_node --installed-artifact` selects installed
 packages and the bundled Manager, rejects a missing/source-shadowed OrbitKV
@@ -1628,9 +1704,10 @@ and rejected package origins. This changes the measurement launcher only.
 The next comparison uses each official selected engine separately: native HBM,
 native CPU offload/HiCache, OrbitKV and the LMCache 0.5.5 MP target, with matched
 model, GPU/host budgets, requests and independent order-alternated runs.
-Fresh official environments and model artifacts on the two H20 hosts still need
-freezing and startup/output controls before a serving campaign. Local legacy
-environments at `/root/orbitkv/.venv/{vllm,sglang}-release` resolve to
+Fresh official environments and immutable Qwen3-8B artifacts on the two H20 hosts
+are frozen and have the scoped startup/output controls above. Formal warmup,
+sampler overhead, repeated run order and sustained serving gates remain open.
+Local legacy environments at `/root/orbitkv/.venv/{vllm,sglang}-release` resolve to
 0.29.0/0.5.20 and must not be relabeled as 0.31.0/0.5.21 evidence. The sustained
 decode-time-per-token field is an aggregate proxy; per-token ITL distributions
 and SLO goodput instrumentation remain open. Distributed LMCache needs
@@ -1873,9 +1950,28 @@ readiness and descriptive timing evidence are at
 with complete raw host mirrors and the frozen plan beside it.
 This descriptive timing substage does not launch a formal
 isolation/HA campaign, expand support, close S5 or change production policy.
-The next measured execution gap is cold TENT READ startup; isolate segment,
-connection and progress costs before a production change. CUDA optimization
-requires separate device-event DMA/kernel measurements and a matched KDA
+**First native READ stages measured (2026-10-10), independent review open:**
+`benches.tent_stage` uses the same frozen TENT libraries with private CPU mmap
+buffers. Ten fresh consumers across both directions complete 110 full 8 MiB
+payload oracles; twelve endpoints exit zero and their recorded PIDs disappear.
+Cold READ is 165.613–211.246 ms, with more than 99% between submit return and
+terminal observation. Warm READ medians are 0.181/0.187 ms. The cheap open call
+does not exclude lazy metadata discovery, QP bootstrap or worker scheduling
+inside the completion interval. CPU buffers, polling and n=5 per direction do
+not establish model latency, a transport defect, tail qualification or GPU-direct
+destination recovery. The final source/consumer control protocol additionally
+passes a six-READ byte/drain smoke; all native libraries remain unchanged.
+Raw cohorts and prior preparation failures are at
+`/root/orbitkv-artifacts/s4-serving-cold-read-20261010/`.
+
+The bounded native decomposition and rejected RPC-thread/lane controls are
+recorded in S4 above. The next first-recovery candidate needs a consumed explicit
+connection-warming interface, accounting for its setup cost and fabric resources;
+the upstream proposal is still open. Source authorization, buffer registration
+and physical drain remain with the existing owners. Require matched first-recovery
+and contention controls before promotion; do not use a dummy payload READ to
+unowned addresses or omit warming cost from an end-to-end claim.
+CUDA optimization requires separate device-event DMA/kernel measurements and a matched KDA
 comparison; client restore timing alone does not establish a kernel bottleneck.
 See [the maintained methodology](shared-cache-qualification.md#full-manager-remote-dram-path-timing).
 

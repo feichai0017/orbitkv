@@ -10,6 +10,9 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | --- | --- |
 | `client.py` | Admitted-query polling overhead with a held byte budget; no storage or model compute in the timed loop |
 | `communication.py` | Real Query miss/hit, Publish D2H, Restore submit-to-ready and empty-restore controls using matching external artifacts |
+| `tent_stage.py` | Frozen native C ABI CPU-buffer READ stages; explicit source/consumer control and terminal batch drain |
+| `tent_compare.py` | Two-host frozen-library A/B READ comparison with independent pairs, notification-slot reuse and physical RDMA counters |
+| `tent_native_trace.cpp` / `tent_trace.py` | Bounded pinned-native metadata/QP/bootstrap interposition and offline per-host trace validation |
 | `cpu_codec.rs` | Production scalar/AVX2/AVX-512/auto CPU FP8 conversion with an independent oracle before timing |
 | `cost_observations.py` | Same-binary off/on observation overhead, three reversed-order pairs on both engines |
 | `metadata.py` | Explicit full-Manager 0/2/5 ms metadata coalescing comparison using frozen binaries |
@@ -35,6 +38,146 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | `tests/` | CPU-only checks for measurement and report correctness |
 | `artifacts.py` | Validate external output locations, including symlink resolution |
 | `reproduce_preparation.sh` | Repeated preparation controls with an explicit external output root |
+
+### Native TENT first READ diagnostic
+
+Run `python -m benches.tent_stage --bind HOST_ADDRESS --native-lib /frozen/native-lib
+--role source` on the source and the same command with `--role consumer` on a
+different host. Freeze libraries, the RDMA-only TENT configuration, NIC allowlist,
+program and workload before launch; capture each endpoint's stdout/stderr in an
+external artifact directory. A controller must keep both stdin pipes open and
+parse the JSON `ready` record containing the registered CPU address and endpoint.
+Send the consumer a JSON line with `operation: "read"`, a unique `id`, the source
+`endpoint` and `address`, and `iterations` between 1 and 1000. Every READ clears
+the destination and verifies the entire deterministic payload SHA-256.
+
+The returned stages cover open, batch allocation, submit, terminal-status wait
+and accepted free. Buffer clearing and SHA validation are outside `native_read_ms`.
+Polling spins for the first millisecond and then waits one millisecond between
+polls; these observations include that polling delay. Metadata, QP bootstrap and
+worker scheduling can occur lazily after submit and are not separately identified
+by this C ABI boundary. Use a fresh consumer process for each first-READ sample.
+
+Send `operation: "stop"` to the consumer after `read_complete`, require `stopped`
+and a reaped zero exit, then stop the source after every reader has drained.
+Timeout/cancellation never releases an uncompleted batch. Control-pipe loss
+retains registered buffers; source protocol errors await explicit source stop.
+Do not force-kill an isolated owner and infer DMA completion from that signal.
+Check recorded PIDs, RPC listeners, NIC counters and native-library hashes before
+accepting cleanup. This benchmark excludes Manager grants/indexes, pinned pools,
+GPU destination writes, serving, GDS and S3 crash-reclamation qualification.
+
+For finer diagnosis, `tent_native_trace.cpp` interposes four exported C++ symbols
+from Mooncake `719735896c86b56fabec6cf3e825fb2ea640597a` on Linux x86-64 with
+libstdc++. Build against that revision's exact `tent/common/status.h`; its
+nontrivial `Status` return ABI and mangled symbols are not a public API:
+
+```bash
+g++ -std=c++20 -O2 -Wall -Wextra -Werror -shared -fPIC \
+  -I third-party/mooncake/mooncake-transfer-engine/tent/include \
+  benches/tent_native_trace.cpp -ldl -o /external/native-trace/libtent_native_trace.so
+```
+
+Verify all four interposed symbols exist in the frozen `libtent_shared.so` before
+launch. Set `LD_PRELOAD` to the diagnostic library and `TENT_NATIVE_TRACE_PATH` to
+a unique external JSON path on each endpoint. The fixed 4,096-event array records
+metadata RPC, endpoint construction, connect and bootstrap RPC; it writes only
+after normal process teardown. Per-slot publication uses release/acquire;
+teardown seals span admission and rejects unfinished calls or unpublished slots.
+An absent symbol, output failure, nonzero exit,
+overflow, unsuccessful call or missing required stage invalidates the cell.
+Run matched trace-off/on warm-READ overhead controls before deeper diagnosis,
+with fresh endpoints and the same frozen payload, order, configuration and native
+libraries. Preserve failed controls; do not use instrumented timing as a new
+production performance qualification.
+
+After both endpoints have drained and exited zero, reconstruct one consumer:
+
+```bash
+python -m benches.tent_trace \
+  --trace /external/native-trace/consumer.trace.json \
+  --endpoint-stdout /external/native-trace/consumer.stdout \
+  --endpoint-exit-code 0 --role consumer \
+  --output /external/native-trace/consumer-summary.json
+```
+
+Pass the actual exit code returned by the controller's `wait`, not a value
+inferred from the stop record. Use `--role source` with the source's own files to summarize its construction
+calls. The analyzer checks the process identity, retained event count, statuses,
+clock boundaries and required stages. Its consumer window comes from that
+endpoint's first READ. Stage calls overlap: the analyzer reports their interval
+union rather than adding durations. Source and consumer monotonic epochs cannot
+be compared across hosts. The controller must separately prove reaped zero exits
+and absent PIDs; a parsed stop record alone cannot establish that cleanup.
+
+Existing `rpc_server_threads` and `transports.rdma.num_lanes` settings are
+experimental candidates, not OrbitKV defaults. Change one knob per frozen
+cohort, keep first-READ and warmed samples separate, alternate matched run order,
+and report independent-pair uncertainty and CPU/thread costs. Reducing lanes also
+reduces worker/QP/CQ parallelism, so it needs throughput and consumed Manager
+recovery controls. A private-buffer improvement alone cannot promote either
+configuration or establish model latency.
+
+When changing the C++ recorder, compile and run the CPU writer controls against
+the same pinned header. These controls require a C++ compiler and are separate
+from the default Python gate:
+
+```bash
+g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread \
+  -I third-party/mooncake/mooncake-transfer-engine/tent/include \
+  benches/tests/tent_native_trace_writer.cpp -ldl -o /external/native-trace/writer-control
+```
+
+Run modes `complete`, `active` and `unpublished` with separate
+`TENT_NATIVE_TRACE_PATH` files. `complete` must exit zero with 1,024 fully published
+events; `active` and `unpublished` must exit 2 and cannot produce acceptable
+evidence. These synthetic writer controls do not measure transport performance.
+
+### Native TENT library comparison
+
+`benches.tent_compare` consumes an external frozen JSON contract. It records two
+hosts and their addresses, an SSH config path, RDMA NICs/GID, remote probe/config
+paths, the baseline/candidate/original library directories and SHA256 sets,
+controller/probe/config hashes, payload and sample counts, pair ordering,
+bootstrap seed/draw count and explicit performance guards. Copy the probe and
+configuration to **both** hosts, verify their hashes and ELF dependencies, then
+freeze the contract before launching endpoints. Keep libraries in separate
+directories; never rebuild or replace a mapped runtime.
+
+```bash
+python -m benches.tent_compare \
+  --contract /external/native-comparison/FORMAL-CONTRACT.json \
+  --output /external/native-comparison/formal
+```
+
+Each cell creates a fresh source and consumer, performs one first READ, separate
+warmups and measured READs, and clears/checks the entire destination each time.
+Timing covers open, allocation, submit, terminal observation and accepted batch
+free; clearing and SHA256 are outside that timer. Notifications run **after**
+the READ samples. Send 512 unique names and deterministic 2,048-byte payloads to
+wrap the pinned 256-slot ring; receive the complete exact set, reject duplicates
+or corrupt messages, free every native result allocation, and poll for 25 ms
+after the set is complete. This bounded quiet window is a diagnostic check, not
+a proof against arbitrarily delayed duplicates.
+
+The consumer must normally drain and exit zero before source stop. Record actual
+native mappings, CPU ticks, physical port data/packet counters (data counters
+use four-byte units), zero exits and absent PIDs. Bootstrap matched independent
+endpoint pairs, never individual requests within a process. Report first READ,
+warm median and descriptive p99 separately, including absolute times and
+uncertainty. A readiness smoke is not performance qualification. An invalid
+prelaunch input starts no endpoint; preserve its evidence and repair/verify
+inputs before a separately frozen launch. The first invalid native cell stops
+the cohort without retry or replacement. A completed cohort that misses any
+frozen performance guard stays failed.
+
+The probe deliberately holds an exported source on control loss or uncertain
+native drain, has no reconnect channel, and ignores SIGTERM/SIGINT. A controller
+timeout is not normal cleanup or an authorization to reuse its memory. Private
+CPU-buffer results do not qualify Manager grants, registered engine pages,
+GPUDirect RDMA, serving latency or requester-crash reclamation. Applying an
+already merged upstream repair in this isolated comparison does not change the
+production dependency pin or create a supported patched runtime.
 
 ### S2.10 metadata performance qualification
 

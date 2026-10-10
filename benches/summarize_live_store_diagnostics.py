@@ -51,17 +51,11 @@ def summarize(run: Path):
             "client_to_manager_receive_ms": _elapsed(receive, save["submitted_mono_ns"]),
             "manager_runtime_queue_ms": _elapsed(process_start, receive),
             "manager_execute_ms": _elapsed(process_complete, process_start),
-            "manager_complete_to_response_publish_ms": _elapsed(
-                response_publish, process_complete
-            ),
-            "response_publish_to_client_ms": _elapsed(
-                save["returned_mono_ns"], response_publish
-            ),
+            "manager_complete_to_response_publish_ms": _elapsed(response_publish, process_complete),
+            "response_publish_to_client_ms": _elapsed(save["returned_mono_ns"], response_publish),
             "storage_queue_ms": _elapsed(storage_dequeue, storage_enqueue),
             "storage_execute_ms": _elapsed(storage_complete, storage_dequeue),
-            "client_return_to_storage_complete_ms": (
-                storage_complete - save["returned_mono_ns"]
-            )
+            "client_return_to_storage_complete_ms": (storage_complete - save["returned_mono_ns"])
             / 1_000_000,
         }
         if "publish_ssd_enqueue" in stages:
@@ -72,16 +66,10 @@ def summarize(run: Path):
                 {
                     "ssd_queue_ms": _elapsed(ssd_dequeue, ssd_enqueue),
                     "ssd_execute_ms": _elapsed(ssd_complete, ssd_dequeue),
-                    "client_return_to_ssd_complete_ms": (
-                        ssd_complete - save["returned_mono_ns"]
-                    )
+                    "client_return_to_ssd_complete_ms": (ssd_complete - save["returned_mono_ns"])
                     / 1_000_000,
-                    "ssd_queue_at_dequeue": stages["publish_ssd_dequeue"][0][
-                        "pending_blocks"
-                    ],
-                    "ssd_inflight_at_dequeue": stages["publish_ssd_dequeue"][0][
-                        "inflight_writes"
-                    ],
+                    "ssd_queue_at_dequeue": stages["publish_ssd_dequeue"][0]["pending_blocks"],
+                    "ssd_inflight_at_dequeue": stages["publish_ssd_dequeue"][0]["inflight_writes"],
                     "ssd_inflight_at_complete": stages["publish_ssd_complete"][0].get(
                         "inflight_writes"
                     ),
@@ -101,9 +89,7 @@ def summarize(run: Path):
                 "client_total_ms": _elapsed(
                     observation["returned_mono_ns"], observation["submitted_mono_ns"]
                 ),
-                "client_to_manager_receive_ms": _elapsed(
-                    receive, observation["submitted_mono_ns"]
-                ),
+                "client_to_manager_receive_ms": _elapsed(receive, observation["submitted_mono_ns"]),
                 "manager_execute_ms": _elapsed(complete, receive),
                 "manager_complete_to_client_ms": _elapsed(
                     observation["returned_mono_ns"], complete
@@ -123,19 +109,13 @@ def summarize(run: Path):
     return {
         "contract": "s2.10-isolation-diagnosis-v1",
         "samples": len(samples),
-        "measured_save_operations": sum(
-            row["operation"] == "save" for row in measured
-        ),
-        "measured_query_operations": sum(
-            row["operation"] == "query" for row in measured
-        ),
+        "measured_save_operations": sum(row["operation"] == "save" for row in measured),
+        "measured_query_operations": sum(row["operation"] == "query" for row in measured),
         "save_intervals": {
-            name: _summary([row[name] for row in save_measured])
-            for name in save_interval_names
+            name: _summary([row[name] for row in save_measured]) for name in save_interval_names
         },
         "query_intervals": {
-            name: _summary([row[name] for row in query_measured])
-            for name in query_interval_names
+            name: _summary([row[name] for row in query_measured]) for name in query_interval_names
         },
         "stage_samples": stage_samples,
     }
