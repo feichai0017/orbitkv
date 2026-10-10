@@ -32,9 +32,11 @@ Cache Manager → OpenTelemetry Collector → Prometheus → Grafana
 
 OrbitKV exposes the following metrics for monitoring KV cache operations:
 
-Query, publish-inflight, peer-transfer and SSD ownership gauges export an
-explicit zero when the Manager initializes its core metrics, before the first
-request. `orbitkv_load_bytes_total` also starts at zero. Initialization adds zero
+The baseline readiness gauges for query reservations, publish inflight bytes,
+peer-transfer ownership and ordinary SSD operations export an explicit zero when
+the Manager initializes its core metrics, before the first request. This does
+not initialize speculative-prefetch, GDS, codec or phase-specific series.
+`orbitkv_load_bytes_total` also starts at zero. Initialization adds zero
 once; subsequent owner increments and releases remain cumulative, and obtaining
 the metrics again does not reset active ownership. Readiness and drain checks
 must still reject missing required gauges; an absent series is not evidence of
